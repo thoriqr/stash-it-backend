@@ -1,0 +1,37 @@
+# Go
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.html
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & temporary files
+*.log
+tmp/
+temp/
+
+# Local database files
+*.sql.gz
+*.dump
+*.backup
+postgres-data/

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: stash-it-postgres-dev
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: stash_it_dev
+      POSTGRES_PASSWORD: stash_it_dev
+      POSTGRES_DB: stash_it_dev
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - stash_it_postgres_dev_data:/var/lib/postgresql
+
+volumes:
+  stash_it_postgres_dev_data:
