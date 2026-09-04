@@ -1,0 +1,3 @@
+DROP TRIGGER password_credentials_set_updated_at ON password_credentials;
+
+DROP TABLE password_credentials;
