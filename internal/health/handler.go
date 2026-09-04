@@ -1,14 +1,15 @@
 package health
 
-import "net/http"
+import "github.com/gofiber/fiber/v3"
 
-type Handler struct {}
+type Handler struct{}
 
 func NewHandler() *Handler {
 	return &Handler{}
 }
 
-func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+func (h *Handler) Check(c fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"status": "ok",
+	})
 }

@@ -3,14 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gofiber/fiber/v3"
+	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 
+	"github.com/thoriqr/stash-it-backend/internal/auth"
+	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/health"
+	"github.com/thoriqr/stash-it-backend/internal/httpx"
+	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
+
 
 func main() {
 	ctx := context.Background()
@@ -28,15 +33,36 @@ func main() {
 	}
 	defer pool.Close()
 
-	r := chi.NewRouter()
+	validate := validation.New(
+)
 
+
+	app := fiber.New(fiber.Config{
+		ErrorHandler: httpx.ErrorHandler,
+		StructValidator: validate,
+	})
+
+	app.Use(recoverer.New())
+
+	
+	// Health
 	healthHandler := health.NewHandler()
-	health.Routes(r, healthHandler)
+	health.Routes(app, healthHandler)
+
+	// Auth
+	queries := authdb.New(pool)
+
+	authRepository := auth.NewRepository(queries)
+	authService := auth.NewService(authRepository)
+	authHandler := auth.NewHandler(authService)
+
+	auth.Routes(app, authHandler)
+
 
 	fmt.Println("Database connected")
 	fmt.Println("Server running on http://localhost:8080")
 
-	if err := http.ListenAndServe(":8080", r); err != nil {
+	if err := app.Listen(":8080"); err != nil {
 		fmt.Println("Server error:", err)
 	}
 }

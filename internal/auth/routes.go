@@ -1,7 +1,7 @@
-package health
+package auth
 
 import "github.com/gofiber/fiber/v3"
 
 func Routes(app *fiber.App, h *Handler) {
-	app.Get("/health", h.Check)
+	app.Post("/users", h.CreateUser)
 }
