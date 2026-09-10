@@ -1,0 +1,1 @@
+DROP INDEX verification_codes_one_active_per_request_idx;

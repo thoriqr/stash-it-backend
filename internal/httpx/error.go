@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
@@ -17,6 +19,12 @@ type errorBody struct {
 }
 
 func ErrorHandler(c fiber.Ctx, err error) error {
+	var fiberErr *fiber.Error
+
+	if errors.As(err, &fiberErr) {
+		return fiber.DefaultErrorHandler(c, fiberErr)
+	}
+
 	appErr := apperror.FromError(err)
 
 	return c.Status(appErr.Status).JSON(errorResponse{

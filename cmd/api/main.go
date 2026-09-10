@@ -13,6 +13,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
+	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -50,10 +51,25 @@ func main() {
 	health.Routes(app, healthHandler)
 
 	// Auth
-	queries := authdb.New(pool)
+	authQueries := authdb.New(pool)
 
-	authRepository := auth.NewRepository(queries)
-	authService := auth.NewService(authRepository)
+	registrationRepository := auth.NewRegistrationRepository(
+		pool,
+		authQueries,
+	)
+
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte(cfg.VerificationCodeSecret),
+	)
+
+	passwordHasher := security.NewPasswordHasher()
+
+	authService := auth.NewService(
+		registrationRepository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
 	authHandler := auth.NewHandler(authService)
 
 	auth.Routes(app, authHandler)

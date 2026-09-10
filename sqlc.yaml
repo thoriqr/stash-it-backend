@@ -12,3 +12,15 @@ sql:
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/user/queries.sql"
+    gen:
+      go:
+        package: "userdb"
+        out: "internal/user/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"

@@ -1,0 +1,3 @@
+ALTER TABLE users
+ADD COLUMN display_name TEXT NOT NULL,
+ADD COLUMN email_verified_at TIMESTAMPTZ NOT NULL;

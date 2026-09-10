@@ -8,7 +8,8 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
+	DatabaseURL            string
+	VerificationCodeSecret string
 }
 
 func Load() (Config, error) {
@@ -19,5 +20,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	return Config{DatabaseURL: databaseURL}, nil
+	verificationCodeSecret := os.Getenv("VERIFICATION_CODE_SECRET")
+	if verificationCodeSecret == "" {
+		return Config{}, fmt.Errorf(
+			"VERIFICATION_CODE_SECRET is required",
+		)
+	}
+
+	return Config{
+		DatabaseURL:            databaseURL,
+		VerificationCodeSecret: verificationCodeSecret,
+	}, nil
 }

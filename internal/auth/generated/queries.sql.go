@@ -9,78 +9,585 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const completePendingRegistration = `-- name: CompletePendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'completed'
+WHERE id = $1
+  AND status = 'pending'
+  AND expires_at > NOW()
+`
+
+func (q *Queries) CompletePendingRegistration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, completePendingRegistration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const consumeRegistrationContinuation = `-- name: ConsumeRegistrationContinuation :execrows
+UPDATE registration_continuations
+SET consumed_at = NOW()
+WHERE id = $1
+  AND consumed_at IS NULL
+  AND expires_at > NOW()
+`
+
+func (q *Queries) ConsumeRegistrationContinuation(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeRegistrationContinuation, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const consumeVerificationCode = `-- name: ConsumeVerificationCode :execrows
+UPDATE verification_codes
+SET consumed_at = NOW()
+WHERE id = $1
+  AND consumed_at IS NULL
+  AND invalidated_at IS NULL
+  AND expires_at > NOW()
+`
+
+func (q *Queries) ConsumeVerificationCode(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeVerificationCode, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createPasswordCredential = `-- name: CreatePasswordCredential :one
+INSERT INTO password_credentials (
+    user_id,
+    password_hash
+)
+VALUES (
+    $1,
+    $2
+)
+RETURNING
+    user_id,
+    password_hash,
+    created_at,
+    updated_at
+`
+
+type CreatePasswordCredentialParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) (PasswordCredential, error) {
+	row := q.db.QueryRow(ctx, createPasswordCredential, arg.UserID, arg.PasswordHash)
+	var i PasswordCredential
+	err := row.Scan(
+		&i.UserID,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createPendingRegistration = `-- name: CreatePendingRegistration :one
+INSERT INTO pending_registrations (
+    email,
+    registration_type,
+    status,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+RETURNING
+    id,
+    email,
+    registration_type,
+    status,
+    created_at,
+    expires_at
+`
+
+type CreatePendingRegistrationParams struct {
+	Email            string
+	RegistrationType string
+	Status           string
+	ExpiresAt        pgtype.Timestamptz
+}
+
+func (q *Queries) CreatePendingRegistration(ctx context.Context, arg CreatePendingRegistrationParams) (PendingRegistration, error) {
+	row := q.db.QueryRow(ctx, createPendingRegistration,
+		arg.Email,
+		arg.RegistrationType,
+		arg.Status,
+		arg.ExpiresAt,
+	)
+	var i PendingRegistration
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const createRegistrationContinuation = `-- name: CreateRegistrationContinuation :one
+INSERT INTO registration_continuations (
+    pending_registration_id,
+    token_hash,
+    expires_at
+)
+VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id,
+    pending_registration_id,
+    token_hash,
+    expires_at,
+    consumed_at,
+    created_at
+`
+
+type CreateRegistrationContinuationParams struct {
+	PendingRegistrationID uuid.UUID
+	TokenHash             string
+	ExpiresAt             pgtype.Timestamptz
+}
+
+func (q *Queries) CreateRegistrationContinuation(ctx context.Context, arg CreateRegistrationContinuationParams) (RegistrationContinuation, error) {
+	row := q.db.QueryRow(ctx, createRegistrationContinuation, arg.PendingRegistrationID, arg.TokenHash, arg.ExpiresAt)
+	var i RegistrationContinuation
+	err := row.Scan(
+		&i.ID,
+		&i.PendingRegistrationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (
-  email
-) VALUES (
-  $1
+    email,
+    display_name,
+    email_verified_at
 )
-RETURNING id, email
+VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id,
+    email,
+    display_name,
+    email_verified_at,
+    created_at,
+    updated_at
 `
 
-func (q *Queries) CreateUser(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, email)
-	var i User
-	err := row.Scan(&i.ID, &i.Email)
+type CreateUserParams struct {
+	Email           string
+	DisplayName     string
+	EmailVerifiedAt pgtype.Timestamptz
+}
+
+type CreateUserRow struct {
+	ID              uuid.UUID
+	Email           string
+	DisplayName     string
+	EmailVerifiedAt pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.DisplayName, arg.EmailVerifiedAt)
+	var i CreateUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.EmailVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
+const createVerificationCode = `-- name: CreateVerificationCode :one
+INSERT INTO verification_codes (
+    verification_request_id,
+    code_hash,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id,
+    verification_request_id,
+    code_hash,
+    attempts,
+    created_at,
+    expires_at,
+    consumed_at,
+    invalidated_at
+`
+
+type CreateVerificationCodeParams struct {
+	VerificationRequestID uuid.UUID
+	CodeHash              string
+	ExpiresAt             pgtype.Timestamptz
+}
+
+func (q *Queries) CreateVerificationCode(ctx context.Context, arg CreateVerificationCodeParams) (VerificationCode, error) {
+	row := q.db.QueryRow(ctx, createVerificationCode, arg.VerificationRequestID, arg.CodeHash, arg.ExpiresAt)
+	var i VerificationCode
+	err := row.Scan(
+		&i.ID,
+		&i.VerificationRequestID,
+		&i.CodeHash,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.InvalidatedAt,
+	)
+	return i, err
+}
+
+const createVerificationRequest = `-- name: CreateVerificationRequest :one
+INSERT INTO verification_requests (
+    subject_type,
+    subject_id,
+    purpose,
+    status
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4
+)
+RETURNING
+    id,
+    subject_type,
+    subject_id,
+    purpose,
+    status,
+    resend_count,
+    last_sent_at,
+    created_at
+`
+
+type CreateVerificationRequestParams struct {
+	SubjectType string
+	SubjectID   uuid.UUID
+	Purpose     string
+	Status      string
+}
+
+func (q *Queries) CreateVerificationRequest(ctx context.Context, arg CreateVerificationRequestParams) (VerificationRequest, error) {
+	row := q.db.QueryRow(ctx, createVerificationRequest,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.Purpose,
+		arg.Status,
+	)
+	var i VerificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.Purpose,
+		&i.Status,
+		&i.ResendCount,
+		&i.LastSentAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getActiveVerificationCode = `-- name: GetActiveVerificationCode :one
 SELECT
     id,
-    email
-FROM users
-WHERE email = $1
+    verification_request_id,
+    code_hash,
+    attempts,
+    created_at,
+    expires_at,
+    consumed_at,
+    invalidated_at
+FROM verification_codes
+WHERE verification_request_id = $1
+  AND consumed_at IS NULL
+  AND invalidated_at IS NULL
+  AND expires_at > NOW()
+  AND attempts < $2
+ORDER BY created_at DESC
+LIMIT 1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var i User
-	err := row.Scan(&i.ID, &i.Email)
+type GetActiveVerificationCodeParams struct {
+	VerificationRequestID uuid.UUID
+	MaxAttempts           int32
+}
+
+func (q *Queries) GetActiveVerificationCode(ctx context.Context, arg GetActiveVerificationCodeParams) (VerificationCode, error) {
+	row := q.db.QueryRow(ctx, getActiveVerificationCode, arg.VerificationRequestID, arg.MaxAttempts)
+	var i VerificationCode
+	err := row.Scan(
+		&i.ID,
+		&i.VerificationRequestID,
+		&i.CodeHash,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.InvalidatedAt,
+	)
 	return i, err
 }
 
-const getUserByID = `-- name: GetUserByID :one
-SELECT 
-    id,
-    email
-FROM users
+const getPendingRegistrationByEmail = `-- name: GetPendingRegistrationByEmail :one
+SELECT
+    pr.id,
+    pr.email,
+    pr.registration_type,
+    pr.status,
+    pr.created_at,
+    pr.expires_at,
+    vr.id AS verification_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+  AND pr.status = 'pending'
+`
+
+type GetPendingRegistrationByEmailRow struct {
+	ID               uuid.UUID
+	Email            string
+	RegistrationType string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	VerificationID   uuid.UUID
+}
+
+func (q *Queries) GetPendingRegistrationByEmail(ctx context.Context, email string) (GetPendingRegistrationByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByEmail, email)
+	var i GetPendingRegistrationByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.VerificationID,
+	)
+	return i, err
+}
+
+const getRegistrationContinuation = `-- name: GetRegistrationContinuation :one
+SELECT
+    rc.id,
+    rc.pending_registration_id,
+    rc.token_hash,
+    rc.expires_at,
+    rc.consumed_at,
+    rc.created_at,
+
+    pr.email,
+    pr.registration_type,
+    pr.status AS registration_status,
+    pr.expires_at AS registration_expires_at
+FROM registration_continuations rc
+JOIN pending_registrations pr
+    ON pr.id = rc.pending_registration_id
+WHERE rc.token_hash = $1
+`
+
+type GetRegistrationContinuationRow struct {
+	ID                    uuid.UUID
+	PendingRegistrationID uuid.UUID
+	TokenHash             string
+	ExpiresAt             pgtype.Timestamptz
+	ConsumedAt            pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	Email                 string
+	RegistrationType      string
+	RegistrationStatus    string
+	RegistrationExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetRegistrationContinuation(ctx context.Context, tokenHash string) (GetRegistrationContinuationRow, error) {
+	row := q.db.QueryRow(ctx, getRegistrationContinuation, tokenHash)
+	var i GetRegistrationContinuationRow
+	err := row.Scan(
+		&i.ID,
+		&i.PendingRegistrationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+		&i.Email,
+		&i.RegistrationType,
+		&i.RegistrationStatus,
+		&i.RegistrationExpiresAt,
+	)
+	return i, err
+}
+
+const getVerification = `-- name: GetVerification :one
+SELECT
+    vr.id,
+    vr.subject_type,
+    vr.subject_id,
+    vr.purpose,
+    vr.status,
+    vr.resend_count,
+    vr.last_sent_at,
+    vr.created_at,
+
+    pr.status AS registration_status,
+    pr.expires_at AS registration_expires_at
+FROM verification_requests vr
+JOIN pending_registrations pr
+    ON pr.id = vr.subject_id
+WHERE vr.id = $1
+`
+
+type GetVerificationRow struct {
+	ID                    uuid.UUID
+	SubjectType           string
+	SubjectID             uuid.UUID
+	Purpose               string
+	Status                string
+	ResendCount           int32
+	LastSentAt            pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	RegistrationStatus    string
+	RegistrationExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerificationRow, error) {
+	row := q.db.QueryRow(ctx, getVerification, id)
+	var i GetVerificationRow
+	err := row.Scan(
+		&i.ID,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.Purpose,
+		&i.Status,
+		&i.ResendCount,
+		&i.LastSentAt,
+		&i.CreatedAt,
+		&i.RegistrationStatus,
+		&i.RegistrationExpiresAt,
+	)
+	return i, err
+}
+
+const incrementVerificationCodeAttempts = `-- name: IncrementVerificationCodeAttempts :exec
+UPDATE verification_codes
+SET attempts = attempts + 1
 WHERE id = $1
+  AND attempts < $2
 `
 
-func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
-	row := q.db.QueryRow(ctx, getUserByID, id)
-	var i User
-	err := row.Scan(&i.ID, &i.Email)
-	return i, err
+type IncrementVerificationCodeAttemptsParams struct {
+	ID          uuid.UUID
+	MaxAttempts int32
 }
 
-const listUsers = `-- name: ListUsers :many
-SELECT 
-    id,
-    email
-FROM users
-ORDER BY id
+func (q *Queries) IncrementVerificationCodeAttempts(ctx context.Context, arg IncrementVerificationCodeAttemptsParams) error {
+	_, err := q.db.Exec(ctx, incrementVerificationCodeAttempts, arg.ID, arg.MaxAttempts)
+	return err
+}
+
+const invalidateVerificationCode = `-- name: InvalidateVerificationCode :exec
+UPDATE verification_codes
+SET invalidated_at = NOW()
+WHERE id = (
+    SELECT vc.id
+    FROM verification_codes vc
+    WHERE vc.verification_request_id = $1
+      AND vc.consumed_at IS NULL
+      AND vc.invalidated_at IS NULL
+    ORDER BY vc.created_at DESC
+    LIMIT 1
+)
 `
 
-func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := q.db.Query(ctx, listUsers)
+func (q *Queries) InvalidateVerificationCode(ctx context.Context, verificationRequestID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateVerificationCode, verificationRequestID)
+	return err
+}
+
+const markVerificationRequestVerified = `-- name: MarkVerificationRequestVerified :execrows
+UPDATE verification_requests
+SET status = 'verified'
+WHERE id = $1
+  AND status = 'pending'
+`
+
+func (q *Queries) MarkVerificationRequestVerified(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markVerificationRequestVerified, id)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []User
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(&i.ID, &i.Email); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
+}
+
+const updateVerificationRequestResend = `-- name: UpdateVerificationRequestResend :one
+UPDATE verification_requests
+SET
+    resend_count = resend_count + 1,
+    last_sent_at = NOW()
+WHERE id = $1
+RETURNING
+    id,
+    subject_type,
+    subject_id,
+    purpose,
+    status,
+    resend_count,
+    last_sent_at,
+    created_at
+`
+
+func (q *Queries) UpdateVerificationRequestResend(ctx context.Context, id uuid.UUID) (VerificationRequest, error) {
+	row := q.db.QueryRow(ctx, updateVerificationRequestResend, id)
+	var i VerificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.Purpose,
+		&i.Status,
+		&i.ResendCount,
+		&i.LastSentAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
