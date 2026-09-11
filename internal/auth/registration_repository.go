@@ -40,7 +40,7 @@ type RegistrationRepository interface {
 		ctx context.Context,
 		id uuid.UUID,
 		maxAttempts int32,
-	) error
+	) (int32, error)
 
 	CompleteVerification(
 		ctx context.Context,
@@ -171,11 +171,7 @@ func (r *registrationRepository) GetVerification(
 	verification, err := r.queries.GetVerification(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return authdb.GetVerificationRow{}, apperror.NotFoundWith(
-				"VERIFICATION_NOT_FOUND",
-				"verification request not found",
-				err,
-			)
+			return authdb.GetVerificationRow{}, apperror.NotFound(err)
 		}
 
 		return authdb.GetVerificationRow{}, apperror.Internal(err)
@@ -256,7 +252,7 @@ func (r *registrationRepository) GetActiveVerificationCode(
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return authdb.VerificationCode{}, apperror.ConflictWith(
-                "VERIFICATION_CODE_UNAVAILABLE",
+                "",
                 "verification code is no longer available",
                 err,
             )
@@ -269,22 +265,30 @@ func (r *registrationRepository) GetActiveVerificationCode(
 }
 
 func (r *registrationRepository) IncrementVerificationCodeAttempts(
-    ctx context.Context,
-    id uuid.UUID,
-    maxAttempts int32,
-) error {
-    err := r.queries.IncrementVerificationCodeAttempts(
-        ctx,
-        authdb.IncrementVerificationCodeAttemptsParams{
-            ID:         id,
-            MaxAttempts: maxAttempts,
-        },
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
+	ctx context.Context,
+	id uuid.UUID,
+	maxAttempts int32,
+) (int32, error) {
+	attempts, err := r.queries.IncrementVerificationCodeAttempts(
+		ctx,
+		authdb.IncrementVerificationCodeAttemptsParams{
+			ID:          id,
+			MaxAttempts: maxAttempts,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, apperror.ConflictWith(
+				"",
+				"verification code is no longer available",
+				err,
+			)
+		}
 
-    return nil
+		return 0, apperror.Internal(err)
+	}
+
+	return attempts, nil
 }
 
 type CompleteVerificationParams struct {
@@ -318,7 +322,7 @@ func (r *registrationRepository) CompleteVerification(
 
 	if rowsAffected != 1 {
 		return authdb.RegistrationContinuation{}, apperror.ConflictWith(
-			"VERIFICATION_CODE_UNAVAILABLE",
+			"",
 			"verification code is no longer available",
 			nil,
 		)
@@ -334,7 +338,7 @@ func (r *registrationRepository) CompleteVerification(
 
 	if rowsAffected != 1 {
 		return authdb.RegistrationContinuation{}, apperror.ConflictWith(
-			"VERIFICATION_NOT_PENDING",
+			"",
 			"verification request is no longer pending",
 			nil,
 		)
@@ -370,7 +374,7 @@ func (r *registrationRepository) GetRegistrationContinuation(
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
             return authdb.GetRegistrationContinuationRow{}, apperror.ConflictWith(
-                "REGISTRATION_CONTINUATION_UNAVAILABLE",
+                "",
                 "registration continuation is no longer available",
                 err,
             )
@@ -437,7 +441,7 @@ func (r *registrationRepository) FinalizeManualRegistration(
 
 	if rowsAffected != 1 {
 		return authdb.CreateUserRow{}, apperror.ConflictWith(
-			"REGISTRATION_CONTINUATION_UNAVAILABLE",
+			"",
 			"registration continuation is no longer available",
 			nil,
 		)
@@ -453,7 +457,7 @@ func (r *registrationRepository) FinalizeManualRegistration(
 
 	if rowsAffected != 1 {
 		return authdb.CreateUserRow{}, apperror.ConflictWith(
-			"REGISTRATION_NOT_PENDING",
+			"",
 			"registration is no longer pending",
 			nil,
 		)
@@ -473,14 +477,14 @@ func mapRegistrationDBError(err error) error {
 		switch pgErr.ConstraintName {
 		case "pending_registrations_active_email_idx":
 			return apperror.ConflictWith(
-				"REGISTRATION_ALREADY_PENDING",
+				CodeRegistrationAlreadyPending,
 				"registration is already pending",
 				err,
 			)
 
 		case "verification_codes_one_active_per_request_idx":
 			return apperror.ConflictWith(
-				"ACTIVE_VERIFICATION_CODE_EXISTS",
+				CodeActiveVerificationCodeExists,
 				"an active verification code already exists",
 				err,
 			)

@@ -14,18 +14,18 @@ import (
 )
 
 
-type Service struct {
+type RegistrationService  struct {
 	registrationRepository RegistrationRepository
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
 }
 
-func NewService(
+func NewRegistrationService(
 	registrationRepository RegistrationRepository,
 	passwordHasher *security.PasswordHasher,
 	verificationCodeHasher *security.VerificationCodeHasher,
-) *Service {
-	return &Service{
+) *RegistrationService  {
+	return &RegistrationService {
 		registrationRepository: registrationRepository,
 		passwordHasher:         passwordHasher,
 		verificationCodeHasher: verificationCodeHasher,
@@ -41,7 +41,7 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (s *Service) RegisterManual(
+func (s *RegistrationService) RegisterManual(
 	ctx context.Context,
 	email string,
 ) (RegisterManualResult, error) {
@@ -111,7 +111,7 @@ type GetVerificationResult struct {
 	LastSentAt             *time.Time
 }
 
-func (s *Service) GetVerification(
+func (s *RegistrationService) GetVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (GetVerificationResult, error) {
@@ -145,7 +145,7 @@ type ResendVerificationResult struct {
 	VerificationID uuid.UUID
 }
 
-func (s *Service) ResendVerification(
+func (s *RegistrationService) ResendVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (ResendVerificationResult, error) {
@@ -161,15 +161,17 @@ func (s *Service) ResendVerification(
 		return ResendVerificationResult{}, err
 	}
 
+	now := time.Now()
+
 	// Resend cooldown must have elapsed.
 	if verification.LastSentAt.Valid {
 		resendAt := verification.LastSentAt.Time.Add(
 			verificationResendCooldown,
 		)
 
-		if time.Now().Before(resendAt) {
+		if now.Before(resendAt) {
 			return ResendVerificationResult{}, apperror.ConflictWith(
-				"VERIFICATION_RESEND_COOLDOWN",
+				CodeVerificationResendCooldown,
 				"verification code was sent too recently",
 				nil,
 			)
@@ -184,7 +186,7 @@ func (s *Service) ResendVerification(
 	codeHash := s.verificationCodeHasher.Hash(code)
 
 	codeExpiresAt := pgtype.Timestamptz{
-		Time:  time.Now().Add(verificationCodeExpiresIn),
+		Time:  now.Add(verificationCodeExpiresIn),
 		Valid: true,
 	}
 
@@ -218,7 +220,7 @@ type VerifyRegistrationResult struct {
 	RegistrationContinuationToken string
 }
 
-func (s *Service) VerifyRegistration(
+func (s *RegistrationService) VerifyRegistration(
 	ctx context.Context,
 	verificationID uuid.UUID,
 	pin string,
@@ -245,20 +247,29 @@ func (s *Service) VerifyRegistration(
 	}
 
 	if !s.verificationCodeHasher.Verify(pin, code.CodeHash) {
-		if err := s.registrationRepository.IncrementVerificationCodeAttempts(
+		attempts, err := s.registrationRepository.IncrementVerificationCodeAttempts(
 			ctx,
 			code.ID,
 			verificationCodeMaxAttempts,
-		); err != nil {
-			return VerifyRegistrationResult{}, err
-		}
+		)
+	if err != nil {
+		return VerifyRegistrationResult{}, err
+	}
 
+	if attempts >= verificationCodeMaxAttempts {
 		return VerifyRegistrationResult{}, apperror.ConflictWith(
-			"INVALID_VERIFICATION_CODE",
-			"verification code is invalid",
+			CodeVerificationCodeAttemptsExceeded,
+			"verification code attempt limit exceeded",
 			nil,
 		)
 	}
+
+	return VerifyRegistrationResult{}, apperror.ConflictWith(
+		CodeInvalidVerificationCode,
+		"verification code is invalid",
+		nil,
+	)
+}
 
 	token, err := security.GenerateToken()
 	if err != nil {
@@ -300,7 +311,7 @@ type GetRegistrationContinuationResult struct {
 	ExpiresAt        time.Time
 }
 
-func (s *Service) GetRegistrationContinuation(
+func (s *RegistrationService) GetRegistrationContinuation(
 	ctx context.Context,
 	token string,
 ) (GetRegistrationContinuationResult, error) {
@@ -338,7 +349,7 @@ type FinalizeManualRegistrationResult struct {
 	DisplayName string
 }
 
-func (s *Service) FinalizeManualRegistration(
+func (s *RegistrationService) FinalizeManualRegistration(
 	ctx context.Context,
 	params FinalizeManualRegistrationInput,
 ) (FinalizeManualRegistrationResult, error) {
@@ -358,7 +369,7 @@ func (s *Service) FinalizeManualRegistration(
 
 	if continuation.RegistrationType != string(RegistrationTypeManual) {
 		return FinalizeManualRegistrationResult{}, apperror.ConflictWith(
-			"INVALID_REGISTRATION_TYPE",
+			CodeInvalidRegistrationType,
 			"registration is not a manual registration",
 			nil,
 		)

@@ -2,7 +2,7 @@ package auth
 
 import "github.com/gofiber/fiber/v3"
 
-func Routes(app *fiber.App, h *Handler) {
+func Routes(app *fiber.App, h *RegistrationHandler) {
 	app.Post("/auth/register/manual", h.RegisterManual)
 
 	app.Get(

@@ -13,7 +13,7 @@ func validateVerificationPending(
 ) error {
 	if verification.Status != string(VerificationRequestPending) {
 		return apperror.ConflictWith(
-			"VERIFICATION_NOT_PENDING",
+			CodeVerificationNotPending,
 			"verification request is no longer pending",
 			nil,
 		)
@@ -21,7 +21,7 @@ func validateVerificationPending(
 
 	if verification.RegistrationStatus != string(PendingRegistrationPending) {
 		return apperror.ConflictWith(
-			"REGISTRATION_NOT_PENDING",
+			CodeRegistrationNotPending,
 			"registration is no longer pending",
 			nil,
 		)
@@ -35,7 +35,7 @@ func validateVerificationPending(
 
 	if !time.Now().Before(verification.RegistrationExpiresAt.Time) {
 		return apperror.ConflictWith(
-			"REGISTRATION_EXPIRED",
+			CodeRegistrationExpired,
 			"registration has expired",
 			nil,
 		)
@@ -51,7 +51,7 @@ func validateRegistrationContinuation(
 
     if continuation.ConsumedAt.Valid {
         return apperror.ConflictWith(
-            "REGISTRATION_CONTINUATION_CONSUMED",
+            CodeRegistrationContinuationConsumed,
             "registration continuation has already been consumed",
             nil,
         )
@@ -65,7 +65,7 @@ func validateRegistrationContinuation(
 
     if !now.Before(continuation.ExpiresAt.Time) {
         return apperror.ConflictWith(
-            "REGISTRATION_CONTINUATION_EXPIRED",
+            CodeRegistrationContinuationExpired,
             "registration continuation has expired",
             nil,
         )
@@ -73,7 +73,7 @@ func validateRegistrationContinuation(
 
     if continuation.RegistrationStatus != string(PendingRegistrationPending) {
         return apperror.ConflictWith(
-            "REGISTRATION_NOT_PENDING",
+            CodeRegistrationNotPending,
             "registration is no longer pending",
             nil,
         )
@@ -87,7 +87,7 @@ func validateRegistrationContinuation(
 
     if !now.Before(continuation.RegistrationExpiresAt.Time) {
         return apperror.ConflictWith(
-            "REGISTRATION_EXPIRED",
+            CodeRegistrationExpired,
             "registration has expired",
             nil,
         )

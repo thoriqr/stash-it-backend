@@ -10,7 +10,7 @@ func extractRegistrationContinuationToken(c fiber.Ctx) (string, error) {
 
 	if token == "" {
 		return "", apperror.UnauthorizedWith(
-			"REGISTRATION_CONTINUATION_REQUIRED",
+			CodeRegistrationContinuationRequired,
 			"registration continuation token is required",
 			nil,
 		)

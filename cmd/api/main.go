@@ -64,7 +64,7 @@ func main() {
 
 	passwordHasher := security.NewPasswordHasher()
 
-	authService := auth.NewService(
+	authService := auth.NewRegistrationService(
 		registrationRepository,
 		passwordHasher,
 		verificationCodeHasher,

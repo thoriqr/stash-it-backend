@@ -128,11 +128,12 @@ WHERE verification_request_id = sqlc.arg(verification_request_id)
 ORDER BY created_at DESC
 LIMIT 1;
 
--- name: IncrementVerificationCodeAttempts :exec
+-- name: IncrementVerificationCodeAttempts :one
 UPDATE verification_codes
 SET attempts = attempts + 1
 WHERE id = sqlc.arg(id)
-  AND attempts < sqlc.arg(max_attempts);
+  AND attempts < sqlc.arg(max_attempts)
+RETURNING attempts;
 
 -- name: ConsumeVerificationCode :execrows
 UPDATE verification_codes

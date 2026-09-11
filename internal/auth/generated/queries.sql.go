@@ -508,11 +508,12 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 	return i, err
 }
 
-const incrementVerificationCodeAttempts = `-- name: IncrementVerificationCodeAttempts :exec
+const incrementVerificationCodeAttempts = `-- name: IncrementVerificationCodeAttempts :one
 UPDATE verification_codes
 SET attempts = attempts + 1
 WHERE id = $1
   AND attempts < $2
+RETURNING attempts
 `
 
 type IncrementVerificationCodeAttemptsParams struct {
@@ -520,9 +521,11 @@ type IncrementVerificationCodeAttemptsParams struct {
 	MaxAttempts int32
 }
 
-func (q *Queries) IncrementVerificationCodeAttempts(ctx context.Context, arg IncrementVerificationCodeAttemptsParams) error {
-	_, err := q.db.Exec(ctx, incrementVerificationCodeAttempts, arg.ID, arg.MaxAttempts)
-	return err
+func (q *Queries) IncrementVerificationCodeAttempts(ctx context.Context, arg IncrementVerificationCodeAttemptsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, incrementVerificationCodeAttempts, arg.ID, arg.MaxAttempts)
+	var attempts int32
+	err := row.Scan(&attempts)
+	return attempts, err
 }
 
 const invalidateVerificationCode = `-- name: InvalidateVerificationCode :exec
