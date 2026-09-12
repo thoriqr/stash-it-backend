@@ -47,8 +47,8 @@ func (s *Service) RegisterManual(
 ) (RegisterManualResult, error) {
 	email = normalizeEmail(email)
 
-	pendingRegistration, found, err :=
-		s.repository.GetPendingRegistrationByEmail(
+	registration, found, err :=
+		s.repository.GetActiveRegistrationByEmail(
 			ctx,
 			email,
 		)
@@ -57,10 +57,28 @@ func (s *Service) RegisterManual(
 	}
 
 	if found {
-		return RegisterManualResult{
-			VerificationID: pendingRegistration.VerificationID,
-			AlreadyPending: true,
-		}, nil
+		switch registration.Status {
+		case string(PendingRegistrationPending):
+			return RegisterManualResult{
+				VerificationID: registration.VerificationID,
+				AlreadyPending: true,
+			}, nil
+
+		case string(PendingRegistrationCompleted):
+			return RegisterManualResult{}, apperror.ConflictWith(
+				CodeRegistrationAlreadyCompleted,
+				"registration has already been completed",
+				nil,
+			)
+
+		default:
+			return RegisterManualResult{}, apperror.Internal(
+				fmt.Errorf(
+					"unexpected active registration status: %s",
+					registration.Status,
+				),
+			)
+		}
 	}
 
 	code, err := s.verificationCodeHasher.Generate()

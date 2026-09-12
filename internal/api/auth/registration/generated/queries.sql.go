@@ -324,6 +324,49 @@ func (q *Queries) CreateVerificationRequest(ctx context.Context, arg CreateVerif
 	return i, err
 }
 
+const getActiveRegistrationByEmail = `-- name: GetActiveRegistrationByEmail :one
+SELECT
+    pr.id,
+    pr.email,
+    pr.registration_type,
+    pr.status,
+    pr.created_at,
+    pr.expires_at,
+    vr.id AS verification_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+  AND pr.status IN ('pending', 'completed')
+`
+
+type GetActiveRegistrationByEmailRow struct {
+	ID               uuid.UUID
+	Email            string
+	RegistrationType string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	VerificationID   uuid.UUID
+}
+
+func (q *Queries) GetActiveRegistrationByEmail(ctx context.Context, email string) (GetActiveRegistrationByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getActiveRegistrationByEmail, email)
+	var i GetActiveRegistrationByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.VerificationID,
+	)
+	return i, err
+}
+
 const getActiveVerificationCode = `-- name: GetActiveVerificationCode :one
 SELECT
     id,
@@ -361,49 +404,6 @@ func (q *Queries) GetActiveVerificationCode(ctx context.Context, arg GetActiveVe
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.InvalidatedAt,
-	)
-	return i, err
-}
-
-const getPendingRegistrationByEmail = `-- name: GetPendingRegistrationByEmail :one
-SELECT
-    pr.id,
-    pr.email,
-    pr.registration_type,
-    pr.status,
-    pr.created_at,
-    pr.expires_at,
-    vr.id AS verification_id
-FROM pending_registrations pr
-JOIN verification_requests vr
-    ON vr.subject_type = 'pending_registration'
-    AND vr.subject_id = pr.id
-    AND vr.purpose = 'registration'
-WHERE pr.email = $1
-  AND pr.status = 'pending'
-`
-
-type GetPendingRegistrationByEmailRow struct {
-	ID               uuid.UUID
-	Email            string
-	RegistrationType string
-	Status           string
-	CreatedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
-	VerificationID   uuid.UUID
-}
-
-func (q *Queries) GetPendingRegistrationByEmail(ctx context.Context, email string) (GetPendingRegistrationByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getPendingRegistrationByEmail, email)
-	var i GetPendingRegistrationByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.RegistrationType,
-		&i.Status,
-		&i.CreatedAt,
-		&i.ExpiresAt,
-		&i.VerificationID,
 	)
 	return i, err
 }

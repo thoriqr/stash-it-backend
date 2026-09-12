@@ -38,12 +38,12 @@ func TestService_RegisterManual(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetPendingRegistrationByEmail(
+		GetActiveRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetPendingRegistrationByEmailRow{},
+			registrationdb.GetActiveRegistrationByEmailRow{},
 			false,
 			nil,
 		)
@@ -148,12 +148,13 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetPendingRegistrationByEmail(
+		GetActiveRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetPendingRegistrationByEmailRow{
+			registrationdb.GetActiveRegistrationByEmailRow{
+				Status:         string(registration.PendingRegistrationPending),
 				VerificationID: verificationID,
 			},
 			true,
@@ -181,6 +182,63 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 	}
 }
 
+func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repository := mocks.NewMockRepository(ctrl)
+
+	passwordHasher := security.NewPasswordHasher()
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte("test-secret"),
+	)
+
+	service := registration.NewService(
+		repository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	ctx := context.Background()
+
+	repository.
+		EXPECT().
+		GetActiveRegistrationByEmail(
+			ctx,
+			"test@example.com",
+		).
+		Return(
+			registrationdb.GetActiveRegistrationByEmailRow{
+				Status: string(registration.PendingRegistrationCompleted),
+			},
+			true,
+			nil,
+		)
+
+	_, err := service.RegisterManual(
+		ctx,
+		"  Test@Example.COM  ",
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	appErr := apperror.FromError(err)
+
+	if appErr.Code != registration.CodeRegistrationAlreadyCompleted {
+		t.Errorf(
+			"expected code %q, got %q",
+			registration.CodeRegistrationAlreadyCompleted,
+			appErr.Code,
+		)
+	}
+
+	if appErr.Status != 409 {
+		t.Errorf(
+			"expected status 409, got %d",
+			appErr.Status,
+		)
+	}
+}
+
 func TestService_RegisterManual_RepositoryError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
@@ -201,12 +259,12 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetPendingRegistrationByEmail(
+		GetActiveRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetPendingRegistrationByEmailRow{},
+			registrationdb.GetActiveRegistrationByEmailRow{},
 			false,
 			repositoryErr,
 		)

@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS pending_registrations_completed_email_idx;

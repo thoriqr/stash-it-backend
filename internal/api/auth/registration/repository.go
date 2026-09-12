@@ -15,53 +15,52 @@ import (
 )
 
 type Repository interface {
-	CreateManualRegistration(
-		ctx context.Context,
-		params CreateManualRegistrationParams,
-	) (registrationdb.VerificationRequest, error)
+    CreateManualRegistration(
+        ctx context.Context,
+        params CreateManualRegistrationParams,
+    ) (registrationdb.VerificationRequest, error)
 
-	GetVerification(
-		ctx context.Context,
-		id uuid.UUID,
-	) (registrationdb.GetVerificationRow, error)
+    GetVerification(
+        ctx context.Context,
+        id uuid.UUID,
+    ) (registrationdb.GetVerificationRow, error)
 
-	ResendVerification(
-		ctx context.Context,
-		params ResendVerificationParams,
-	) (registrationdb.VerificationRequest, error)
+    ResendVerification(
+        ctx context.Context,
+        params ResendVerificationParams,
+    ) (registrationdb.VerificationRequest, error)
 
-	GetActiveVerificationCode(
-		ctx context.Context,
-		verificationRequestID uuid.UUID,
-		maxAttempts int32,
-	) (registrationdb.VerificationCode, error)
+    GetActiveVerificationCode(
+        ctx context.Context,
+        verificationRequestID uuid.UUID,
+        maxAttempts int32,
+    ) (registrationdb.VerificationCode, error)
 
-	IncrementVerificationCodeAttempts(
-		ctx context.Context,
-		id uuid.UUID,
-		maxAttempts int32,
-	) (int32, error)
+    IncrementVerificationCodeAttempts(
+        ctx context.Context,
+        id uuid.UUID,
+        maxAttempts int32,
+    ) (int32, error)
 
-	CompleteVerification(
-		ctx context.Context,
-		params CompleteVerificationParams,
-	) (registrationdb.RegistrationContinuation, error)
+    CompleteVerification(
+        ctx context.Context,
+        params CompleteVerificationParams,
+    ) (registrationdb.RegistrationContinuation, error)
 
-	GetPendingRegistrationByEmail(
-    ctx context.Context,
-    email string,
-	) (registrationdb.GetPendingRegistrationByEmailRow, bool, error)
+    GetActiveRegistrationByEmail(
+        ctx context.Context,
+        email string,
+    ) (registrationdb.GetActiveRegistrationByEmailRow, bool, error)
 
-	GetRegistrationContinuation(
-		ctx context.Context,
-		tokenHash string,
-	) (registrationdb.GetRegistrationContinuationRow, error)
+    GetRegistrationContinuation(
+        ctx context.Context,
+        tokenHash string,
+    ) (registrationdb.GetRegistrationContinuationRow, error)
 
-	FinalizeManualRegistration(
-    ctx context.Context,
-    params FinalizeManualRegistrationParams,
-  ) (registrationdb.CreateUserRow, error)
-	
+    FinalizeManualRegistration(
+        ctx context.Context,
+        params FinalizeManualRegistrationParams,
+    ) (registrationdb.CreateUserRow, error)
 }
 
 type repository struct {
@@ -86,20 +85,20 @@ type CreateManualRegistrationParams struct {
 	CodeExpiresAt         pgtype.Timestamptz
 }
 
-func (r *repository) GetPendingRegistrationByEmail(
+func (r *repository) GetActiveRegistrationByEmail(
     ctx context.Context,
     email string,
-) (registrationdb.GetPendingRegistrationByEmailRow, bool, error) {
-    registration, err := r.queries.GetPendingRegistrationByEmail(
+) (registrationdb.GetActiveRegistrationByEmailRow, bool, error) {
+    registration, err := r.queries.GetActiveRegistrationByEmail(
         ctx,
         email,
     )
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return registrationdb.GetPendingRegistrationByEmailRow{}, false, nil
+            return registrationdb.GetActiveRegistrationByEmailRow{}, false, nil
         }
 
-        return registrationdb.GetPendingRegistrationByEmailRow{}, false,
+        return registrationdb.GetActiveRegistrationByEmailRow{}, false,
             apperror.Internal(err)
     }
 
@@ -475,10 +474,10 @@ func mapRegistrationDBError(err error) error {
 
 	if errors.As(err, &pgErr) {
 		switch pgErr.ConstraintName {
-		case "pending_registrations_active_email_idx":
+		case "pending_registrations_email_idx":
 			return apperror.ConflictWith(
-				CodeRegistrationAlreadyPending,
-				"registration is already pending",
+				CodeRegistrationAlreadyExists,
+				"registration already exists",
 				err,
 			)
 
@@ -486,6 +485,13 @@ func mapRegistrationDBError(err error) error {
 			return apperror.ConflictWith(
 				CodeActiveVerificationCodeExists,
 				"an active verification code already exists",
+				err,
+			)
+
+		case "users_email_unique":
+			return apperror.ConflictWith(
+				CodeUserAlreadyExists,
+				"user already exists",
 				err,
 			)
 		}

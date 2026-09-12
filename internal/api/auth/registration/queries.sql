@@ -168,7 +168,7 @@ RETURNING
     consumed_at,
     created_at;
 
--- name: GetPendingRegistrationByEmail :one
+-- name: GetActiveRegistrationByEmail :one
 SELECT
     pr.id,
     pr.email,
@@ -183,7 +183,7 @@ JOIN verification_requests vr
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
 WHERE pr.email = sqlc.arg(email)
-  AND pr.status = 'pending';
+  AND pr.status IN ('pending', 'completed');
 
 -- name: GetRegistrationContinuation :one
 SELECT

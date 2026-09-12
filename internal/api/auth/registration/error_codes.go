@@ -2,6 +2,8 @@ package registration
 
 const (
 	CodeRegistrationAlreadyPending       = "REGISTRATION_ALREADY_PENDING"
+	CodeRegistrationAlreadyCompleted     = "REGISTRATION_ALREADY_COMPLETED"
+	CodeRegistrationAlreadyExists        = "REGISTRATION_ALREADY_EXISTS"
 	CodeActiveVerificationCodeExists     = "ACTIVE_VERIFICATION_CODE_EXISTS"
 	CodeVerificationNotPending           = "VERIFICATION_NOT_PENDING"
 	CodeRegistrationNotPending           = "REGISTRATION_NOT_PENDING"
@@ -13,4 +15,5 @@ const (
 	CodeVerificationCodeAttemptsExceeded = "VERIFICATION_CODE_ATTEMPTS_EXCEEDED"
 	CodeInvalidRegistrationType          = "INVALID_REGISTRATION_TYPE"
 	CodeRegistrationContinuationRequired = "REGISTRATION_CONTINUATION_REQUIRED"
+	CodeUserAlreadyExists                = "USER_ALREADY_EXISTS"
 )
