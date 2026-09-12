@@ -1,4 +1,4 @@
-package auth
+package registration
 
 import "time"
 

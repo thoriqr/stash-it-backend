@@ -1,4 +1,4 @@
-package auth
+package registration
 
 import (
 	"context"
@@ -10,31 +10,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
 )
 
-type RegistrationRepository interface {
+type Repository interface {
 	CreateManualRegistration(
 		ctx context.Context,
 		params CreateManualRegistrationParams,
-	) (authdb.VerificationRequest, error)
+	) (registrationdb.VerificationRequest, error)
 
 	GetVerification(
 		ctx context.Context,
 		id uuid.UUID,
-	) (authdb.GetVerificationRow, error)
+	) (registrationdb.GetVerificationRow, error)
 
 	ResendVerification(
 		ctx context.Context,
 		params ResendVerificationParams,
-	) (authdb.VerificationRequest, error)
+	) (registrationdb.VerificationRequest, error)
 
 	GetActiveVerificationCode(
 		ctx context.Context,
 		verificationRequestID uuid.UUID,
 		maxAttempts int32,
-	) (authdb.VerificationCode, error)
+	) (registrationdb.VerificationCode, error)
 
 	IncrementVerificationCodeAttempts(
 		ctx context.Context,
@@ -45,35 +45,35 @@ type RegistrationRepository interface {
 	CompleteVerification(
 		ctx context.Context,
 		params CompleteVerificationParams,
-	) (authdb.RegistrationContinuation, error)
+	) (registrationdb.RegistrationContinuation, error)
 
 	GetPendingRegistrationByEmail(
     ctx context.Context,
     email string,
-	) (authdb.GetPendingRegistrationByEmailRow, bool, error)
+	) (registrationdb.GetPendingRegistrationByEmailRow, bool, error)
 
 	GetRegistrationContinuation(
 		ctx context.Context,
 		tokenHash string,
-	) (authdb.GetRegistrationContinuationRow, error)
+	) (registrationdb.GetRegistrationContinuationRow, error)
 
 	FinalizeManualRegistration(
     ctx context.Context,
     params FinalizeManualRegistrationParams,
-  ) (authdb.CreateUserRow, error)
+  ) (registrationdb.CreateUserRow, error)
 	
 }
 
-type registrationRepository struct {
+type repository struct {
 	pool    *pgxpool.Pool
-	queries *authdb.Queries
+	queries *registrationdb.Queries
 }
 
-func NewRegistrationRepository(
+func NewRepository(
 	pool *pgxpool.Pool,
-	queries *authdb.Queries,
-) RegistrationRepository {
-	return &registrationRepository{
+	queries *registrationdb.Queries,
+) Repository {
+	return &repository{
 		pool:    pool,
 		queries: queries,
 	}
@@ -86,33 +86,33 @@ type CreateManualRegistrationParams struct {
 	CodeExpiresAt         pgtype.Timestamptz
 }
 
-func (r *registrationRepository) GetPendingRegistrationByEmail(
+func (r *repository) GetPendingRegistrationByEmail(
     ctx context.Context,
     email string,
-) (authdb.GetPendingRegistrationByEmailRow, bool, error) {
+) (registrationdb.GetPendingRegistrationByEmailRow, bool, error) {
     registration, err := r.queries.GetPendingRegistrationByEmail(
         ctx,
         email,
     )
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return authdb.GetPendingRegistrationByEmailRow{}, false, nil
+            return registrationdb.GetPendingRegistrationByEmailRow{}, false, nil
         }
 
-        return authdb.GetPendingRegistrationByEmailRow{}, false,
+        return registrationdb.GetPendingRegistrationByEmailRow{}, false,
             apperror.Internal(err)
     }
 
     return registration, true, nil
 }
 
-func (r *registrationRepository) CreateManualRegistration(
+func (r *repository) CreateManualRegistration(
 	ctx context.Context,
 	params CreateManualRegistrationParams,
-) (authdb.VerificationRequest, error) {
+) (registrationdb.VerificationRequest, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	defer tx.Rollback(ctx)
@@ -121,7 +121,7 @@ func (r *registrationRepository) CreateManualRegistration(
 
 	pendingRegistration, err := qtx.CreatePendingRegistration(
 		ctx,
-		authdb.CreatePendingRegistrationParams{
+		registrationdb.CreatePendingRegistrationParams{
 			Email:            params.Email,
 			RegistrationType: string(RegistrationTypeManual),
 			Status:            string(PendingRegistrationPending),
@@ -129,12 +129,12 @@ func (r *registrationRepository) CreateManualRegistration(
 		},
 	)
 	if err != nil {
-		return authdb.VerificationRequest{}, mapRegistrationDBError(err)
+		return registrationdb.VerificationRequest{}, mapRegistrationDBError(err)
 	}
 
 	verificationRequest, err := qtx.CreateVerificationRequest(
 		ctx,
-		authdb.CreateVerificationRequestParams{
+		registrationdb.CreateVerificationRequestParams{
 			SubjectType: string(VerificationSubjectPendingRegistration),
 			SubjectID:   pendingRegistration.ID,
 			Purpose:     string(VerificationPurposeRegistration),
@@ -142,39 +142,39 @@ func (r *registrationRepository) CreateManualRegistration(
 		},
 	)
 	if err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	_, err = qtx.CreateVerificationCode(
 		ctx,
-		authdb.CreateVerificationCodeParams{
+		registrationdb.CreateVerificationCodeParams{
 			VerificationRequestID: verificationRequest.ID,
 			CodeHash:              params.CodeHash,
 			ExpiresAt:             params.CodeExpiresAt,
 		},
 	)
 	if err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	return verificationRequest, nil
 }
 
-func (r *registrationRepository) GetVerification(
+func (r *repository) GetVerification(
 	ctx context.Context,
 	id uuid.UUID,
-) (authdb.GetVerificationRow, error) {
+) (registrationdb.GetVerificationRow, error) {
 	verification, err := r.queries.GetVerification(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return authdb.GetVerificationRow{}, apperror.NotFound(err)
+			return registrationdb.GetVerificationRow{}, apperror.NotFound(err)
 		}
 
-		return authdb.GetVerificationRow{}, apperror.Internal(err)
+		return registrationdb.GetVerificationRow{}, apperror.Internal(err)
 	}
 
 	return verification, nil
@@ -187,13 +187,13 @@ type ResendVerificationParams struct {
 }
 
 
-func (r *registrationRepository) ResendVerification(
+func (r *repository) ResendVerification(
 	ctx context.Context,
 	params ResendVerificationParams,
-) (authdb.VerificationRequest, error) {
+) (registrationdb.VerificationRequest, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	defer tx.Rollback(ctx)
@@ -205,20 +205,20 @@ func (r *registrationRepository) ResendVerification(
 		ctx,
 		params.VerificationID,
 	); err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	// Create the new verification code.
 	_, err = qtx.CreateVerificationCode(
 		ctx,
-		authdb.CreateVerificationCodeParams{
+		registrationdb.CreateVerificationCodeParams{
 			VerificationRequestID: params.VerificationID,
 			CodeHash:              params.CodeHash,
 			ExpiresAt:             params.CodeExpiresAt,
 		},
 	)
 	if err != nil {
-		return authdb.VerificationRequest{}, mapRegistrationDBError(err)
+		return registrationdb.VerificationRequest{}, mapRegistrationDBError(err)
 	}
 
 	// Update resend metadata.
@@ -227,51 +227,51 @@ func (r *registrationRepository) ResendVerification(
 		params.VerificationID,
 	)
 	if err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return authdb.VerificationRequest{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	return verificationRequest, nil
 }
 
-func (r *registrationRepository) GetActiveVerificationCode(
+func (r *repository) GetActiveVerificationCode(
     ctx context.Context,
     verificationRequestID uuid.UUID,
     maxAttempts int32,
-) (authdb.VerificationCode, error) {
+) (registrationdb.VerificationCode, error) {
     code, err := r.queries.GetActiveVerificationCode(
         ctx,
-        authdb.GetActiveVerificationCodeParams{
+        registrationdb.GetActiveVerificationCodeParams{
             VerificationRequestID: verificationRequestID,
             MaxAttempts:           maxAttempts,
         },
     )
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return authdb.VerificationCode{}, apperror.ConflictWith(
+            return registrationdb.VerificationCode{}, apperror.ConflictWith(
                 "",
                 "verification code is no longer available",
                 err,
             )
         }
 
-        return authdb.VerificationCode{}, apperror.Internal(err)
+        return registrationdb.VerificationCode{}, apperror.Internal(err)
     }
 
     return code, nil
 }
 
-func (r *registrationRepository) IncrementVerificationCodeAttempts(
+func (r *repository) IncrementVerificationCodeAttempts(
 	ctx context.Context,
 	id uuid.UUID,
 	maxAttempts int32,
 ) (int32, error) {
 	attempts, err := r.queries.IncrementVerificationCodeAttempts(
 		ctx,
-		authdb.IncrementVerificationCodeAttemptsParams{
+		registrationdb.IncrementVerificationCodeAttemptsParams{
 			ID:          id,
 			MaxAttempts: maxAttempts,
 		},
@@ -299,13 +299,13 @@ type CompleteVerificationParams struct {
 	ExpiresAt             pgtype.Timestamptz
 }
 
-func (r *registrationRepository) CompleteVerification(
+func (r *repository) CompleteVerification(
 	ctx context.Context,
 	params CompleteVerificationParams,
-) (authdb.RegistrationContinuation, error) {
+) (registrationdb.RegistrationContinuation, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return authdb.RegistrationContinuation{}, apperror.Internal(err)
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
 	}
 
 	defer tx.Rollback(ctx)
@@ -317,11 +317,11 @@ func (r *registrationRepository) CompleteVerification(
 		params.VerificationCodeID,
 	)
 	if err != nil {
-		return authdb.RegistrationContinuation{}, apperror.Internal(err)
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
 	}
 
 	if rowsAffected != 1 {
-		return authdb.RegistrationContinuation{}, apperror.ConflictWith(
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
 			"",
 			"verification code is no longer available",
 			nil,
@@ -333,11 +333,11 @@ func (r *registrationRepository) CompleteVerification(
 		params.VerificationRequestID,
 	)
 	if err != nil {
-		return authdb.RegistrationContinuation{}, apperror.Internal(err)
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
 	}
 
 	if rowsAffected != 1 {
-		return authdb.RegistrationContinuation{}, apperror.ConflictWith(
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
 			"",
 			"verification request is no longer pending",
 			nil,
@@ -346,41 +346,41 @@ func (r *registrationRepository) CompleteVerification(
 
 	continuation, err := qtx.CreateRegistrationContinuation(
 		ctx,
-		authdb.CreateRegistrationContinuationParams{
+		registrationdb.CreateRegistrationContinuationParams{
 			PendingRegistrationID: params.PendingRegistrationID,
 			TokenHash:             params.TokenHash,
 			ExpiresAt:             params.ExpiresAt,
 		},
 	)
 	if err != nil {
-		return authdb.RegistrationContinuation{}, mapRegistrationDBError(err)
+		return registrationdb.RegistrationContinuation{}, mapRegistrationDBError(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return authdb.RegistrationContinuation{}, apperror.Internal(err)
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
 	}
 
 	return continuation, nil
 }
 
-func (r *registrationRepository) GetRegistrationContinuation(
+func (r *repository) GetRegistrationContinuation(
     ctx context.Context,
     tokenHash string,
-) (authdb.GetRegistrationContinuationRow, error) {
+) (registrationdb.GetRegistrationContinuationRow, error) {
     continuation, err := r.queries.GetRegistrationContinuation(
         ctx,
         tokenHash,
     )
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return authdb.GetRegistrationContinuationRow{}, apperror.ConflictWith(
+            return registrationdb.GetRegistrationContinuationRow{}, apperror.ConflictWith(
                 "",
                 "registration continuation is no longer available",
                 err,
             )
         }
 
-        return authdb.GetRegistrationContinuationRow{}, apperror.Internal(err)
+        return registrationdb.GetRegistrationContinuationRow{}, apperror.Internal(err)
     }
 
     return continuation, nil
@@ -395,13 +395,13 @@ type FinalizeManualRegistrationParams struct {
 	PasswordHash          string
 }
 
-func (r *registrationRepository) FinalizeManualRegistration(
+func (r *repository) FinalizeManualRegistration(
 	ctx context.Context,
 	params FinalizeManualRegistrationParams,
-) (authdb.CreateUserRow, error) {
+) (registrationdb.CreateUserRow, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return authdb.CreateUserRow{}, apperror.Internal(err)
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	defer tx.Rollback(ctx)
@@ -410,25 +410,25 @@ func (r *registrationRepository) FinalizeManualRegistration(
 
 	user, err := qtx.CreateUser(
 		ctx,
-		authdb.CreateUserParams{
+		registrationdb.CreateUserParams{
 			Email:           params.Email,
 			DisplayName:     params.DisplayName,
 			EmailVerifiedAt: params.EmailVerifiedAt,
 		},
 	)
 	if err != nil {
-		return authdb.CreateUserRow{}, mapRegistrationDBError(err)
+		return registrationdb.CreateUserRow{}, mapRegistrationDBError(err)
 	}
 
 	_, err = qtx.CreatePasswordCredential(
 		ctx,
-		authdb.CreatePasswordCredentialParams{
+		registrationdb.CreatePasswordCredentialParams{
 			UserID:       user.ID,
 			PasswordHash: params.PasswordHash,
 		},
 	)
 	if err != nil {
-		return authdb.CreateUserRow{}, apperror.Internal(err)
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	rowsAffected, err := qtx.ConsumeRegistrationContinuation(
@@ -436,11 +436,11 @@ func (r *registrationRepository) FinalizeManualRegistration(
 		params.ContinuationID,
 	)
 	if err != nil {
-		return authdb.CreateUserRow{}, apperror.Internal(err)
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	if rowsAffected != 1 {
-		return authdb.CreateUserRow{}, apperror.ConflictWith(
+		return registrationdb.CreateUserRow{}, apperror.ConflictWith(
 			"",
 			"registration continuation is no longer available",
 			nil,
@@ -452,11 +452,11 @@ func (r *registrationRepository) FinalizeManualRegistration(
 		params.PendingRegistrationID,
 	)
 	if err != nil {
-		return authdb.CreateUserRow{}, apperror.Internal(err)
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	if rowsAffected != 1 {
-		return authdb.CreateUserRow{}, apperror.ConflictWith(
+		return registrationdb.CreateUserRow{}, apperror.ConflictWith(
 			"",
 			"registration is no longer pending",
 			nil,
@@ -464,7 +464,7 @@ func (r *registrationRepository) FinalizeManualRegistration(
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return authdb.CreateUserRow{}, apperror.Internal(err)
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	return user, nil

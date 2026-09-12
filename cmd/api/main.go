@@ -7,16 +7,13 @@ import (
 	"github.com/gofiber/fiber/v3"
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 
-	"github.com/thoriqr/stash-it-backend/internal/auth"
-	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
-	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
-
 
 func main() {
 	ctx := context.Background()
@@ -34,46 +31,23 @@ func main() {
 	}
 	defer pool.Close()
 
-	validate := validation.New(
-)
-
+	validate := validation.New()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
+		ErrorHandler:   httpx.ErrorHandler,
 		StructValidator: validate,
 	})
 
 	app.Use(recoverer.New())
 
-	
-	// Health
 	healthHandler := health.NewHandler()
 	health.Routes(app, healthHandler)
 
-	// Auth
-	authQueries := authdb.New(pool)
-
-	registrationRepository := auth.NewRegistrationRepository(
+	auth.RegisterModule(
+		app,
 		pool,
-		authQueries,
+		cfg,
 	)
-
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte(cfg.VerificationCodeSecret),
-	)
-
-	passwordHasher := security.NewPasswordHasher()
-
-	authService := auth.NewRegistrationService(
-		registrationRepository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
-
-	authHandler := auth.NewHandler(authService)
-
-	auth.Routes(app, authHandler)
-
 
 	fmt.Println("Database connected")
 	fmt.Println("Server running on http://localhost:8080")

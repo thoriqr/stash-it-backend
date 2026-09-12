@@ -1,4 +1,4 @@
-package auth_test
+package registration_test
 
 import (
 	"context"
@@ -10,23 +10,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/mock/gomock"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
+	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	auth "github.com/thoriqr/stash-it-backend/internal/auth"
-	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
-	"github.com/thoriqr/stash-it-backend/internal/auth/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestRegistrationService_GetVerification(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -43,10 +43,10 @@ func TestRegistrationService_GetVerification(t *testing.T) {
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
-			authdb.GetVerificationRow{
+			registrationdb.GetVerificationRow{
 				ID:                 verificationID,
-				Status:             string(auth.VerificationRequestPending),
-				RegistrationStatus: string(auth.PendingRegistrationPending),
+				Status:             string(registration.VerificationRequestPending),
+				RegistrationStatus: string(registration.PendingRegistrationPending),
 				RegistrationExpiresAt: pgtype.Timestamptz{
 					Time:  registrationExpiresAt,
 					Valid: true,
@@ -72,10 +72,10 @@ func TestRegistrationService_GetVerification(t *testing.T) {
 		)
 	}
 
-	if result.Status != auth.VerificationRequestPending {
+	if result.Status != registration.VerificationRequestPending {
 		t.Errorf(
 			"expected status %q, got %q",
-			auth.VerificationRequestPending,
+			registration.VerificationRequestPending,
 			result.Status,
 		)
 	}
@@ -103,14 +103,14 @@ func TestRegistrationService_GetVerification(t *testing.T) {
 
 func TestRegistrationService_GetVerification_LastSentAtUnavailable(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -123,10 +123,10 @@ func TestRegistrationService_GetVerification_LastSentAtUnavailable(t *testing.T)
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
-			authdb.GetVerificationRow{
+			registrationdb.GetVerificationRow{
 				ID:                 verificationID,
-				Status:             string(auth.VerificationRequestPending),
-				RegistrationStatus: string(auth.PendingRegistrationPending),
+				Status:             string(registration.VerificationRequestPending),
+				RegistrationStatus: string(registration.PendingRegistrationPending),
 				RegistrationExpiresAt: pgtype.Timestamptz{
 					Time:  time.Now().Add(7 * 24 * time.Hour),
 					Valid: true,
@@ -150,14 +150,14 @@ func TestRegistrationService_GetVerification_LastSentAtUnavailable(t *testing.T)
 
 func TestRegistrationService_GetVerification_RepositoryError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -174,7 +174,7 @@ func TestRegistrationService_GetVerification_RepositoryError(t *testing.T) {
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
-			authdb.GetVerificationRow{},
+			registrationdb.GetVerificationRow{},
 			repositoryErr,
 		)
 

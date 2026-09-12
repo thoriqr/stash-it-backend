@@ -1,4 +1,4 @@
-package auth
+package registration
 
 const (
 	CodeRegistrationAlreadyPending       = "REGISTRATION_ALREADY_PENDING"

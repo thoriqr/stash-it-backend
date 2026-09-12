@@ -1,4 +1,4 @@
-package auth_test
+package registration_test
 
 import (
 	"context"
@@ -9,23 +9,23 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
+	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	auth "github.com/thoriqr/stash-it-backend/internal/auth"
-	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
-	"github.com/thoriqr/stash-it-backend/internal/auth/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
-func TestRegistrationService_RegisterManual(t *testing.T) {
+func TestService_RegisterManual(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -43,7 +43,7 @@ func TestRegistrationService_RegisterManual(t *testing.T) {
 			"test@example.com",
 		).
 		Return(
-			authdb.GetPendingRegistrationByEmailRow{},
+			registrationdb.GetPendingRegistrationByEmailRow{},
 			false,
 			nil,
 		)
@@ -56,8 +56,8 @@ func TestRegistrationService_RegisterManual(t *testing.T) {
 		).
 		DoAndReturn(func(
 			_ context.Context,
-			params auth.CreateManualRegistrationParams,
-		) (authdb.VerificationRequest, error) {
+			params registration.CreateManualRegistrationParams,
+		) (registrationdb.VerificationRequest, error) {
 			if params.Email != "test@example.com" {
 				t.Errorf(
 					"expected normalized email %q, got %q",
@@ -102,7 +102,7 @@ func TestRegistrationService_RegisterManual(t *testing.T) {
 				)
 			}
 
-			return authdb.VerificationRequest{
+			return registrationdb.VerificationRequest{
 				ID: verificationID,
 			}, nil
 		})
@@ -128,16 +128,16 @@ func TestRegistrationService_RegisterManual(t *testing.T) {
 	}
 }
 
-func TestRegistrationService_RegisterManual_AlreadyPending(t *testing.T) {
+func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -153,7 +153,7 @@ func TestRegistrationService_RegisterManual_AlreadyPending(t *testing.T) {
 			"test@example.com",
 		).
 		Return(
-			authdb.GetPendingRegistrationByEmailRow{
+			registrationdb.GetPendingRegistrationByEmailRow{
 				VerificationID: verificationID,
 			},
 			true,
@@ -181,16 +181,16 @@ func TestRegistrationService_RegisterManual_AlreadyPending(t *testing.T) {
 	}
 }
 
-func TestRegistrationService_RegisterManual_RepositoryError(t *testing.T) {
+func TestService_RegisterManual_RepositoryError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRegistrationRepository(ctrl)
+	repository := mocks.NewMockRepository(ctrl)
 
 	passwordHasher := security.NewPasswordHasher()
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte("test-secret"),
 	)
 
-	service := auth.NewRegistrationService(
+	service := registration.NewService(
 		repository,
 		passwordHasher,
 		verificationCodeHasher,
@@ -206,7 +206,7 @@ func TestRegistrationService_RegisterManual_RepositoryError(t *testing.T) {
 			"test@example.com",
 		).
 		Return(
-			authdb.GetPendingRegistrationByEmailRow{},
+			registrationdb.GetPendingRegistrationByEmailRow{},
 			false,
 			repositoryErr,
 		)

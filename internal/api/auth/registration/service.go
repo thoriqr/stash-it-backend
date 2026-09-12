@@ -1,4 +1,4 @@
-package auth
+package registration
 
 import (
 	"context"
@@ -14,19 +14,19 @@ import (
 )
 
 
-type RegistrationService  struct {
-	registrationRepository RegistrationRepository
+type Service struct {
+	repository             Repository
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
 }
 
-func NewRegistrationService(
-	registrationRepository RegistrationRepository,
+func NewService(
+	repository Repository,
 	passwordHasher *security.PasswordHasher,
 	verificationCodeHasher *security.VerificationCodeHasher,
-) *RegistrationService  {
-	return &RegistrationService {
-		registrationRepository: registrationRepository,
+) *Service {
+	return &Service{
+		repository:             repository,
 		passwordHasher:         passwordHasher,
 		verificationCodeHasher: verificationCodeHasher,
 	}
@@ -41,14 +41,14 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (s *RegistrationService) RegisterManual(
+func (s *Service) RegisterManual(
 	ctx context.Context,
 	email string,
 ) (RegisterManualResult, error) {
 	email = normalizeEmail(email)
 
 	pendingRegistration, found, err :=
-		s.registrationRepository.GetPendingRegistrationByEmail(
+		s.repository.GetPendingRegistrationByEmail(
 			ctx,
 			email,
 		)
@@ -82,7 +82,7 @@ func (s *RegistrationService) RegisterManual(
 		Valid: true,
 	}
 
-	result, err := s.registrationRepository.CreateManualRegistration(
+	result, err := s.repository.CreateManualRegistration(
 		ctx,
 		CreateManualRegistrationParams{
 			Email:                 email,
@@ -111,11 +111,11 @@ type GetVerificationResult struct {
 	LastSentAt             *time.Time
 }
 
-func (s *RegistrationService) GetVerification(
+func (s *Service) GetVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (GetVerificationResult, error) {
-	verification, err := s.registrationRepository.GetVerification(
+	verification, err := s.repository.GetVerification(
 		ctx,
 		verificationID,
 	)
@@ -145,11 +145,11 @@ type ResendVerificationResult struct {
 	VerificationID uuid.UUID
 }
 
-func (s *RegistrationService) ResendVerification(
+func (s *Service) ResendVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (ResendVerificationResult, error) {
-	verification, err := s.registrationRepository.GetVerification(
+	verification, err := s.repository.GetVerification(
 		ctx,
 		verificationID,
 	)
@@ -190,7 +190,7 @@ func (s *RegistrationService) ResendVerification(
 		Valid: true,
 	}
 
-	_, err = s.registrationRepository.ResendVerification(
+	_, err = s.repository.ResendVerification(
 		ctx,
 		ResendVerificationParams{
 			VerificationID: verificationID,
@@ -220,12 +220,12 @@ type VerifyRegistrationResult struct {
 	RegistrationContinuationToken string
 }
 
-func (s *RegistrationService) VerifyRegistration(
+func (s *Service) VerifyRegistration(
 	ctx context.Context,
 	verificationID uuid.UUID,
 	pin string,
 ) (VerifyRegistrationResult, error) {
-	verification, err := s.registrationRepository.GetVerification(
+	verification, err := s.repository.GetVerification(
 		ctx,
 		verificationID,
 	)
@@ -237,7 +237,7 @@ func (s *RegistrationService) VerifyRegistration(
 		return VerifyRegistrationResult{}, err
 	}
 
-	code, err := s.registrationRepository.GetActiveVerificationCode(
+	code, err := s.repository.GetActiveVerificationCode(
 		ctx,
 		verificationID,
 		verificationCodeMaxAttempts,
@@ -247,7 +247,7 @@ func (s *RegistrationService) VerifyRegistration(
 	}
 
 	if !s.verificationCodeHasher.Verify(pin, code.CodeHash) {
-		attempts, err := s.registrationRepository.IncrementVerificationCodeAttempts(
+		attempts, err := s.repository.IncrementVerificationCodeAttempts(
 			ctx,
 			code.ID,
 			verificationCodeMaxAttempts,
@@ -283,7 +283,7 @@ func (s *RegistrationService) VerifyRegistration(
 		Valid: true,
 	}
 
-	_, err = s.registrationRepository.CompleteVerification(
+	_, err = s.repository.CompleteVerification(
 		ctx,
 		CompleteVerificationParams{
 			VerificationCodeID:    code.ID,
@@ -311,13 +311,13 @@ type GetRegistrationContinuationResult struct {
 	ExpiresAt        time.Time
 }
 
-func (s *RegistrationService) GetRegistrationContinuation(
+func (s *Service) GetRegistrationContinuation(
 	ctx context.Context,
 	token string,
 ) (GetRegistrationContinuationResult, error) {
 	tokenHash := security.HashToken(token)
 
-	continuation, err := s.registrationRepository.GetRegistrationContinuation(
+	continuation, err := s.repository.GetRegistrationContinuation(
 		ctx,
 		tokenHash,
 	)
@@ -349,13 +349,13 @@ type FinalizeManualRegistrationResult struct {
 	DisplayName string
 }
 
-func (s *RegistrationService) FinalizeManualRegistration(
+func (s *Service) FinalizeManualRegistration(
 	ctx context.Context,
 	params FinalizeManualRegistrationInput,
 ) (FinalizeManualRegistrationResult, error) {
 	tokenHash := security.HashToken(params.ContinuationToken)
 
-	continuation, err := s.registrationRepository.GetRegistrationContinuation(
+	continuation, err := s.repository.GetRegistrationContinuation(
 		ctx,
 		tokenHash,
 	)
@@ -382,7 +382,7 @@ func (s *RegistrationService) FinalizeManualRegistration(
 
 	now := time.Now()
 
-	user, err := s.registrationRepository.FinalizeManualRegistration(
+	user, err := s.repository.FinalizeManualRegistration(
 		ctx,
 		FinalizeManualRegistrationParams{
 			PendingRegistrationID: continuation.PendingRegistrationID,

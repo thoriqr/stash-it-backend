@@ -1,15 +1,15 @@
-package auth
+package registration
 
 import (
 	"fmt"
 	"time"
 
+	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	authdb "github.com/thoriqr/stash-it-backend/internal/auth/generated"
 )
 
 func validateVerificationPending(
-	verification authdb.GetVerificationRow,
+	verification registrationdb.GetVerificationRow,
 ) error {
 	if verification.Status != string(VerificationRequestPending) {
 		return apperror.ConflictWith(
@@ -45,7 +45,7 @@ func validateVerificationPending(
 }
 
 func validateRegistrationContinuation(
-    continuation authdb.GetRegistrationContinuationRow,
+    continuation registrationdb.GetRegistrationContinuationRow,
 ) error {
     now := time.Now()
 

@@ -1,4 +1,4 @@
-package auth
+package registration
 
 type RegisterRequest struct {
 	Email string `json:"email" validate:"required,email,max=255"`

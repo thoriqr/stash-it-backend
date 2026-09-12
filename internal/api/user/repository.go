@@ -7,11 +7,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	userdb "github.com/thoriqr/stash-it-backend/internal/api/user/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	userdb "github.com/thoriqr/stash-it-backend/internal/user/generated"
 )
 
-type UserRepository interface {
+type Repository interface {
 	GetUserByID(
 		ctx context.Context,
 		id uuid.UUID,
@@ -23,19 +23,19 @@ type UserRepository interface {
 	) (userdb.GetUserByEmailRow, error)
 }
 
-type Repository struct {
+type repository struct {
 	queries *userdb.Queries
 }
 
 func NewRepository(
 	queries *userdb.Queries,
-) *Repository {
-	return &Repository{
+) Repository {
+	return &repository{
 		queries: queries,
 	}
 }
 
-func (r *Repository) GetUserByID(
+func (r *repository) GetUserByID(
 	ctx context.Context,
 	id uuid.UUID,
 ) (userdb.GetUserByIDRow, error) {
@@ -55,7 +55,7 @@ func (r *Repository) GetUserByID(
 	return user, nil
 }
 
-func (r *Repository) GetUserByEmail(
+func (r *repository) GetUserByEmail(
 	ctx context.Context,
 	email string,
 ) (userdb.GetUserByEmailRow, error) {

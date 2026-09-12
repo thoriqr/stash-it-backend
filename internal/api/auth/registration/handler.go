@@ -1,4 +1,4 @@
-package auth
+package registration
 
 import (
 	"github.com/gofiber/fiber/v3"
@@ -8,17 +8,17 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 )
 
-type RegistrationHandler  struct {
-	service *RegistrationService
+type Handler struct {
+	service *Service
 }
 
-func NewHandler(service *RegistrationService) *RegistrationHandler  {
-	return &RegistrationHandler {
+func NewHandler(service *Service) *Handler  {
+	return &Handler {
 		service: service,
 	}
 }
 
-func (h *RegistrationHandler) RegisterManual(c fiber.Ctx) error {
+func (h *Handler) RegisterManual(c fiber.Ctx) error {
 	var req RegisterRequest
 
 	if err := httpx.BindBody(c, &req); err != nil {
@@ -50,7 +50,7 @@ func (h *RegistrationHandler) RegisterManual(c fiber.Ctx) error {
 	)
 }
 
-func (h *RegistrationHandler) GetVerification(c fiber.Ctx) error {
+func (h *Handler) GetVerification(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
 	if err != nil {
 		return apperror.BadRequestWith(
@@ -77,7 +77,7 @@ func (h *RegistrationHandler) GetVerification(c fiber.Ctx) error {
 	)
 }
 
-func (h *RegistrationHandler) ResendVerification(c fiber.Ctx) error {
+func (h *Handler) ResendVerification(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
 	if err != nil {
 		return apperror.BadRequestWith(
@@ -107,7 +107,7 @@ func (h *RegistrationHandler) ResendVerification(c fiber.Ctx) error {
 }
 
 
-func (h *RegistrationHandler) VerifyRegistration(c fiber.Ctx) error {
+func (h *Handler) VerifyRegistration(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
 	if err != nil {
 		return apperror.BadRequestWith(
@@ -143,7 +143,7 @@ func (h *RegistrationHandler) VerifyRegistration(c fiber.Ctx) error {
 	)
 }
 
-func (h *RegistrationHandler) GetRegistrationContinuation(c fiber.Ctx) error {
+func (h *Handler) GetRegistrationContinuation(c fiber.Ctx) error {
 	token, err := extractRegistrationContinuationToken(c)
 	if err != nil {
 		return err
@@ -170,7 +170,7 @@ func (h *RegistrationHandler) GetRegistrationContinuation(c fiber.Ctx) error {
 	)
 }
 
-func (h *RegistrationHandler) FinalizeManualRegistration(c fiber.Ctx) error {
+func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
     var req FinalizeManualRegistrationRequest
 
     if err := httpx.BindBody(c, &req); err != nil {

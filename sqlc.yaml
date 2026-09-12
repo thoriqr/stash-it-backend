@@ -3,11 +3,11 @@ version: "2"
 sql:
   - engine: "postgresql"
     schema: "migrations"
-    queries: "internal/auth/queries.sql"
+    queries: "internal/api/auth/registration/queries.sql"
     gen:
       go:
-        package: "authdb"
-        out: "internal/auth/generated"
+        package: "registrationdb"
+        out: "internal/api/auth/registration/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"
@@ -15,11 +15,11 @@ sql:
 
   - engine: "postgresql"
     schema: "migrations"
-    queries: "internal/user/queries.sql"
+    queries: "internal/api/user/queries.sql"
     gen:
       go:
         package: "userdb"
-        out: "internal/user/generated"
+        out: "internal/api/user/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"
