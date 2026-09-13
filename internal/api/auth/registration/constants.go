@@ -7,5 +7,5 @@ const (
 	registrationContinuationExpiresIn = 15 * time.Minute
 	verificationCodeExpiresIn         = 5 * time.Minute
 	verificationResendCooldown        = 60 * time.Second
-	verificationCodeMaxAttempts      int32 = 5
+	VerificationCodeMaxAttempts      int32 = 5
 )

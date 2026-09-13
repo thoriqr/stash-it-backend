@@ -258,7 +258,7 @@ func (s *Service) VerifyRegistration(
 	code, err := s.repository.GetActiveVerificationCode(
 		ctx,
 		verificationID,
-		verificationCodeMaxAttempts,
+		VerificationCodeMaxAttempts,
 	)
 	if err != nil {
 		return VerifyRegistrationResult{}, err
@@ -268,13 +268,13 @@ func (s *Service) VerifyRegistration(
 		attempts, err := s.repository.IncrementVerificationCodeAttempts(
 			ctx,
 			code.ID,
-			verificationCodeMaxAttempts,
+			VerificationCodeMaxAttempts,
 		)
 	if err != nil {
 		return VerifyRegistrationResult{}, err
 	}
 
-	if attempts >= verificationCodeMaxAttempts {
+	if attempts >= VerificationCodeMaxAttempts {
 		return VerifyRegistrationResult{}, apperror.ConflictWith(
 			CodeVerificationCodeAttemptsExceeded,
 			"verification code attempt limit exceeded",
