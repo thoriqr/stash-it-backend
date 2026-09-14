@@ -1,6 +1,7 @@
 version: "2"
 
 sql:
+  # Production queries
   - engine: "postgresql"
     schema: "migrations"
     queries: "internal/api/auth/registration/queries.sql"
@@ -20,6 +21,19 @@ sql:
       go:
         package: "userdb"
         out: "internal/api/user/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for registration
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/registration/queries.sql"
+    gen:
+      go:
+        package: "registrationtestdb"
+        out: "internal/testutil/db/registration/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"

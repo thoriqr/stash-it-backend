@@ -3,7 +3,7 @@ package registration
 import "github.com/gofiber/fiber/v3"
 
 func Routes(router fiber.Router, h *Handler) {
-	router .Post("/register/manual", h.RegisterManual)
+	router.Post("/register/manual", h.RegisterManual)
 
 	router.Get(
 		"/register/verification/:verification_id",

@@ -199,7 +199,7 @@ func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
         DisplayName: result.DisplayName,
     }
 
-    return httpx.OK(
+    return httpx.Created(
         c,
         "registration completed successfully",
         &response,
