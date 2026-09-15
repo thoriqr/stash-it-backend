@@ -4,8 +4,12 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
+	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
@@ -45,30 +49,40 @@ func RegisterModule(
 		registrationHandler,
 	)
 
-	// ============================================================
 	// Login
-	// ============================================================
 
-	// loginQueries := logindb.New(pool)
-	//
-	// loginRepository := login.NewRepository(
-	//     pool,
-	//     loginQueries,
-	// )
-	//
-	// loginService := login.NewService(
-	//     loginRepository,
-	//     ...,
-	// )
-	//
-	// loginHandler := login.NewHandler(
-	//     loginService,
-	// )
-	//
-	// login.Routes(
-	//     authRouter,
-	//     loginHandler,
-	// )
+	loginQueries := logindb.New(pool)
+
+	loginRepository := login.NewRepository(
+		loginQueries,
+	)
+
+	sessionQueries := sessiondb.New(pool)
+
+	sessionRepository := session.NewRepository(
+		sessionQueries,
+		pool,
+	)
+
+	accessTokenGenerator := security.NewAccessTokenGenerator(
+		[]byte(cfg.AccessTokenSecret),
+	)
+
+	loginService := login.NewService(
+		loginRepository,
+		sessionRepository,
+		passwordHasher,
+		accessTokenGenerator,
+	)
+
+	loginHandler := login.NewHandler(
+		loginService,
+	)
+
+	login.Routes(
+		authRouter,
+		loginHandler,
+	)
 
 	// ============================================================
 	// Session

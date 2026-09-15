@@ -16,6 +16,30 @@ sql:
 
   - engine: "postgresql"
     schema: "migrations"
+    queries: "internal/api/auth/login/queries.sql"
+    gen:
+      go:
+        package: "logindb"
+        out: "internal/api/auth/login/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/api/auth/session/queries.sql"
+    gen:
+      go:
+        package: "sessiondb"
+        out: "internal/api/auth/session/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  - engine: "postgresql"
+    schema: "migrations"
     queries: "internal/api/user/queries.sql"
     gen:
       go:

@@ -10,6 +10,7 @@ import (
 type Config struct {
 	DatabaseURL            string
 	VerificationCodeSecret string
+	AccessTokenSecret      string
 }
 
 func Load() (Config, error) {
@@ -27,8 +28,14 @@ func Load() (Config, error) {
 		)
 	}
 
+	accessTokenSecret := os.Getenv("ACCESS_TOKEN_SECRET")
+	if accessTokenSecret == "" {
+		return Config{}, fmt.Errorf("ACCESS_TOKEN_SECRET is required")
+	}
+
 	return Config{
 		DatabaseURL:            databaseURL,
 		VerificationCodeSecret: verificationCodeSecret,
+		AccessTokenSecret:      accessTokenSecret,
 	}, nil
 }

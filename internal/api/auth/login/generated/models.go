@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package registrationdb
+package logindb
 
 import (
 	"github.com/google/uuid"

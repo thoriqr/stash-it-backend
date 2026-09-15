@@ -25,6 +25,14 @@ type PendingRegistration struct {
 	ExpiresAt        pgtype.Timestamptz
 }
 
+type RefreshToken struct {
+	ID         uuid.UUID
+	SessionID  uuid.UUID
+	TokenHash  string
+	IssuedAt   pgtype.Timestamptz
+	ReplacedBy pgtype.UUID
+}
+
 type RegistrationContinuation struct {
 	ID                    uuid.UUID
 	PendingRegistrationID uuid.UUID
@@ -32,6 +40,19 @@ type RegistrationContinuation struct {
 	ExpiresAt             pgtype.Timestamptz
 	ConsumedAt            pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
+}
+
+type Session struct {
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	Platform          string
+	InstallationID    pgtype.UUID
+	DeviceName        pgtype.Text
+	UserAgent         pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	LastActivityAt    pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
 }
 
 type User struct {

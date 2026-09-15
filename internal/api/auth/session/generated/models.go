@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package registrationdb
+package sessiondb
 
 import (
 	"github.com/google/uuid"
