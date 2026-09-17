@@ -20,19 +20,31 @@ func RegisterModule(
 	cfg config.Config,
 ) {
 	authRouter := app.Group("/auth")
+
+	// Shared security dependencies
+
+	passwordHasher := security.NewPasswordHasher()
+
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte(cfg.VerificationCodeSecret),
+	)
+
+	accessTokenGenerator := security.NewAccessTokenGenerator(
+		[]byte(cfg.AccessTokenSecret),
+	)
+
+	accessTokenVerifier := security.NewAccessTokenVerifier(
+	[]byte(cfg.AccessTokenSecret),
+)
+
 	// Registration
+
 	registrationQueries := registrationdb.New(pool)
 
 	registrationRepository := registration.NewRepository(
 		pool,
 		registrationQueries,
 	)
-
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte(cfg.VerificationCodeSecret),
-	)
-
-	passwordHasher := security.NewPasswordHasher()
 
 	registrationService := registration.NewService(
 		registrationRepository,
@@ -49,13 +61,7 @@ func RegisterModule(
 		registrationHandler,
 	)
 
-	// Login
-
-	loginQueries := logindb.New(pool)
-
-	loginRepository := login.NewRepository(
-		loginQueries,
-	)
+	// Session
 
 	sessionQueries := sessiondb.New(pool)
 
@@ -64,13 +70,32 @@ func RegisterModule(
 		pool,
 	)
 
-	accessTokenGenerator := security.NewAccessTokenGenerator(
-		[]byte(cfg.AccessTokenSecret),
+	sessionService := session.NewService(
+		sessionRepository,
+		accessTokenGenerator,
+	)
+
+	sessionHandler := session.NewHandler(
+		sessionService,
+	)
+
+	session.Routes(
+		authRouter,
+		sessionHandler,
+		accessTokenVerifier,
+	)
+
+	// Login
+
+	loginQueries := logindb.New(pool)
+
+	loginRepository := login.NewRepository(
+		loginQueries,
 	)
 
 	loginService := login.NewService(
 		loginRepository,
-		sessionRepository,
+		sessionService,
 		passwordHasher,
 		accessTokenGenerator,
 	)
@@ -83,29 +108,4 @@ func RegisterModule(
 		authRouter,
 		loginHandler,
 	)
-
-	// ============================================================
-	// Session
-	// ============================================================
-
-	// sessionQueries := sessiondb.New(pool)
-	//
-	// sessionRepository := session.NewRepository(
-	//     pool,
-	//     sessionQueries,
-	// )
-	//
-	// sessionService := session.NewService(
-	//     sessionRepository,
-	//     ...,
-	// )
-	//
-	// sessionHandler := session.NewHandler(
-	//     sessionService,
-	// )
-	//
-	// session.Routes(
-	//     authRouter,
-	//     sessionHandler,
-	// )
 }

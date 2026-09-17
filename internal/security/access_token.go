@@ -45,3 +45,43 @@ func (g *AccessTokenGenerator) Generate(
 
 	return token.SignedString(g.secret)
 }
+
+type AccessTokenVerifier struct {
+	secret []byte
+}
+
+func NewAccessTokenVerifier(secret []byte) *AccessTokenVerifier {
+	return &AccessTokenVerifier{
+		secret: secret,
+	}
+}
+
+func (v *AccessTokenVerifier) Verify(
+	tokenString string,
+) (AccessTokenClaims, error) {
+	var claims AccessTokenClaims
+
+	_, err := jwt.ParseWithClaims(
+		tokenString,
+		&claims,
+		func(token *jwt.Token) (any, error) {
+			return v.secret, nil
+		},
+		jwt.WithValidMethods([]string{
+			jwt.SigningMethodHS256.Alg(),
+		}),
+	)
+	if err != nil {
+		return AccessTokenClaims{}, err
+	}
+
+	if claims.Subject == "" {
+		return AccessTokenClaims{}, jwt.ErrTokenRequiredClaimMissing
+	}
+
+	if claims.SessionID == uuid.Nil {
+		return AccessTokenClaims{}, jwt.ErrTokenRequiredClaimMissing
+	}
+
+	return claims, nil
+}

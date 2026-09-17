@@ -1,4 +1,4 @@
-package login
+package session
 
 import (
 	"github.com/gofiber/fiber/v3"
@@ -14,7 +14,14 @@ const (
 	headerDeviceName     = "X-Device-Name"
 )
 
-func extractSessionMetadata(c fiber.Ctx) (LoginSessionMetadata, error) {
+type SessionMetadata struct {
+	Platform       string
+	InstallationID pgtype.UUID
+	DeviceName     pgtype.Text
+	UserAgent      pgtype.Text
+}
+
+func ExtractMetadata(c fiber.Ctx) (SessionMetadata, error) {
 	platform := c.Get(headerPlatform)
 	installationID := c.Get(headerInstallationID)
 	deviceName := c.Get(headerDeviceName)
@@ -25,8 +32,8 @@ func extractSessionMetadata(c fiber.Ctx) (LoginSessionMetadata, error) {
 	if installationID != "" {
 		id, err := uuid.Parse(installationID)
 		if err != nil {
-			return LoginSessionMetadata{}, apperror.BadRequestWith(
-				"",
+			return SessionMetadata{}, apperror.BadRequestWith(
+				CodeInvalidInstallationID,
 				"invalid installation id",
 				err,
 			)
@@ -54,7 +61,7 @@ func extractSessionMetadata(c fiber.Ctx) (LoginSessionMetadata, error) {
 		}
 	}
 
-	return LoginSessionMetadata{
+	return SessionMetadata{
 		Platform:       platform,
 		InstallationID: parsedInstallationID,
 		DeviceName:     parsedDeviceName,

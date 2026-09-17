@@ -12,6 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSessions = `-- name: CountSessions :one
+SELECT COUNT(*)
+FROM sessions
+WHERE user_id = $1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) CountSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSessions, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRefreshToken = `-- name: CreateRefreshToken :one
 INSERT INTO refresh_tokens (
     session_id,
@@ -107,4 +121,223 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const getRefreshTokenWithSession = `-- name: GetRefreshTokenWithSession :one
+SELECT
+    rt.id,
+    rt.session_id,
+    rt.token_hash,
+    rt.issued_at,
+    rt.replaced_by,
+    s.user_id,
+    s.platform,
+    s.installation_id,
+    s.device_name,
+    s.user_agent,
+    s.created_at,
+    s.last_activity_at,
+    s.absolute_expires_at,
+    s.revoked_at
+FROM refresh_tokens rt
+JOIN sessions s
+    ON s.id = rt.session_id
+WHERE rt.token_hash = $1
+`
+
+type GetRefreshTokenWithSessionRow struct {
+	ID                uuid.UUID
+	SessionID         uuid.UUID
+	TokenHash         string
+	IssuedAt          pgtype.Timestamptz
+	ReplacedBy        pgtype.UUID
+	UserID            uuid.UUID
+	Platform          string
+	InstallationID    pgtype.UUID
+	DeviceName        pgtype.Text
+	UserAgent         pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	LastActivityAt    pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) GetRefreshTokenWithSession(ctx context.Context, tokenHash string) (GetRefreshTokenWithSessionRow, error) {
+	row := q.db.QueryRow(ctx, getRefreshTokenWithSession, tokenHash)
+	var i GetRefreshTokenWithSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.TokenHash,
+		&i.IssuedAt,
+		&i.ReplacedBy,
+		&i.UserID,
+		&i.Platform,
+		&i.InstallationID,
+		&i.DeviceName,
+		&i.UserAgent,
+		&i.CreatedAt,
+		&i.LastActivityAt,
+		&i.AbsoluteExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getRefreshTokenWithSessionForUpdate = `-- name: GetRefreshTokenWithSessionForUpdate :one
+SELECT
+    rt.id,
+    rt.session_id,
+    rt.token_hash,
+    rt.issued_at,
+    rt.replaced_by,
+    s.user_id,
+    s.platform,
+    s.installation_id,
+    s.device_name,
+    s.user_agent,
+    s.created_at,
+    s.last_activity_at,
+    s.absolute_expires_at,
+    s.revoked_at
+FROM refresh_tokens rt
+JOIN sessions s
+    ON s.id = rt.session_id
+WHERE rt.token_hash = $1
+FOR UPDATE OF rt, s
+`
+
+type GetRefreshTokenWithSessionForUpdateRow struct {
+	ID                uuid.UUID
+	SessionID         uuid.UUID
+	TokenHash         string
+	IssuedAt          pgtype.Timestamptz
+	ReplacedBy        pgtype.UUID
+	UserID            uuid.UUID
+	Platform          string
+	InstallationID    pgtype.UUID
+	DeviceName        pgtype.Text
+	UserAgent         pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	LastActivityAt    pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) GetRefreshTokenWithSessionForUpdate(ctx context.Context, tokenHash string) (GetRefreshTokenWithSessionForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getRefreshTokenWithSessionForUpdate, tokenHash)
+	var i GetRefreshTokenWithSessionForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.TokenHash,
+		&i.IssuedAt,
+		&i.ReplacedBy,
+		&i.UserID,
+		&i.Platform,
+		&i.InstallationID,
+		&i.DeviceName,
+		&i.UserAgent,
+		&i.CreatedAt,
+		&i.LastActivityAt,
+		&i.AbsoluteExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const listSessions = `-- name: ListSessions :many
+SELECT
+    id,
+    user_id,
+    platform,
+    installation_id,
+    device_name,
+    user_agent,
+    created_at,
+    last_activity_at,
+    absolute_expires_at,
+    revoked_at
+FROM sessions
+WHERE user_id = $1
+  AND revoked_at IS NULL
+ORDER BY last_activity_at DESC
+LIMIT $3
+OFFSET $2
+`
+
+type ListSessionsParams struct {
+	UserID     uuid.UUID
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessions, arg.UserID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Platform,
+			&i.InstallationID,
+			&i.DeviceName,
+			&i.UserAgent,
+			&i.CreatedAt,
+			&i.LastActivityAt,
+			&i.AbsoluteExpiresAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const replaceRefreshToken = `-- name: ReplaceRefreshToken :exec
+UPDATE refresh_tokens
+SET replaced_by = $1
+WHERE id = $2
+`
+
+type ReplaceRefreshTokenParams struct {
+	ReplacedBy pgtype.UUID
+	ID         uuid.UUID
+}
+
+func (q *Queries) ReplaceRefreshToken(ctx context.Context, arg ReplaceRefreshTokenParams) error {
+	_, err := q.db.Exec(ctx, replaceRefreshToken, arg.ReplacedBy, arg.ID)
+	return err
+}
+
+const revokeSession = `-- name: RevokeSession :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokeSession, id)
+	return err
+}
+
+const updateSessionActivity = `-- name: UpdateSessionActivity :exec
+UPDATE sessions
+SET last_activity_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) UpdateSessionActivity(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, updateSessionActivity, id)
+	return err
 }

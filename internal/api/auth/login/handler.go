@@ -2,6 +2,7 @@ package login
 
 import (
 	"github.com/gofiber/fiber/v3"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 )
 
@@ -22,7 +23,7 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 		return err
 	}
 
-	metadata, err := extractSessionMetadata(c)
+	metadata, err := session.ExtractMetadata(c)
 	if err != nil {
 		return err
 	}
