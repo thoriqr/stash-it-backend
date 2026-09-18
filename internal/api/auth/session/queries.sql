@@ -100,6 +100,14 @@ SET revoked_at = NOW()
 WHERE id = sqlc.arg(id)
   AND revoked_at IS NULL;
 
+-- name: RevokeSessionForUser :one
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = sqlc.arg(session_id)
+  AND user_id = sqlc.arg(user_id)
+  AND revoked_at IS NULL
+RETURNING id;
+
 
 -- name: ListSessions :many
 SELECT

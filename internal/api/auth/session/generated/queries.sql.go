@@ -331,6 +331,27 @@ func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const revokeSessionForUser = `-- name: RevokeSessionForUser :one
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND revoked_at IS NULL
+RETURNING id
+`
+
+type RevokeSessionForUserParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateSessionActivity = `-- name: UpdateSessionActivity :exec
 UPDATE sessions
 SET last_activity_at = NOW()

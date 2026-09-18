@@ -138,3 +138,34 @@ func (h *Handler) ListSessions(c fiber.Ctx) error {
 		meta,
 	)
 }
+
+func (h *Handler) RevokeSession(c fiber.Ctx) error {
+	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
+
+	userID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+
+	sessionID, err := uuid.Parse(c.Params("session_id"))
+	if err != nil {
+			return apperror.BadRequestWith(
+			"",
+			"invalid session id",
+			err,
+		)
+	}
+
+	if err := h.service.RevokeSessionForUser(
+		c.Context(),
+		userID,
+		sessionID,
+	); err != nil {
+		return err
+	}
+
+	return httpx.OKMessage(
+		c,
+		"session revoked successfully",
+	)
+}

@@ -37,6 +37,12 @@ type SessionService interface {
         page int,
         limit int,
     ) (ListSessionsResult, error)
+
+		RevokeSessionForUser(
+			ctx context.Context,
+			userID uuid.UUID,
+			sessionID uuid.UUID,
+		) error
 }
 
 type service struct {
@@ -202,4 +208,16 @@ func (s *service) ListSessions(
 		Total:      total,
 		TotalPages: totalPages,
 	}, nil
+}
+
+func (s *service) RevokeSessionForUser(
+	ctx context.Context,
+	userID uuid.UUID,
+	sessionID uuid.UUID,
+) error {
+		return s.repository.RevokeSessionForUser(
+			ctx,
+			sessionID,
+			userID,
+		)
 }

@@ -57,6 +57,12 @@ type Repository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 	) (int64, error)
+
+	RevokeSessionForUser(
+		ctx context.Context,
+		sessionID uuid.UUID,
+		userID uuid.UUID,
+	) error
 }
 
 type repository struct {
@@ -287,4 +293,28 @@ func (r *repository) CountSessions(
 	}
 
 	return count, nil
+}
+
+func (r *repository) RevokeSessionForUser(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+) error {
+	_, err := r.queries.RevokeSessionForUser(
+		ctx,
+		sessiondb.RevokeSessionForUserParams{
+			SessionID: sessionID,
+			UserID: userID,
+		},
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperror.NotFound(err)
+		}
+
+		return apperror.Internal(err)
+	}
+
+	return nil
 }

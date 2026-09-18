@@ -7,21 +7,27 @@ import (
 )
 
 func Routes(
-	router fiber.Router,
-	handler *Handler,
-	verifier *security.AccessTokenVerifier,
+    router fiber.Router,
+    handler *Handler,
+    verifier *security.AccessTokenVerifier,
 ) {
-	router.Post("/refresh", handler.RefreshToken)
+    router.Post("/refresh", handler.RefreshToken)
 
-	router.Post(
-		"/logout",
-		middleware.Auth(verifier),
-		handler.Logout,
-	)
+    router.Post(
+        "/logout",
+        middleware.Auth(verifier),
+        handler.Logout,
+    )
 
-	router.Get(
-		"/sessions",
-		middleware.Auth(verifier),
-		handler.ListSessions,
-	)
+    router.Get(
+        "/sessions",
+        middleware.Auth(verifier),
+        handler.ListSessions,
+    )
+
+    router.Delete(
+        "/sessions/:session_id",
+        middleware.Auth(verifier),
+        handler.RevokeSession,
+    )
 }
