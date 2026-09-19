@@ -61,19 +61,9 @@ type Repository interface {
 		tokenHash string,
 	) (passwordresetdb.GetPasswordResetContinuationRow, error)
 
-	GetPasswordCredential(
+	UpsertPasswordCredentialAndCompleteReset(
 		ctx context.Context,
-		userID uuid.UUID,
-	) (passwordresetdb.PasswordCredential, error)
-
-	UpdatePasswordCredentialAndCompleteReset(
-		ctx context.Context,
-		params UpdatePasswordCredentialAndCompleteResetParams,
-	) error
-
-	CreatePasswordCredentialAndCompleteReset(
-		ctx context.Context,
-		params CreatePasswordCredentialAndCompleteResetParams,
+		params UpsertPasswordCredentialAndCompleteResetParams,
 	) error
 }
 
@@ -136,6 +126,32 @@ func (r *repository) CreatePasswordReset(
 	defer tx.Rollback(ctx)
 
 	qtx := r.queries.WithTx(tx)
+
+	existing, err := qtx.GetPendingPasswordResetByEmailForUpdate(
+		ctx,
+		params.Email,
+	)
+	if err == nil {
+		if !existing.IsExpired {
+			return passwordresetdb.VerificationRequest{
+				ID: existing.VerificationID,
+			}, nil
+		}
+
+		rowsAffected, err := qtx.ExpirePendingPasswordReset(ctx, existing.ID)
+		if err != nil {
+			return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+		}
+		if rowsAffected != 1 {
+			return passwordresetdb.VerificationRequest{}, apperror.ConflictWith(
+				"",
+				"password reset is no longer pending",
+				nil,
+			)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+	}
 
 	pendingReset, err := qtx.CreatePendingPasswordReset(
 		ctx,
@@ -301,10 +317,10 @@ func (r *repository) IncrementVerificationCodeAttempts(
 }
 
 type CompleteVerificationParams struct {
-	VerificationCodeID    uuid.UUID
-	VerificationRequestID uuid.UUID
+	VerificationCodeID     uuid.UUID
+	VerificationRequestID  uuid.UUID
 	PendingPasswordResetID uuid.UUID
-	TokenHash             string
+	TokenHash              string
 	ExpiresAt              pgtype.Timestamptz
 }
 
@@ -394,164 +410,74 @@ func (r *repository) GetPasswordResetContinuation(
 	return continuation, nil
 }
 
-func (r *repository) GetPasswordCredential(
-    ctx context.Context,
-    userID uuid.UUID,
-) (passwordresetdb.PasswordCredential, error) {
-    credential, err := r.queries.GetPasswordCredential(ctx, userID)
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) {
-            return passwordresetdb.PasswordCredential{}, apperror.NotFound(err)
-        }
-
-        return passwordresetdb.PasswordCredential{}, apperror.Internal(err)
-    }
-
-    return credential, nil
+type UpsertPasswordCredentialAndCompleteResetParams struct {
+	UserID                      uuid.UUID
+	PasswordHash                string
+	PasswordResetContinuationID uuid.UUID
+	PendingPasswordResetID      uuid.UUID
 }
 
-type UpdatePasswordCredentialAndCompleteResetParams struct {
-    UserID                  uuid.UUID
-    PasswordHash            string
-    PasswordResetContinuationID uuid.UUID
-    PendingPasswordResetID  uuid.UUID
-}
-
-func (r *repository) UpdatePasswordCredentialAndCompleteReset(
-    ctx context.Context,
-    params UpdatePasswordCredentialAndCompleteResetParams,
+func (r *repository) UpsertPasswordCredentialAndCompleteReset(
+	ctx context.Context,
+	params UpsertPasswordCredentialAndCompleteResetParams,
 ) error {
-    tx, err := r.db.Begin(ctx)
-    if err != nil {
-        return apperror.Internal(err)
-    }
-    defer tx.Rollback(ctx)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	defer tx.Rollback(ctx)
 
-    qtx := r.queries.WithTx(tx)
+	qtx := r.queries.WithTx(tx)
 
-    rowsAffected, err := qtx.UpdatePasswordCredential(
-        ctx,
-        passwordresetdb.UpdatePasswordCredentialParams{
-            PasswordHash: params.PasswordHash,
-            UserID:       params.UserID,
-        },
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
+	err = qtx.UpsertPasswordCredential(
+		ctx,
+		passwordresetdb.UpsertPasswordCredentialParams{
+			UserID:       params.UserID,
+			PasswordHash: params.PasswordHash,
+		},
+	)
+	if err != nil {
+		return apperror.Internal(err)
+	}
 
-    if rowsAffected != 1 {
-        return apperror.NotFound(nil)
-    }
+	rowsAffected, err := qtx.ConsumePasswordResetContinuation(
+		ctx,
+		params.PasswordResetContinuationID,
+	)
+	if err != nil {
+		return apperror.Internal(err)
+	}
 
-    rowsAffected, err = qtx.ConsumePasswordResetContinuation(
-        ctx,
-        params.PasswordResetContinuationID,
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
+	if rowsAffected != 1 {
+		return apperror.ConflictWith(
+			"",
+			"password reset continuation is no longer available",
+			nil,
+		)
+	}
 
-    if rowsAffected != 1 {
-        return apperror.ConflictWith(
-            "",
-            "password reset continuation is no longer available",
-            nil,
-        )
-    }
+	rowsAffected, err = qtx.CompletePendingPasswordReset(
+		ctx,
+		params.PendingPasswordResetID,
+	)
+	if err != nil {
+		return apperror.Internal(err)
+	}
 
-    rowsAffected, err = qtx.CompletePendingPasswordReset(
-        ctx,
-        params.PendingPasswordResetID,
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
+	if rowsAffected != 1 {
+		return apperror.ConflictWith(
+			"",
+			"password reset is no longer pending",
+			nil,
+		)
+	}
 
-    if rowsAffected != 1 {
-        return apperror.ConflictWith(
-            "",
-            "password reset is no longer pending",
-            nil,
-        )
-    }
+	if err := tx.Commit(ctx); err != nil {
+		return apperror.Internal(err)
+	}
 
-    if err := tx.Commit(ctx); err != nil {
-        return apperror.Internal(err)
-    }
-
-    return nil
+	return nil
 }
-
-type CreatePasswordCredentialAndCompleteResetParams struct {
-    UserID                      uuid.UUID
-    PasswordHash                string
-    PasswordResetContinuationID uuid.UUID
-    PendingPasswordResetID      uuid.UUID
-}
-
-func (r *repository) CreatePasswordCredentialAndCompleteReset(
-    ctx context.Context,
-    params CreatePasswordCredentialAndCompleteResetParams,
-) error {
-    tx, err := r.db.Begin(ctx)
-    if err != nil {
-        return apperror.Internal(err)
-    }
-    defer tx.Rollback(ctx)
-
-    qtx := r.queries.WithTx(tx)
-
-    err = qtx.CreatePasswordCredential(
-        ctx,
-        passwordresetdb.CreatePasswordCredentialParams{
-            UserID:       params.UserID,
-            PasswordHash: params.PasswordHash,
-        },
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
-
-    rowsAffected, err := qtx.ConsumePasswordResetContinuation(
-        ctx,
-        params.PasswordResetContinuationID,
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
-
-    if rowsAffected != 1 {
-        return apperror.ConflictWith(
-            "",
-            "password reset continuation is no longer available",
-            nil,
-        )
-    }
-
-    rowsAffected, err = qtx.CompletePendingPasswordReset(
-        ctx,
-        params.PendingPasswordResetID,
-    )
-    if err != nil {
-        return apperror.Internal(err)
-    }
-
-    if rowsAffected != 1 {
-        return apperror.ConflictWith(
-            "",
-            "password reset is no longer pending",
-            nil,
-        )
-    }
-
-    if err := tx.Commit(ctx); err != nil {
-        return apperror.Internal(err)
-    }
-
-    return nil
-}
-
 
 func mapPasswordResetDBError(err error) error {
 	var pgErr *pgconn.PgError

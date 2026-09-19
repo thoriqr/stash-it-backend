@@ -41,6 +41,27 @@ RETURNING
     created_at,
     expires_at;
 
+-- name: GetPendingPasswordResetByEmailForUpdate :one
+SELECT
+    ppr.id,
+    ppr.expires_at <= NOW() AS is_expired,
+    vr.id AS verification_id
+FROM pending_password_resets ppr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_password_reset'
+    AND vr.subject_id = ppr.id
+    AND vr.purpose = 'password_reset'
+WHERE ppr.email = sqlc.arg(email)
+  AND ppr.status = 'pending'
+FOR UPDATE;
+
+-- name: ExpirePendingPasswordReset :execrows
+UPDATE pending_password_resets
+SET status = 'expired'
+WHERE id = sqlc.arg(id)
+  AND status = 'pending'
+  AND expires_at <= NOW();
+
 -- name: CreateVerificationRequest :one
 INSERT INTO verification_requests (
     subject_type,
@@ -217,20 +238,18 @@ LEFT JOIN password_credentials pc
     ON pc.user_id = u.id
 WHERE prc.token_hash = sqlc.arg(token_hash);
 
--- name: GetPasswordCredential :one
-SELECT
+-- name: UpsertPasswordCredential :exec
+INSERT INTO password_credentials (
     user_id,
-    password_hash,
-    created_at,
-    updated_at
-FROM password_credentials
-WHERE user_id = sqlc.arg(user_id);
-
--- name: UpdatePasswordCredential :execrows
-UPDATE password_credentials
-SET
-    password_hash = sqlc.arg(password_hash)
-WHERE user_id = sqlc.arg(user_id);
+    password_hash
+)
+VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(password_hash)
+)
+ON CONFLICT (user_id)
+DO UPDATE SET
+    password_hash = EXCLUDED.password_hash;
 
 -- name: ConsumePasswordResetContinuation :execrows
 UPDATE password_reset_continuations
@@ -245,13 +264,3 @@ SET status = 'completed'
 WHERE id = sqlc.arg(id)
   AND status = 'pending'
   AND expires_at > NOW();
-
--- name: CreatePasswordCredential :exec
-INSERT INTO password_credentials (
-    user_id,
-    password_hash
-)
-VALUES (
-    sqlc.arg(user_id),
-    sqlc.arg(password_hash)
-);

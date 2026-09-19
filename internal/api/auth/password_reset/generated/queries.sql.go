@@ -61,27 +61,6 @@ func (q *Queries) ConsumeVerificationCode(ctx context.Context, id uuid.UUID) (in
 	return result.RowsAffected(), nil
 }
 
-const createPasswordCredential = `-- name: CreatePasswordCredential :exec
-INSERT INTO password_credentials (
-    user_id,
-    password_hash
-)
-VALUES (
-    $1,
-    $2
-)
-`
-
-type CreatePasswordCredentialParams struct {
-	UserID       uuid.UUID
-	PasswordHash string
-}
-
-func (q *Queries) CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) error {
-	_, err := q.db.Exec(ctx, createPasswordCredential, arg.UserID, arg.PasswordHash)
-	return err
-}
-
 const createPasswordResetContinuation = `-- name: CreatePasswordResetContinuation :one
 INSERT INTO password_reset_continuations (
     pending_password_reset_id,
@@ -243,6 +222,22 @@ func (q *Queries) CreateVerificationRequest(ctx context.Context, subjectID uuid.
 	return i, err
 }
 
+const expirePendingPasswordReset = `-- name: ExpirePendingPasswordReset :execrows
+UPDATE pending_password_resets
+SET status = 'expired'
+WHERE id = $1
+  AND status = 'pending'
+  AND expires_at <= NOW()
+`
+
+func (q *Queries) ExpirePendingPasswordReset(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, expirePendingPasswordReset, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getActivePasswordResetByEmail = `-- name: GetActivePasswordResetByEmail :one
 SELECT
     ppr.id,
@@ -326,28 +321,6 @@ func (q *Queries) GetActiveVerificationCode(ctx context.Context, arg GetActiveVe
 	return i, err
 }
 
-const getPasswordCredential = `-- name: GetPasswordCredential :one
-SELECT
-    user_id,
-    password_hash,
-    created_at,
-    updated_at
-FROM password_credentials
-WHERE user_id = $1
-`
-
-func (q *Queries) GetPasswordCredential(ctx context.Context, userID uuid.UUID) (PasswordCredential, error) {
-	row := q.db.QueryRow(ctx, getPasswordCredential, userID)
-	var i PasswordCredential
-	err := row.Scan(
-		&i.UserID,
-		&i.PasswordHash,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getPasswordResetContinuation = `-- name: GetPasswordResetContinuation :one
 SELECT
     prc.id,
@@ -403,6 +376,34 @@ func (q *Queries) GetPasswordResetContinuation(ctx context.Context, tokenHash st
 		&i.PasswordResetExpiresAt,
 		&i.HasPasswordCredential,
 	)
+	return i, err
+}
+
+const getPendingPasswordResetByEmailForUpdate = `-- name: GetPendingPasswordResetByEmailForUpdate :one
+SELECT
+    ppr.id,
+    ppr.expires_at <= NOW() AS is_expired,
+    vr.id AS verification_id
+FROM pending_password_resets ppr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_password_reset'
+    AND vr.subject_id = ppr.id
+    AND vr.purpose = 'password_reset'
+WHERE ppr.email = $1
+  AND ppr.status = 'pending'
+FOR UPDATE
+`
+
+type GetPendingPasswordResetByEmailForUpdateRow struct {
+	ID             uuid.UUID
+	IsExpired      bool
+	VerificationID uuid.UUID
+}
+
+func (q *Queries) GetPendingPasswordResetByEmailForUpdate(ctx context.Context, email string) (GetPendingPasswordResetByEmailForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getPendingPasswordResetByEmailForUpdate, email)
+	var i GetPendingPasswordResetByEmailForUpdateRow
+	err := row.Scan(&i.ID, &i.IsExpired, &i.VerificationID)
 	return i, err
 }
 
@@ -530,26 +531,6 @@ func (q *Queries) MarkVerificationRequestVerified(ctx context.Context, id uuid.U
 	return result.RowsAffected(), nil
 }
 
-const updatePasswordCredential = `-- name: UpdatePasswordCredential :execrows
-UPDATE password_credentials
-SET
-    password_hash = $1
-WHERE user_id = $2
-`
-
-type UpdatePasswordCredentialParams struct {
-	PasswordHash string
-	UserID       uuid.UUID
-}
-
-func (q *Queries) UpdatePasswordCredential(ctx context.Context, arg UpdatePasswordCredentialParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updatePasswordCredential, arg.PasswordHash, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const updateVerificationRequestResend = `-- name: UpdateVerificationRequestResend :one
 UPDATE verification_requests
 SET
@@ -581,4 +562,28 @@ func (q *Queries) UpdateVerificationRequestResend(ctx context.Context, id uuid.U
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const upsertPasswordCredential = `-- name: UpsertPasswordCredential :exec
+INSERT INTO password_credentials (
+    user_id,
+    password_hash
+)
+VALUES (
+    $1,
+    $2
+)
+ON CONFLICT (user_id)
+DO UPDATE SET
+    password_hash = EXCLUDED.password_hash
+`
+
+type UpsertPasswordCredentialParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) UpsertPasswordCredential(ctx context.Context, arg UpsertPasswordCredentialParams) error {
+	_, err := q.db.Exec(ctx, upsertPasswordCredential, arg.UserID, arg.PasswordHash)
+	return err
 }
