@@ -69,6 +69,28 @@ func (q *Queries) CreateExistingUser(ctx context.Context, email string) (uuid.UU
 	return id, err
 }
 
+const createExpiredPendingRegistration = `-- name: CreateExpiredPendingRegistration :one
+WITH registration AS (
+    INSERT INTO pending_registrations (email, registration_type, status, expires_at)
+    VALUES ($1, 'manual', 'pending', NOW() - INTERVAL '1 hour')
+    RETURNING id
+), verification AS (
+    INSERT INTO verification_requests (subject_type, subject_id, purpose, status)
+    SELECT 'pending_registration', id, 'registration', 'pending' FROM registration
+    RETURNING id
+)
+INSERT INTO verification_codes (verification_request_id, code_hash, expires_at)
+SELECT id, 'expired-code', NOW() - INTERVAL '30 minutes' FROM verification
+RETURNING verification_request_id
+`
+
+func (q *Queries) CreateExpiredPendingRegistration(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createExpiredPendingRegistration, email)
+	var verification_request_id uuid.UUID
+	err := row.Scan(&verification_request_id)
+	return verification_request_id, err
+}
+
 const createRegistrationContinuation = `-- name: CreateRegistrationContinuation :one
 WITH registration AS (
     INSERT INTO pending_registrations (
@@ -161,6 +183,54 @@ func (q *Queries) GetFinalizedRegistrationState(ctx context.Context, email strin
 		&i.ConsumedAt,
 	)
 	return i, err
+}
+
+const getRegistrationHistory = `-- name: GetRegistrationHistory :many
+SELECT
+    pr.id,
+    pr.status,
+    vr.id AS verification_id,
+    vc.id AS verification_code_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+JOIN verification_codes vc ON vc.verification_request_id = vr.id
+WHERE pr.email = $1
+ORDER BY pr.created_at, pr.id
+`
+
+type GetRegistrationHistoryRow struct {
+	ID                 uuid.UUID
+	Status             string
+	VerificationID     uuid.UUID
+	VerificationCodeID uuid.UUID
+}
+
+func (q *Queries) GetRegistrationHistory(ctx context.Context, email string) ([]GetRegistrationHistoryRow, error) {
+	rows, err := q.db.Query(ctx, getRegistrationHistory, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRegistrationHistoryRow
+	for rows.Next() {
+		var i GetRegistrationHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.VerificationID,
+			&i.VerificationCodeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getRegistrationState = `-- name: GetRegistrationState :one

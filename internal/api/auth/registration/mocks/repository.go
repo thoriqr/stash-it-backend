@@ -83,10 +83,10 @@ func (c *MockRepositoryCompleteVerificationCall) DoAndReturn(f func(context.Cont
 }
 
 // CreateManualRegistration mocks base method.
-func (m *MockRepository) CreateManualRegistration(ctx context.Context, params registration.CreateManualRegistrationParams) (registrationdb.VerificationRequest, error) {
+func (m *MockRepository) CreateManualRegistration(ctx context.Context, params registration.CreateManualRegistrationParams) (registration.CreateManualRegistrationResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateManualRegistration", ctx, params)
-	ret0, _ := ret[0].(registrationdb.VerificationRequest)
+	ret0, _ := ret[0].(registration.CreateManualRegistrationResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -104,19 +104,19 @@ type MockRepositoryCreateManualRegistrationCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryCreateManualRegistrationCall) Return(arg0 registrationdb.VerificationRequest, arg1 error) *MockRepositoryCreateManualRegistrationCall {
+func (c *MockRepositoryCreateManualRegistrationCall) Return(arg0 registration.CreateManualRegistrationResult, arg1 error) *MockRepositoryCreateManualRegistrationCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryCreateManualRegistrationCall) Do(f func(context.Context, registration.CreateManualRegistrationParams) (registrationdb.VerificationRequest, error)) *MockRepositoryCreateManualRegistrationCall {
+func (c *MockRepositoryCreateManualRegistrationCall) Do(f func(context.Context, registration.CreateManualRegistrationParams) (registration.CreateManualRegistrationResult, error)) *MockRepositoryCreateManualRegistrationCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryCreateManualRegistrationCall) DoAndReturn(f func(context.Context, registration.CreateManualRegistrationParams) (registrationdb.VerificationRequest, error)) *MockRepositoryCreateManualRegistrationCall {
+func (c *MockRepositoryCreateManualRegistrationCall) DoAndReturn(f func(context.Context, registration.CreateManualRegistrationParams) (registration.CreateManualRegistrationResult, error)) *MockRepositoryCreateManualRegistrationCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -160,46 +160,6 @@ func (c *MockRepositoryFinalizeManualRegistrationCall) DoAndReturn(f func(contex
 	return c
 }
 
-// GetActiveRegistrationByEmail mocks base method.
-func (m *MockRepository) GetActiveRegistrationByEmail(ctx context.Context, email string) (registrationdb.GetActiveRegistrationByEmailRow, bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetActiveRegistrationByEmail", ctx, email)
-	ret0, _ := ret[0].(registrationdb.GetActiveRegistrationByEmailRow)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// GetActiveRegistrationByEmail indicates an expected call of GetActiveRegistrationByEmail.
-func (mr *MockRepositoryMockRecorder) GetActiveRegistrationByEmail(ctx, email any) *MockRepositoryGetActiveRegistrationByEmailCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveRegistrationByEmail", reflect.TypeOf((*MockRepository)(nil).GetActiveRegistrationByEmail), ctx, email)
-	return &MockRepositoryGetActiveRegistrationByEmailCall{Call: call}
-}
-
-// MockRepositoryGetActiveRegistrationByEmailCall wrap *gomock.Call
-type MockRepositoryGetActiveRegistrationByEmailCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockRepositoryGetActiveRegistrationByEmailCall) Return(arg0 registrationdb.GetActiveRegistrationByEmailRow, arg1 bool, arg2 error) *MockRepositoryGetActiveRegistrationByEmailCall {
-	c.Call = c.Call.Return(arg0, arg1, arg2)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetActiveRegistrationByEmailCall) Do(f func(context.Context, string) (registrationdb.GetActiveRegistrationByEmailRow, bool, error)) *MockRepositoryGetActiveRegistrationByEmailCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetActiveRegistrationByEmailCall) DoAndReturn(f func(context.Context, string) (registrationdb.GetActiveRegistrationByEmailRow, bool, error)) *MockRepositoryGetActiveRegistrationByEmailCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
 // GetActiveVerificationCode mocks base method.
 func (m *MockRepository) GetActiveVerificationCode(ctx context.Context, verificationRequestID uuid.UUID, maxAttempts int32) (registrationdb.VerificationCode, error) {
 	m.ctrl.T.Helper()
@@ -235,6 +195,46 @@ func (c *MockRepositoryGetActiveVerificationCodeCall) Do(f func(context.Context,
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryGetActiveVerificationCodeCall) DoAndReturn(f func(context.Context, uuid.UUID, int32) (registrationdb.VerificationCode, error)) *MockRepositoryGetActiveVerificationCodeCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetRegistrationByEmail mocks base method.
+func (m *MockRepository) GetRegistrationByEmail(ctx context.Context, email string) (registrationdb.GetRegistrationByEmailRow, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRegistrationByEmail", ctx, email)
+	ret0, _ := ret[0].(registrationdb.GetRegistrationByEmailRow)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetRegistrationByEmail indicates an expected call of GetRegistrationByEmail.
+func (mr *MockRepositoryMockRecorder) GetRegistrationByEmail(ctx, email any) *MockRepositoryGetRegistrationByEmailCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRegistrationByEmail", reflect.TypeOf((*MockRepository)(nil).GetRegistrationByEmail), ctx, email)
+	return &MockRepositoryGetRegistrationByEmailCall{Call: call}
+}
+
+// MockRepositoryGetRegistrationByEmailCall wrap *gomock.Call
+type MockRepositoryGetRegistrationByEmailCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetRegistrationByEmailCall) Return(arg0 registrationdb.GetRegistrationByEmailRow, arg1 bool, arg2 error) *MockRepositoryGetRegistrationByEmailCall {
+	c.Call = c.Call.Return(arg0, arg1, arg2)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetRegistrationByEmailCall) Do(f func(context.Context, string) (registrationdb.GetRegistrationByEmailRow, bool, error)) *MockRepositoryGetRegistrationByEmailCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetRegistrationByEmailCall) DoAndReturn(f func(context.Context, string) (registrationdb.GetRegistrationByEmailRow, bool, error)) *MockRepositoryGetRegistrationByEmailCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

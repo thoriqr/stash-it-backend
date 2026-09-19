@@ -324,47 +324,20 @@ func (q *Queries) CreateVerificationRequest(ctx context.Context, arg CreateVerif
 	return i, err
 }
 
-const getActiveRegistrationByEmail = `-- name: GetActiveRegistrationByEmail :one
-SELECT
-    pr.id,
-    pr.email,
-    pr.registration_type,
-    pr.status,
-    pr.created_at,
-    pr.expires_at,
-    vr.id AS verification_id
-FROM pending_registrations pr
-JOIN verification_requests vr
-    ON vr.subject_type = 'pending_registration'
-    AND vr.subject_id = pr.id
-    AND vr.purpose = 'registration'
-WHERE pr.email = $1
-  AND pr.status IN ('pending', 'completed')
+const expirePendingRegistration = `-- name: ExpirePendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = $1
+  AND status = 'pending'
+  AND expires_at <= NOW()
 `
 
-type GetActiveRegistrationByEmailRow struct {
-	ID               uuid.UUID
-	Email            string
-	RegistrationType string
-	Status           string
-	CreatedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
-	VerificationID   uuid.UUID
-}
-
-func (q *Queries) GetActiveRegistrationByEmail(ctx context.Context, email string) (GetActiveRegistrationByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getActiveRegistrationByEmail, email)
-	var i GetActiveRegistrationByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.RegistrationType,
-		&i.Status,
-		&i.CreatedAt,
-		&i.ExpiresAt,
-		&i.VerificationID,
-	)
-	return i, err
+func (q *Queries) ExpirePendingRegistration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, expirePendingRegistration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getActiveVerificationCode = `-- name: GetActiveVerificationCode :one
@@ -404,6 +377,84 @@ func (q *Queries) GetActiveVerificationCode(ctx context.Context, arg GetActiveVe
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.InvalidatedAt,
+	)
+	return i, err
+}
+
+const getPendingRegistrationByEmailForUpdate = `-- name: GetPendingRegistrationByEmailForUpdate :one
+SELECT
+    pr.id,
+    pr.expires_at,
+    pr.expires_at <= NOW() AS is_expired,
+    vr.id AS verification_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+  AND pr.status = 'pending'
+FOR UPDATE
+`
+
+type GetPendingRegistrationByEmailForUpdateRow struct {
+	ID             uuid.UUID
+	ExpiresAt      pgtype.Timestamptz
+	IsExpired      bool
+	VerificationID uuid.UUID
+}
+
+func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, email string) (GetPendingRegistrationByEmailForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByEmailForUpdate, email)
+	var i GetPendingRegistrationByEmailForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.ExpiresAt,
+		&i.IsExpired,
+		&i.VerificationID,
+	)
+	return i, err
+}
+
+const getRegistrationByEmail = `-- name: GetRegistrationByEmail :one
+SELECT
+    pr.id,
+    pr.email,
+    pr.registration_type,
+    pr.status,
+    pr.created_at,
+    pr.expires_at,
+    vr.id AS verification_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+  AND pr.status IN ('pending', 'completed')
+`
+
+type GetRegistrationByEmailRow struct {
+	ID               uuid.UUID
+	Email            string
+	RegistrationType string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	VerificationID   uuid.UUID
+}
+
+func (q *Queries) GetRegistrationByEmail(ctx context.Context, email string) (GetRegistrationByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getRegistrationByEmail, email)
+	var i GetRegistrationByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.VerificationID,
 	)
 	return i, err
 }

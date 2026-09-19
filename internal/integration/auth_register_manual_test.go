@@ -493,7 +493,7 @@ func TestGetRegistrationContinuation_Success(t *testing.T) {
 	_, err := db.CreateRegistrationContinuation(
 		ctx,
 		registrationtestdb.CreateRegistrationContinuationParams{
-			Email:    email,
+			Email:     email,
 			TokenHash: tokenHash,
 		},
 	)
@@ -697,4 +697,37 @@ func TestFinalizeManualRegistration_UserAlreadyExists(t *testing.T) {
 
 	require.Equal(t, registration.CodeUserAlreadyExists, body.Error.Code)
 	require.Equal(t, "user already exists", body.Error.Message)
+}
+
+func TestRegisterManual_ExpiredPendingIsReconciled(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	email := "expired@example.com"
+	oldVerificationID, err := db.CreateExpiredPendingRegistration(ctx, email)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/register/manual", strings.NewReader(`{"email":"expired@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body struct {
+		Data struct {
+			VerificationID uuid.UUID `json:"verification_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.NotEqual(t, oldVerificationID, body.Data.VerificationID)
+
+	history, err := db.GetRegistrationHistory(ctx, email)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	require.Equal(t, "expired", history[0].Status)
+	require.Equal(t, oldVerificationID, history[0].VerificationID)
+	require.Equal(t, "pending", history[1].Status)
+	require.Equal(t, body.Data.VerificationID, history[1].VerificationID)
+	require.NotEqual(t, uuid.Nil, history[1].VerificationCodeID)
 }

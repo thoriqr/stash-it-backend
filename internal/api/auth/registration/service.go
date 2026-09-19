@@ -13,7 +13,6 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
-
 type Service struct {
 	repository             Repository
 	passwordHasher         *security.PasswordHasher
@@ -33,8 +32,8 @@ func NewService(
 }
 
 type RegisterManualResult struct {
-    VerificationID uuid.UUID
-    AlreadyPending bool
+	VerificationID uuid.UUID
+	AlreadyPending bool
 }
 
 func normalizeEmail(email string) string {
@@ -48,7 +47,7 @@ func (s *Service) RegisterManual(
 	email = normalizeEmail(email)
 
 	registration, found, err :=
-		s.repository.GetActiveRegistrationByEmail(
+		s.repository.GetRegistrationByEmail(
 			ctx,
 			email,
 		)
@@ -59,10 +58,12 @@ func (s *Service) RegisterManual(
 	if found {
 		switch registration.Status {
 		case string(PendingRegistrationPending):
-			return RegisterManualResult{
-				VerificationID: registration.VerificationID,
-				AlreadyPending: true,
-			}, nil
+			if registration.ExpiresAt.Time.After(time.Now()) {
+				return RegisterManualResult{
+					VerificationID: registration.VerificationID,
+					AlreadyPending: true,
+				}, nil
+			}
 
 		case string(PendingRegistrationCompleted):
 			return RegisterManualResult{}, apperror.ConflictWith(
@@ -117,8 +118,8 @@ func (s *Service) RegisterManual(
 	fmt.Printf("DEV verification PIN for %s: %s\n", email, code)
 
 	return RegisterManualResult{
-		VerificationID: result.ID,
-		AlreadyPending: false,
+		VerificationID: result.VerificationRequest.ID,
+		AlreadyPending: result.AlreadyPending,
 	}, nil
 }
 
@@ -126,7 +127,7 @@ type GetVerificationResult struct {
 	VerificationID        uuid.UUID
 	Status                VerificationRequestStatus
 	RegistrationExpiresAt time.Time
-	LastSentAt             *time.Time
+	LastSentAt            *time.Time
 }
 
 func (s *Service) GetVerification(
@@ -152,8 +153,8 @@ func (s *Service) GetVerification(
 	}
 
 	return GetVerificationResult{
-		VerificationID:       verification.ID,
-		Status:               VerificationRequestStatus(verification.Status),
+		VerificationID:        verification.ID,
+		Status:                VerificationRequestStatus(verification.Status),
 		RegistrationExpiresAt: verification.RegistrationExpiresAt.Time,
 		LastSentAt:            lastSentAt,
 	}, nil
@@ -270,24 +271,24 @@ func (s *Service) VerifyRegistration(
 			code.ID,
 			VerificationCodeMaxAttempts,
 		)
-	if err != nil {
-		return VerifyRegistrationResult{}, err
-	}
+		if err != nil {
+			return VerifyRegistrationResult{}, err
+		}
 
-	if attempts >= VerificationCodeMaxAttempts {
+		if attempts >= VerificationCodeMaxAttempts {
+			return VerifyRegistrationResult{}, apperror.ConflictWith(
+				CodeVerificationCodeAttemptsExceeded,
+				"verification code attempt limit exceeded",
+				nil,
+			)
+		}
+
 		return VerifyRegistrationResult{}, apperror.ConflictWith(
-			CodeVerificationCodeAttemptsExceeded,
-			"verification code attempt limit exceeded",
+			CodeInvalidVerificationCode,
+			"verification code is invalid",
 			nil,
 		)
 	}
-
-	return VerifyRegistrationResult{}, apperror.ConflictWith(
-		CodeInvalidVerificationCode,
-		"verification code is invalid",
-		nil,
-	)
-}
 
 	token, err := security.GenerateToken()
 	if err != nil {

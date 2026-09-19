@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
@@ -38,12 +39,12 @@ func TestService_RegisterManual(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetActiveRegistrationByEmail(
+		GetRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetActiveRegistrationByEmailRow{},
+			registrationdb.GetRegistrationByEmailRow{},
 			false,
 			nil,
 		)
@@ -57,7 +58,7 @@ func TestService_RegisterManual(t *testing.T) {
 		DoAndReturn(func(
 			_ context.Context,
 			params registration.CreateManualRegistrationParams,
-		) (registrationdb.VerificationRequest, error) {
+		) (registration.CreateManualRegistrationResult, error) {
 			if params.Email != "test@example.com" {
 				t.Errorf(
 					"expected normalized email %q, got %q",
@@ -102,8 +103,8 @@ func TestService_RegisterManual(t *testing.T) {
 				)
 			}
 
-			return registrationdb.VerificationRequest{
-				ID: verificationID,
+			return registration.CreateManualRegistrationResult{
+				VerificationRequest: registrationdb.VerificationRequest{ID: verificationID},
 			}, nil
 		})
 
@@ -148,14 +149,15 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetActiveRegistrationByEmail(
+		GetRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetActiveRegistrationByEmailRow{
+			registrationdb.GetRegistrationByEmailRow{
 				Status:         string(registration.PendingRegistrationPending),
 				VerificationID: verificationID,
+				ExpiresAt:      pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 			},
 			true,
 			nil,
@@ -201,12 +203,12 @@ func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetActiveRegistrationByEmail(
+		GetRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetActiveRegistrationByEmailRow{
+			registrationdb.GetRegistrationByEmailRow{
 				Status: string(registration.PendingRegistrationCompleted),
 			},
 			true,
@@ -259,12 +261,12 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetActiveRegistrationByEmail(
+		GetRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetActiveRegistrationByEmailRow{},
+			registrationdb.GetRegistrationByEmailRow{},
 			false,
 			repositoryErr,
 		)
@@ -282,5 +284,37 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 			"expected repository error, got %v",
 			err,
 		)
+	}
+}
+
+func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repository := mocks.NewMockRepository(ctrl)
+	service := registration.NewService(
+		repository,
+		security.NewPasswordHasher(),
+		security.NewVerificationCodeHasher([]byte("test-secret")),
+	)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+	repository.EXPECT().GetRegistrationByEmail(ctx, "test@example.com").Return(
+		registrationdb.GetRegistrationByEmailRow{
+			Status:    string(registration.PendingRegistrationPending),
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
+		}, true, nil,
+	)
+	repository.EXPECT().CreateManualRegistration(ctx, gomock.Any()).Return(
+		registration.CreateManualRegistrationResult{
+			VerificationRequest: registrationdb.VerificationRequest{ID: verificationID},
+		}, nil,
+	)
+
+	result, err := service.RegisterManual(ctx, "test@example.com")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.VerificationID != verificationID || result.AlreadyPending {
+		t.Errorf("expected new pending registration result, got %#v", result)
 	}
 }

@@ -168,7 +168,7 @@ RETURNING
     consumed_at,
     created_at;
 
--- name: GetActiveRegistrationByEmail :one
+-- name: GetRegistrationByEmail :one
 SELECT
     pr.id,
     pr.email,
@@ -184,6 +184,28 @@ JOIN verification_requests vr
     AND vr.purpose = 'registration'
 WHERE pr.email = sqlc.arg(email)
   AND pr.status IN ('pending', 'completed');
+
+-- name: GetPendingRegistrationByEmailForUpdate :one
+SELECT
+    pr.id,
+    pr.expires_at,
+    pr.expires_at <= NOW() AS is_expired,
+    vr.id AS verification_id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = sqlc.arg(email)
+  AND pr.status = 'pending'
+FOR UPDATE;
+
+-- name: ExpirePendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = sqlc.arg(id)
+  AND status = 'pending'
+  AND expires_at <= NOW();
 
 -- name: GetRegistrationContinuation :one
 SELECT
