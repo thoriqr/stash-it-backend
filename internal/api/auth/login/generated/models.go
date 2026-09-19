@@ -16,6 +16,23 @@ type PasswordCredential struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type PasswordResetContinuation struct {
+	ID                     uuid.UUID
+	PendingPasswordResetID uuid.UUID
+	TokenHash              string
+	ExpiresAt              pgtype.Timestamptz
+	ConsumedAt             pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+}
+
+type PendingPasswordReset struct {
+	ID        uuid.UUID
+	Email     string
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type PendingRegistration struct {
 	ID               uuid.UUID
 	Email            string

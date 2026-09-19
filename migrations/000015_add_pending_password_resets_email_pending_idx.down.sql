@@ -1,0 +1,1 @@
+DROP INDEX pending_password_resets_email_pending_idx;
