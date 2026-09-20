@@ -6,6 +6,8 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
+	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
+	passwordresetdb "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/generated"
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
@@ -107,5 +109,29 @@ func RegisterModule(
 	login.Routes(
 		authRouter,
 		loginHandler,
+	)
+
+	// Password reset
+
+	passwordResetQueries := passwordresetdb.New(pool)
+
+	passwordResetRepository := passwordreset.NewRepository(
+		pool,
+		passwordResetQueries,
+	)
+
+	passwordResetService := passwordreset.NewService(
+		passwordResetRepository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	passwordResetHandler := passwordreset.NewHandler(
+		passwordResetService,
+	)
+
+	passwordreset.Routes(
+		authRouter,
+		passwordResetHandler,
 	)
 }

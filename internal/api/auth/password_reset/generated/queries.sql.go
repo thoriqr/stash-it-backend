@@ -531,6 +531,18 @@ func (q *Queries) MarkVerificationRequestVerified(ctx context.Context, id uuid.U
 	return result.RowsAffected(), nil
 }
 
+const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_id = $1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokeAllSessionsForUser, userID)
+	return err
+}
+
 const updateVerificationRequestResend = `-- name: UpdateVerificationRequestResend :one
 UPDATE verification_requests
 SET

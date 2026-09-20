@@ -264,3 +264,9 @@ SET status = 'completed'
 WHERE id = sqlc.arg(id)
   AND status = 'pending'
   AND expires_at > NOW();
+
+-- name: RevokeAllSessionsForUser :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_id = sqlc.arg(user_id)
+  AND revoked_at IS NULL;

@@ -72,6 +72,16 @@ type repository struct {
 	queries *passwordresetdb.Queries
 }
 
+func NewRepository(
+	db *pgxpool.Pool,
+	queries *passwordresetdb.Queries,
+) Repository {
+	return &repository{
+		db:      db,
+		queries: queries,
+	}
+}
+
 type CreatePasswordResetParams struct {
 	Email          string
 	ResetExpiresAt pgtype.Timestamptz
@@ -86,7 +96,7 @@ func (r *repository) GetUserByEmail(
 	user, err := r.queries.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return passwordresetdb.GetUserByEmailRow{}, apperror.NotFound(err)
+			return passwordresetdb.GetUserByEmailRow{}, apperror.NotFoundWith("", "User not found", err)
 		}
 
 		return passwordresetdb.GetUserByEmailRow{}, apperror.Internal(err)
@@ -471,6 +481,10 @@ func (r *repository) UpsertPasswordCredentialAndCompleteReset(
 			nil,
 		)
 	}
+
+	if err := qtx.RevokeAllSessionsForUser(ctx, params.UserID); err != nil {
+    return mapPasswordResetDBError(err)
+}
 
 	if err := tx.Commit(ctx); err != nil {
 		return apperror.Internal(err)

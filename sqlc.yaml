@@ -74,3 +74,16 @@ sql:
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for password reset
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/password_reset/queries.sql"
+    gen:
+      go:
+        package: "passwordresetdbtest"
+        out: "internal/testutil/db/password_reset/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
