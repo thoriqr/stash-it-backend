@@ -100,3 +100,16 @@ sql:
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for session
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/session/queries.sql"
+    gen:
+      go:
+        package: "sessiondbtest"
+        out: "internal/testutil/db/session/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"

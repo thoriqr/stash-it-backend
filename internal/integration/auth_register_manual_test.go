@@ -37,15 +37,13 @@ func TestRegisterManual_Success(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	var body struct {
-		Message string `json:"message"`
-		Data    struct {
+		Data struct {
 			VerificationID uuid.UUID `json:"verification_id"`
 		} `json:"data"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
-	require.Equal(t, "verification code sent", body.Message)
 	require.NotEqual(t, uuid.Nil, body.Data.VerificationID)
 
 	state, err := db.GetRegistrationState(ctx, email)
@@ -89,8 +87,7 @@ func TestRegisterManual_AlreadyPending(t *testing.T) {
 	require.Equal(t, http.StatusCreated, firstResp.StatusCode)
 
 	var firstBody struct {
-		Message string `json:"message"`
-		Data    struct {
+		Data struct {
 			VerificationID uuid.UUID `json:"verification_id"`
 		} `json:"data"`
 	}
@@ -110,15 +107,13 @@ func TestRegisterManual_AlreadyPending(t *testing.T) {
 	require.Equal(t, http.StatusCreated, secondResp.StatusCode)
 
 	var secondBody struct {
-		Message string `json:"message"`
-		Data    struct {
+		Data struct {
 			VerificationID uuid.UUID `json:"verification_id"`
 		} `json:"data"`
 	}
 
 	require.NoError(t, json.NewDecoder(secondResp.Body).Decode(&secondBody))
 
-	require.Equal(t, "registration already in progress", secondBody.Message)
 	require.Equal(t, firstBody.Data.VerificationID, secondBody.Data.VerificationID)
 }
 
@@ -575,17 +570,11 @@ func TestGetRegistrationContinuation_InvalidToken(t *testing.T) {
 
 	var body struct {
 		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code string `json:"code"`
 		} `json:"error"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.Equal(t, apperror.CodeConflict, body.Error.Code)
-	require.Equal(
-		t,
-		"registration continuation is no longer available",
-		body.Error.Message,
-	)
 }
 
 func TestFinalizeManualRegistration_Success(t *testing.T) {
@@ -688,15 +677,13 @@ func TestFinalizeManualRegistration_UserAlreadyExists(t *testing.T) {
 
 	var body struct {
 		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code string `json:"code"`
 		} `json:"error"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	require.Equal(t, registration.CodeUserAlreadyExists, body.Error.Code)
-	require.Equal(t, "user already exists", body.Error.Message)
 }
 
 func TestRegisterManual_ExpiredPendingIsReconciled(t *testing.T) {

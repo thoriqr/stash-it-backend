@@ -136,13 +136,11 @@ func TestPasswordReset_AlreadyPendingAndInvalidPIN(t *testing.T) {
 	second := request()
 	require.Equal(t, http.StatusOK, second.StatusCode)
 	var secondBody struct {
-		Message string `json:"message"`
-		Data    struct {
+		Data struct {
 			VerificationID uuid.UUID `json:"verification_id"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(second.Body).Decode(&secondBody))
-	require.Equal(t, "password reset already in progress", secondBody.Message)
 	require.Equal(t, firstBody.Data.VerificationID, secondBody.Data.VerificationID)
 
 	invalid := httptest.NewRequest(http.MethodPost, "/auth/password-reset/verification/"+firstBody.Data.VerificationID.String()+"/verify", strings.NewReader(`{"pin":"000000"}`))

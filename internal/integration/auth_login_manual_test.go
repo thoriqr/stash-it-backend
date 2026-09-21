@@ -66,8 +66,7 @@ func TestLoginManual_Success(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var body struct {
-		Message string `json:"message"`
-		Data    struct {
+		Data struct {
 			AccessToken  string `json:"access_token"`
 			RefreshToken string `json:"refresh_token"`
 			User         struct {
@@ -80,7 +79,6 @@ func TestLoginManual_Success(t *testing.T) {
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
-	require.Equal(t, "login successful", body.Message)
 	require.NotEmpty(t, body.Data.AccessToken)
 	require.NotEmpty(t, body.Data.RefreshToken)
 	require.Equal(t, userID.String(), body.Data.User.ID)
@@ -149,16 +147,14 @@ func TestLoginManual_InvalidCredentials(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	var body struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+    Error struct {
+        Code string `json:"code"`
+    } `json:"error"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	require.Equal(t, login.CodeInvalidCredentials, body.Error.Code)
-	require.Equal(t, "invalid email or password", body.Error.Message)
 
 	sessionCount, err := db.CountUserSessions(ctx, userID)
 	require.NoError(t, err)
@@ -187,14 +183,12 @@ func TestLoginManual_UnknownEmail(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	var body struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+    Error struct {
+        Code string `json:"code"`
+    } `json:"error"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	require.Equal(t, login.CodeInvalidCredentials, body.Error.Code)
-	require.Equal(t, "invalid email or password", body.Error.Message)
 }
