@@ -1,0 +1,6 @@
+ALTER TABLE verification_requests
+RENAME CONSTRAINT verification_requests_pin_issued_count_check
+TO verification_requests_resend_count_check;
+
+ALTER TABLE verification_requests
+RENAME COLUMN pin_issued_count TO resend_count;

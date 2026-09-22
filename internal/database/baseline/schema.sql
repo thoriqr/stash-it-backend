@@ -1,5 +1,5 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-015.
+-- Represents the final database state after migrations 001-016.
 
 -- ============================================================
 -- Functions
@@ -118,7 +118,7 @@ CREATE TABLE verification_requests (
     subject_id UUID NOT NULL,
     purpose TEXT NOT NULL,
     status TEXT NOT NULL,
-    resend_count INTEGER NOT NULL DEFAULT 0,
+    pin_issued_count INTEGER NOT NULL DEFAULT 0,
     last_sent_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -146,8 +146,8 @@ CREATE TABLE verification_requests (
             )
         ),
 
-    CONSTRAINT verification_requests_resend_count_check
-        CHECK (resend_count >= 0)
+    CONSTRAINT verification_requests_pin_issued_count_check
+        CHECK (pin_issued_count >= 0)
 );
 
 

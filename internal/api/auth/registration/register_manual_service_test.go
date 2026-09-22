@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
@@ -21,15 +20,10 @@ func TestService_RegisterManual(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
 	service := registration.NewService(
 		repository,
-		passwordHasher,
-		verificationCodeHasher,
+		security.NewPasswordHasher(),
+		security.NewVerificationCodeHasher([]byte("test-secret")),
 	)
 
 	ctx := context.Background()
@@ -39,13 +33,12 @@ func TestService_RegisterManual(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetRegistrationByEmail(
+		GetCompletedRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetRegistrationByEmailRow{},
-			false,
+			uuid.Nil,
 			nil,
 		)
 
@@ -71,14 +64,6 @@ func TestService_RegisterManual(t *testing.T) {
 				t.Error("expected registration expiration to be valid")
 			}
 
-			if !params.CodeExpiresAt.Valid {
-				t.Error("expected code expiration to be valid")
-			}
-
-			if params.CodeHash == "" {
-				t.Error("expected code hash to be set")
-			}
-
 			now := time.Now()
 
 			registrationMin := testStartedAt.Add(7 * 24 * time.Hour)
@@ -92,19 +77,10 @@ func TestService_RegisterManual(t *testing.T) {
 				)
 			}
 
-			codeMin := testStartedAt.Add(5 * time.Minute)
-			codeMax := now.Add(5 * time.Minute)
-
-			if params.CodeExpiresAt.Time.Before(codeMin) ||
-				params.CodeExpiresAt.Time.After(codeMax) {
-				t.Errorf(
-					"unexpected code expiration: %v",
-					params.CodeExpiresAt.Time,
-				)
-			}
-
 			return registration.CreateManualRegistrationResult{
-				VerificationRequest: registrationdb.VerificationRequest{ID: verificationID},
+				VerificationRequest: registrationdb.VerificationRequest{
+					ID: verificationID,
+				},
 			}, nil
 		})
 
@@ -133,15 +109,10 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
 	service := registration.NewService(
 		repository,
-		passwordHasher,
-		verificationCodeHasher,
+		security.NewPasswordHasher(),
+		security.NewVerificationCodeHasher([]byte("test-secret")),
 	)
 
 	ctx := context.Background()
@@ -149,17 +120,28 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 
 	repository.
 		EXPECT().
-		GetRegistrationByEmail(
+		GetCompletedRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetRegistrationByEmailRow{
-				Status:         string(registration.PendingRegistrationPending),
-				VerificationID: verificationID,
-				ExpiresAt:      pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+			uuid.Nil,
+			nil,
+		)
+
+	repository.
+		EXPECT().
+		CreateManualRegistration(
+			ctx,
+			gomock.Any(),
+		).
+		Return(
+			registration.CreateManualRegistrationResult{
+				VerificationRequest: registrationdb.VerificationRequest{
+					ID: verificationID,
+				},
+				AlreadyPending: true,
 			},
-			true,
 			nil,
 		)
 
@@ -188,30 +170,23 @@ func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
 	service := registration.NewService(
 		repository,
-		passwordHasher,
-		verificationCodeHasher,
+		security.NewPasswordHasher(),
+		security.NewVerificationCodeHasher([]byte("test-secret")),
 	)
 
 	ctx := context.Background()
+	registrationID := uuid.New()
 
 	repository.
 		EXPECT().
-		GetRegistrationByEmail(
+		GetCompletedRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetRegistrationByEmailRow{
-				Status: string(registration.PendingRegistrationCompleted),
-			},
-			true,
+			registrationID,
 			nil,
 		)
 
@@ -245,29 +220,25 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
 	service := registration.NewService(
 		repository,
-		passwordHasher,
-		verificationCodeHasher,
+		security.NewPasswordHasher(),
+		security.NewVerificationCodeHasher([]byte("test-secret")),
 	)
 
 	ctx := context.Background()
-	repositoryErr := apperror.Internal(errors.New("database connection failed"))
+	repositoryErr := apperror.Internal(
+		errors.New("database connection failed"),
+	)
 
 	repository.
 		EXPECT().
-		GetRegistrationByEmail(
+		GetCompletedRegistrationByEmail(
 			ctx,
 			"test@example.com",
 		).
 		Return(
-			registrationdb.GetRegistrationByEmailRow{},
-			false,
+			uuid.Nil,
 			repositoryErr,
 		)
 
@@ -290,6 +261,7 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
+
 	service := registration.NewService(
 		repository,
 		security.NewPasswordHasher(),
@@ -298,23 +270,51 @@ func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.
 
 	ctx := context.Background()
 	verificationID := uuid.New()
-	repository.EXPECT().GetRegistrationByEmail(ctx, "test@example.com").Return(
-		registrationdb.GetRegistrationByEmailRow{
-			Status:    string(registration.PendingRegistrationPending),
-			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
-		}, true, nil,
-	)
-	repository.EXPECT().CreateManualRegistration(ctx, gomock.Any()).Return(
-		registration.CreateManualRegistrationResult{
-			VerificationRequest: registrationdb.VerificationRequest{ID: verificationID},
-		}, nil,
-	)
 
-	result, err := service.RegisterManual(ctx, "test@example.com")
+	repository.
+		EXPECT().
+		GetCompletedRegistrationByEmail(
+			ctx,
+			"test@example.com",
+		).
+		Return(
+			uuid.Nil,
+			nil,
+		)
+
+	repository.
+		EXPECT().
+		CreateManualRegistration(
+			ctx,
+			gomock.Any(),
+		).
+		Return(
+			registration.CreateManualRegistrationResult{
+				VerificationRequest: registrationdb.VerificationRequest{
+					ID: verificationID,
+				},
+				AlreadyPending: false,
+			},
+			nil,
+		)
+
+	result, err := service.RegisterManual(
+		ctx,
+		"test@example.com",
+	)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.VerificationID != verificationID || result.AlreadyPending {
-		t.Errorf("expected new pending registration result, got %#v", result)
+
+	if result.VerificationID != verificationID {
+		t.Errorf(
+			"expected verification ID %s, got %s",
+			verificationID,
+			result.VerificationID,
+		)
+	}
+
+	if result.AlreadyPending {
+		t.Error("expected AlreadyPending to be false")
 	}
 }

@@ -199,42 +199,41 @@ func (c *MockRepositoryGetActiveVerificationCodeCall) DoAndReturn(f func(context
 	return c
 }
 
-// GetRegistrationByEmail mocks base method.
-func (m *MockRepository) GetRegistrationByEmail(ctx context.Context, email string) (registrationdb.GetRegistrationByEmailRow, bool, error) {
+// GetCompletedRegistrationByEmail mocks base method.
+func (m *MockRepository) GetCompletedRegistrationByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRegistrationByEmail", ctx, email)
-	ret0, _ := ret[0].(registrationdb.GetRegistrationByEmailRow)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret := m.ctrl.Call(m, "GetCompletedRegistrationByEmail", ctx, email)
+	ret0, _ := ret[0].(uuid.UUID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// GetRegistrationByEmail indicates an expected call of GetRegistrationByEmail.
-func (mr *MockRepositoryMockRecorder) GetRegistrationByEmail(ctx, email any) *MockRepositoryGetRegistrationByEmailCall {
+// GetCompletedRegistrationByEmail indicates an expected call of GetCompletedRegistrationByEmail.
+func (mr *MockRepositoryMockRecorder) GetCompletedRegistrationByEmail(ctx, email any) *MockRepositoryGetCompletedRegistrationByEmailCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRegistrationByEmail", reflect.TypeOf((*MockRepository)(nil).GetRegistrationByEmail), ctx, email)
-	return &MockRepositoryGetRegistrationByEmailCall{Call: call}
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCompletedRegistrationByEmail", reflect.TypeOf((*MockRepository)(nil).GetCompletedRegistrationByEmail), ctx, email)
+	return &MockRepositoryGetCompletedRegistrationByEmailCall{Call: call}
 }
 
-// MockRepositoryGetRegistrationByEmailCall wrap *gomock.Call
-type MockRepositoryGetRegistrationByEmailCall struct {
+// MockRepositoryGetCompletedRegistrationByEmailCall wrap *gomock.Call
+type MockRepositoryGetCompletedRegistrationByEmailCall struct {
 	*gomock.Call
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryGetRegistrationByEmailCall) Return(arg0 registrationdb.GetRegistrationByEmailRow, arg1 bool, arg2 error) *MockRepositoryGetRegistrationByEmailCall {
-	c.Call = c.Call.Return(arg0, arg1, arg2)
+func (c *MockRepositoryGetCompletedRegistrationByEmailCall) Return(arg0 uuid.UUID, arg1 error) *MockRepositoryGetCompletedRegistrationByEmailCall {
+	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetRegistrationByEmailCall) Do(f func(context.Context, string) (registrationdb.GetRegistrationByEmailRow, bool, error)) *MockRepositoryGetRegistrationByEmailCall {
+func (c *MockRepositoryGetCompletedRegistrationByEmailCall) Do(f func(context.Context, string) (uuid.UUID, error)) *MockRepositoryGetCompletedRegistrationByEmailCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetRegistrationByEmailCall) DoAndReturn(f func(context.Context, string) (registrationdb.GetRegistrationByEmailRow, bool, error)) *MockRepositoryGetRegistrationByEmailCall {
+func (c *MockRepositoryGetCompletedRegistrationByEmailCall) DoAndReturn(f func(context.Context, string) (uuid.UUID, error)) *MockRepositoryGetCompletedRegistrationByEmailCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -356,41 +355,41 @@ func (c *MockRepositoryIncrementVerificationCodeAttemptsCall) DoAndReturn(f func
 	return c
 }
 
-// ResendVerification mocks base method.
-func (m *MockRepository) ResendVerification(ctx context.Context, params registration.ResendVerificationParams) (registrationdb.VerificationRequest, error) {
+// IssueVerificationCode mocks base method.
+func (m *MockRepository) IssueVerificationCode(ctx context.Context, params registration.IssueVerificationCodeParams) (registrationdb.VerificationRequest, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResendVerification", ctx, params)
+	ret := m.ctrl.Call(m, "IssueVerificationCode", ctx, params)
 	ret0, _ := ret[0].(registrationdb.VerificationRequest)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ResendVerification indicates an expected call of ResendVerification.
-func (mr *MockRepositoryMockRecorder) ResendVerification(ctx, params any) *MockRepositoryResendVerificationCall {
+// IssueVerificationCode indicates an expected call of IssueVerificationCode.
+func (mr *MockRepositoryMockRecorder) IssueVerificationCode(ctx, params any) *MockRepositoryIssueVerificationCodeCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResendVerification", reflect.TypeOf((*MockRepository)(nil).ResendVerification), ctx, params)
-	return &MockRepositoryResendVerificationCall{Call: call}
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueVerificationCode", reflect.TypeOf((*MockRepository)(nil).IssueVerificationCode), ctx, params)
+	return &MockRepositoryIssueVerificationCodeCall{Call: call}
 }
 
-// MockRepositoryResendVerificationCall wrap *gomock.Call
-type MockRepositoryResendVerificationCall struct {
+// MockRepositoryIssueVerificationCodeCall wrap *gomock.Call
+type MockRepositoryIssueVerificationCodeCall struct {
 	*gomock.Call
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryResendVerificationCall) Return(arg0 registrationdb.VerificationRequest, arg1 error) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) Return(arg0 registrationdb.VerificationRequest, arg1 error) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryResendVerificationCall) Do(f func(context.Context, registration.ResendVerificationParams) (registrationdb.VerificationRequest, error)) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) Do(f func(context.Context, registration.IssueVerificationCodeParams) (registrationdb.VerificationRequest, error)) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryResendVerificationCall) DoAndReturn(f func(context.Context, registration.ResendVerificationParams) (registrationdb.VerificationRequest, error)) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) DoAndReturn(f func(context.Context, registration.IssueVerificationCodeParams) (registrationdb.VerificationRequest, error)) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

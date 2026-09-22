@@ -6,10 +6,15 @@ type RegisterResponse struct {
 	VerificationID uuid.UUID `json:"verification_id"`
 }
 
+type CreatePINResponse struct {
+	VerificationID string `json:"verification_id"`
+}
+
 type GetVerificationResponse struct {
-	VerificationID   string `json:"verification_id"`
-	Status           string `json:"status"`
-	ResendInSeconds  int    `json:"resend_in_seconds"`
+    VerificationID  string `json:"verification_id"`
+    Status          string `json:"status"`
+    PINIssued       bool   `json:"pin_issued"`
+    ResendInSeconds  int    `json:"resend_in_seconds"`
 }
 
 type ResendVerificationResponse struct {
@@ -30,3 +35,4 @@ type FinalizeManualRegistrationResponse struct {
     Email       string `json:"email"`
     DisplayName string `json:"display_name"`
 }
+

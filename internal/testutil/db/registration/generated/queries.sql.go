@@ -79,16 +79,15 @@ WITH registration AS (
     SELECT 'pending_registration', id, 'registration', 'pending' FROM registration
     RETURNING id
 )
-INSERT INTO verification_codes (verification_request_id, code_hash, expires_at)
-SELECT id, 'expired-code', NOW() - INTERVAL '30 minutes' FROM verification
-RETURNING verification_request_id
+SELECT id
+FROM verification
 `
 
 func (q *Queries) CreateExpiredPendingRegistration(ctx context.Context, email string) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, createExpiredPendingRegistration, email)
-	var verification_request_id uuid.UUID
-	err := row.Scan(&verification_request_id)
-	return verification_request_id, err
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createRegistrationContinuation = `-- name: CreateRegistrationContinuation :one
@@ -190,22 +189,21 @@ SELECT
     pr.id,
     pr.status,
     vr.id AS verification_id,
-    vc.id AS verification_code_id
+    vr.pin_issued_count
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
-JOIN verification_codes vc ON vc.verification_request_id = vr.id
 WHERE pr.email = $1
 ORDER BY pr.created_at, pr.id
 `
 
 type GetRegistrationHistoryRow struct {
-	ID                 uuid.UUID
-	Status             string
-	VerificationID     uuid.UUID
-	VerificationCodeID uuid.UUID
+	ID             uuid.UUID
+	Status         string
+	VerificationID uuid.UUID
+	PinIssuedCount int32
 }
 
 func (q *Queries) GetRegistrationHistory(ctx context.Context, email string) ([]GetRegistrationHistoryRow, error) {
@@ -221,7 +219,7 @@ func (q *Queries) GetRegistrationHistory(ctx context.Context, email string) ([]G
 			&i.ID,
 			&i.Status,
 			&i.VerificationID,
-			&i.VerificationCodeID,
+			&i.PinIssuedCount,
 		); err != nil {
 			return nil, err
 		}
@@ -242,28 +240,26 @@ SELECT
     pr.expires_at,
     vr.id AS verification_id,
     vr.status AS verification_status,
-    vc.id AS verification_code_id,
-    vc.expires_at AS verification_code_expires_at
+    vr.pin_issued_count,
+    vr.last_sent_at
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
-JOIN verification_codes vc
-    ON vc.verification_request_id = vr.id
 WHERE pr.email = $1
 `
 
 type GetRegistrationStateRow struct {
-	ID                        uuid.UUID
-	Email                     string
-	RegistrationType          string
-	Status                    string
-	ExpiresAt                 pgtype.Timestamptz
-	VerificationID            uuid.UUID
-	VerificationStatus        string
-	VerificationCodeID        uuid.UUID
-	VerificationCodeExpiresAt pgtype.Timestamptz
+	ID                 uuid.UUID
+	Email              string
+	RegistrationType   string
+	Status             string
+	ExpiresAt          pgtype.Timestamptz
+	VerificationID     uuid.UUID
+	VerificationStatus string
+	PinIssuedCount     int32
+	LastSentAt         pgtype.Timestamptz
 }
 
 func (q *Queries) GetRegistrationState(ctx context.Context, email string) (GetRegistrationStateRow, error) {
@@ -277,10 +273,21 @@ func (q *Queries) GetRegistrationState(ctx context.Context, email string) (GetRe
 		&i.ExpiresAt,
 		&i.VerificationID,
 		&i.VerificationStatus,
-		&i.VerificationCodeID,
-		&i.VerificationCodeExpiresAt,
+		&i.PinIssuedCount,
+		&i.LastSentAt,
 	)
 	return i, err
+}
+
+const makeVerificationResendable = `-- name: MakeVerificationResendable :exec
+UPDATE verification_requests
+SET last_sent_at = NOW() - INTERVAL '1 day'
+WHERE id = $1
+`
+
+func (q *Queries) MakeVerificationResendable(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, makeVerificationResendable, id)
+	return err
 }
 
 const truncateRegistrationData = `-- name: TruncateRegistrationData :exec

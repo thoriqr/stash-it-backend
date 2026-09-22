@@ -46,8 +46,8 @@ func (s *Service) RegisterManual(
 ) (RegisterManualResult, error) {
 	email = normalizeEmail(email)
 
-	registration, found, err :=
-		s.repository.GetRegistrationByEmail(
+	registrationID, err :=
+		s.repository.GetCompletedRegistrationByEmail(
 			ctx,
 			email,
 		)
@@ -55,39 +55,13 @@ func (s *Service) RegisterManual(
 		return RegisterManualResult{}, err
 	}
 
-	if found {
-		switch registration.Status {
-		case string(PendingRegistrationPending):
-			if registration.ExpiresAt.Time.After(time.Now()) {
-				return RegisterManualResult{
-					VerificationID: registration.VerificationID,
-					AlreadyPending: true,
-				}, nil
-			}
-
-		case string(PendingRegistrationCompleted):
-			return RegisterManualResult{}, apperror.ConflictWith(
-				CodeRegistrationAlreadyCompleted,
-				"registration has already been completed",
-				nil,
-			)
-
-		default:
-			return RegisterManualResult{}, apperror.Internal(
-				fmt.Errorf(
-					"unexpected active registration status: %s",
-					registration.Status,
-				),
-			)
-		}
+	if registrationID != uuid.Nil {
+		return RegisterManualResult{}, apperror.ConflictWith(
+			CodeRegistrationAlreadyCompleted,
+			"registration has already been completed",
+			nil,
+		)
 	}
-
-	code, err := s.verificationCodeHasher.Generate()
-	if err != nil {
-		return RegisterManualResult{}, apperror.Internal(err)
-	}
-
-	codeHash := s.verificationCodeHasher.Hash(code)
 
 	now := time.Now()
 
@@ -96,30 +70,78 @@ func (s *Service) RegisterManual(
 		Valid: true,
 	}
 
-	codeExpiresAt := pgtype.Timestamptz{
-		Time:  now.Add(verificationCodeExpiresIn),
-		Valid: true,
-	}
-
 	result, err := s.repository.CreateManualRegistration(
 		ctx,
 		CreateManualRegistrationParams{
 			Email:                 email,
 			RegistrationExpiresAt: registrationExpiresAt,
-			CodeHash:              codeHash,
-			CodeExpiresAt:         codeExpiresAt,
 		},
 	)
 	if err != nil {
 		return RegisterManualResult{}, err
 	}
 
-	// TODO: send verification PIN to user's email.
-	fmt.Printf("DEV verification PIN for %s: %s\n", email, code)
-
 	return RegisterManualResult{
 		VerificationID: result.VerificationRequest.ID,
 		AlreadyPending: result.AlreadyPending,
+	}, nil
+}
+
+type CreatePINResult struct {
+	VerificationID uuid.UUID
+}
+
+func (s *Service) CreatePIN(
+	ctx context.Context,
+	verificationID uuid.UUID,
+) (CreatePINResult, error) {
+	verification, err := s.repository.GetVerification(
+		ctx,
+		verificationID,
+	)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	if err := validateVerificationPending(verification); err != nil {
+		return CreatePINResult{}, err
+	}
+
+	code, err := s.verificationCodeHasher.Generate()
+	if err != nil {
+		return CreatePINResult{}, apperror.Internal(err)
+	}
+
+	codeHash := s.verificationCodeHasher.Hash(code)
+
+	now := time.Now()
+
+	codeExpiresAt := pgtype.Timestamptz{
+		Time:  now.Add(verificationCodeExpiresIn),
+		Valid: true,
+	}
+
+	_, err = s.repository.IssueVerificationCode(
+		ctx,
+		IssueVerificationCodeParams{
+			VerificationID: verificationID,
+			CodeHash:       codeHash,
+			CodeExpiresAt:  codeExpiresAt,
+		},
+	)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	// TODO: send verification PIN to user's email.
+	fmt.Printf(
+		"DEV verification PIN for create %s: %s\n",
+		verificationID,
+		code,
+	)
+
+	return CreatePINResult{
+		VerificationID: verificationID,
 	}, nil
 }
 
@@ -128,6 +150,7 @@ type GetVerificationResult struct {
 	Status                VerificationRequestStatus
 	RegistrationExpiresAt time.Time
 	LastSentAt            *time.Time
+	PinIssuedCount int32
 }
 
 func (s *Service) GetVerification(
@@ -157,6 +180,7 @@ func (s *Service) GetVerification(
 		Status:                VerificationRequestStatus(verification.Status),
 		RegistrationExpiresAt: verification.RegistrationExpiresAt.Time,
 		LastSentAt:            lastSentAt,
+		PinIssuedCount: verification.PinIssuedCount,
 	}, nil
 }
 
@@ -209,9 +233,9 @@ func (s *Service) ResendVerification(
 		Valid: true,
 	}
 
-	_, err = s.repository.ResendVerification(
+	_, err = s.repository.IssueVerificationCode(
 		ctx,
-		ResendVerificationParams{
+		IssueVerificationCodeParams{
 			VerificationID: verificationID,
 			CodeHash:       codeHash,
 			CodeExpiresAt:  codeExpiresAt,

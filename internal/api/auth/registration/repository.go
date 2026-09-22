@@ -25,9 +25,9 @@ type Repository interface {
 		id uuid.UUID,
 	) (registrationdb.GetVerificationRow, error)
 
-	ResendVerification(
+	IssueVerificationCode(
 		ctx context.Context,
-		params ResendVerificationParams,
+		params IssueVerificationCodeParams,
 	) (registrationdb.VerificationRequest, error)
 
 	GetActiveVerificationCode(
@@ -46,11 +46,12 @@ type Repository interface {
 		ctx context.Context,
 		params CompleteVerificationParams,
 	) (registrationdb.RegistrationContinuation, error)
+	
 
-	GetRegistrationByEmail(
+	GetCompletedRegistrationByEmail(
 		ctx context.Context,
 		email string,
-	) (registrationdb.GetRegistrationByEmailRow, bool, error)
+	) (uuid.UUID, error)
 
 	GetRegistrationContinuation(
 		ctx context.Context,
@@ -78,36 +79,33 @@ func NewRepository(
 	}
 }
 
-type CreateManualRegistrationParams struct {
-	Email                 string
-	RegistrationExpiresAt pgtype.Timestamptz
-	CodeHash              string
-	CodeExpiresAt         pgtype.Timestamptz
-}
-
 type CreateManualRegistrationResult struct {
 	VerificationRequest registrationdb.VerificationRequest
 	AlreadyPending      bool
 }
 
-func (r *repository) GetRegistrationByEmail(
+func (r *repository) GetCompletedRegistrationByEmail(
 	ctx context.Context,
 	email string,
-) (registrationdb.GetRegistrationByEmailRow, bool, error) {
-	registration, err := r.queries.GetRegistrationByEmail(
+) (uuid.UUID, error) {
+	id, err := r.queries.GetCompletedRegistrationByEmail(
 		ctx,
 		email,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return registrationdb.GetRegistrationByEmailRow{}, false, nil
+			return uuid.Nil, nil
 		}
 
-		return registrationdb.GetRegistrationByEmailRow{}, false,
-			apperror.Internal(err)
+		return uuid.Nil, apperror.Internal(err)
 	}
 
-	return registration, true, nil
+	return id, nil
+}
+
+type CreateManualRegistrationParams struct {
+	Email                 string
+	RegistrationExpiresAt pgtype.Timestamptz
 }
 
 func (r *repository) CreateManualRegistration(
@@ -123,21 +121,50 @@ func (r *repository) CreateManualRegistration(
 
 	qtx := r.queries.WithTx(tx)
 
-	existing, err := qtx.GetPendingRegistrationByEmailForUpdate(ctx, params.Email)
+	existing, err := qtx.GetPendingRegistrationByEmailForUpdate(
+		ctx,
+		params.Email,
+	)
 	if err == nil {
-		if !existing.IsExpired {
-			return CreateManualRegistrationResult{
-				VerificationRequest: registrationdb.VerificationRequest{ID: existing.VerificationID},
-				AlreadyPending:      true,
-			}, nil
-		}
+		if existing.RegistrationType == string(RegistrationTypeSocial) {
+			rowsAffected, err := qtx.ForceExpireSocialPendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateManualRegistrationResult{}, apperror.Internal(err)
+			}
 
-		rowsAffected, err := qtx.ExpirePendingRegistration(ctx, existing.ID)
-		if err != nil {
-			return CreateManualRegistrationResult{}, apperror.Internal(err)
-		}
-		if rowsAffected != 1 {
-			return CreateManualRegistrationResult{}, apperror.ConflictWith("", "registration is no longer pending", nil)
+			if rowsAffected != 1 {
+				return CreateManualRegistrationResult{}, apperror.ConflictWith(
+					"",
+					"registration is no longer pending",
+					nil,
+				)
+			}
+		} else if !existing.IsExpired {
+			return CreateManualRegistrationResult{
+				VerificationRequest: registrationdb.VerificationRequest{
+					ID: existing.VerificationID,
+				},
+				AlreadyPending: true,
+			}, nil
+		} else {
+			rowsAffected, err := qtx.ExpirePendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateManualRegistrationResult{}, apperror.Internal(err)
+			}
+
+			if rowsAffected != 1 {
+				return CreateManualRegistrationResult{}, apperror.ConflictWith(
+					"",
+					"registration is no longer pending",
+					nil,
+				)
+			}
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return CreateManualRegistrationResult{}, apperror.Internal(err)
@@ -169,23 +196,67 @@ func (r *repository) CreateManualRegistration(
 		return CreateManualRegistrationResult{}, apperror.Internal(err)
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return CreateManualRegistrationResult{}, apperror.Internal(err)
+	}
+
+	return CreateManualRegistrationResult{
+		VerificationRequest: verificationRequest,
+	}, nil
+}
+
+
+type IssueVerificationCodeParams struct {
+	VerificationID uuid.UUID
+	CodeHash       string
+	CodeExpiresAt  pgtype.Timestamptz
+}
+
+func (r *repository) IssueVerificationCode(
+	ctx context.Context,
+	params IssueVerificationCodeParams,
+) (registrationdb.VerificationRequest, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	if err := qtx.InvalidateVerificationCode(
+		ctx,
+		params.VerificationID,
+	); err != nil {
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
+	}
+
 	_, err = qtx.CreateVerificationCode(
 		ctx,
 		registrationdb.CreateVerificationCodeParams{
-			VerificationRequestID: verificationRequest.ID,
+			VerificationRequestID: params.VerificationID,
 			CodeHash:              params.CodeHash,
 			ExpiresAt:             params.CodeExpiresAt,
 		},
 	)
 	if err != nil {
-		return CreateManualRegistrationResult{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, mapRegistrationDBError(err)
+	}
+
+	verificationRequest, err := qtx.UpdateVerificationRequestPINIssued(
+		ctx,
+		params.VerificationID,
+	)
+	if err != nil {
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return CreateManualRegistrationResult{}, apperror.Internal(err)
+		return registrationdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
-	return CreateManualRegistrationResult{VerificationRequest: verificationRequest}, nil
+	return verificationRequest, nil
 }
 
 func (r *repository) GetVerification(
@@ -204,61 +275,6 @@ func (r *repository) GetVerification(
 	return verification, nil
 }
 
-type ResendVerificationParams struct {
-	VerificationID uuid.UUID
-	CodeHash       string
-	CodeExpiresAt  pgtype.Timestamptz
-}
-
-func (r *repository) ResendVerification(
-	ctx context.Context,
-	params ResendVerificationParams,
-) (registrationdb.VerificationRequest, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return registrationdb.VerificationRequest{}, apperror.Internal(err)
-	}
-
-	defer tx.Rollback(ctx)
-
-	qtx := r.queries.WithTx(tx)
-
-	// Invalidate the currently active verification code.
-	if err := qtx.InvalidateVerificationCode(
-		ctx,
-		params.VerificationID,
-	); err != nil {
-		return registrationdb.VerificationRequest{}, apperror.Internal(err)
-	}
-
-	// Create the new verification code.
-	_, err = qtx.CreateVerificationCode(
-		ctx,
-		registrationdb.CreateVerificationCodeParams{
-			VerificationRequestID: params.VerificationID,
-			CodeHash:              params.CodeHash,
-			ExpiresAt:             params.CodeExpiresAt,
-		},
-	)
-	if err != nil {
-		return registrationdb.VerificationRequest{}, mapRegistrationDBError(err)
-	}
-
-	// Update resend metadata.
-	verificationRequest, err := qtx.UpdateVerificationRequestResend(
-		ctx,
-		params.VerificationID,
-	)
-	if err != nil {
-		return registrationdb.VerificationRequest{}, apperror.Internal(err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return registrationdb.VerificationRequest{}, apperror.Internal(err)
-	}
-
-	return verificationRequest, nil
-}
 
 func (r *repository) GetActiveVerificationCode(
 	ctx context.Context,

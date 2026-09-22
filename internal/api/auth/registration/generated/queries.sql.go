@@ -291,7 +291,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at
 `
@@ -317,7 +317,7 @@ func (q *Queries) CreateVerificationRequest(ctx context.Context, arg CreateVerif
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 	)
@@ -334,6 +334,22 @@ WHERE id = $1
 
 func (q *Queries) ExpirePendingRegistration(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, expirePendingRegistration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forceExpireSocialPendingRegistration = `-- name: ForceExpireSocialPendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = $1
+  AND registration_type = 'social'
+  AND status = 'pending'
+`
+
+func (q *Queries) ForceExpireSocialPendingRegistration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forceExpireSocialPendingRegistration, id)
 	if err != nil {
 		return 0, err
 	}
@@ -381,9 +397,29 @@ func (q *Queries) GetActiveVerificationCode(ctx context.Context, arg GetActiveVe
 	return i, err
 }
 
+const getCompletedRegistrationByEmail = `-- name: GetCompletedRegistrationByEmail :one
+SELECT
+    pr.id
+FROM pending_registrations pr
+JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+  AND pr.status = 'completed'
+`
+
+func (q *Queries) GetCompletedRegistrationByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getCompletedRegistrationByEmail, email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getPendingRegistrationByEmailForUpdate = `-- name: GetPendingRegistrationByEmailForUpdate :one
 SELECT
     pr.id,
+    pr.registration_type,
     pr.expires_at,
     pr.expires_at <= NOW() AS is_expired,
     vr.id AS verification_id
@@ -398,10 +434,11 @@ FOR UPDATE
 `
 
 type GetPendingRegistrationByEmailForUpdateRow struct {
-	ID             uuid.UUID
-	ExpiresAt      pgtype.Timestamptz
-	IsExpired      bool
-	VerificationID uuid.UUID
+	ID               uuid.UUID
+	RegistrationType string
+	ExpiresAt        pgtype.Timestamptz
+	IsExpired        bool
+	VerificationID   uuid.UUID
 }
 
 func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, email string) (GetPendingRegistrationByEmailForUpdateRow, error) {
@@ -409,51 +446,9 @@ func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, em
 	var i GetPendingRegistrationByEmailForUpdateRow
 	err := row.Scan(
 		&i.ID,
+		&i.RegistrationType,
 		&i.ExpiresAt,
 		&i.IsExpired,
-		&i.VerificationID,
-	)
-	return i, err
-}
-
-const getRegistrationByEmail = `-- name: GetRegistrationByEmail :one
-SELECT
-    pr.id,
-    pr.email,
-    pr.registration_type,
-    pr.status,
-    pr.created_at,
-    pr.expires_at,
-    vr.id AS verification_id
-FROM pending_registrations pr
-JOIN verification_requests vr
-    ON vr.subject_type = 'pending_registration'
-    AND vr.subject_id = pr.id
-    AND vr.purpose = 'registration'
-WHERE pr.email = $1
-  AND pr.status IN ('pending', 'completed')
-`
-
-type GetRegistrationByEmailRow struct {
-	ID               uuid.UUID
-	Email            string
-	RegistrationType string
-	Status           string
-	CreatedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
-	VerificationID   uuid.UUID
-}
-
-func (q *Queries) GetRegistrationByEmail(ctx context.Context, email string) (GetRegistrationByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getRegistrationByEmail, email)
-	var i GetRegistrationByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.RegistrationType,
-		&i.Status,
-		&i.CreatedAt,
-		&i.ExpiresAt,
 		&i.VerificationID,
 	)
 	return i, err
@@ -516,7 +511,7 @@ SELECT
     vr.subject_id,
     vr.purpose,
     vr.status,
-    vr.resend_count,
+    vr.pin_issued_count,
     vr.last_sent_at,
     vr.created_at,
 
@@ -534,7 +529,7 @@ type GetVerificationRow struct {
 	SubjectID             uuid.UUID
 	Purpose               string
 	Status                string
-	ResendCount           int32
+	PinIssuedCount        int32
 	LastSentAt            pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 	RegistrationStatus    string
@@ -550,7 +545,7 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 		&i.RegistrationStatus,
@@ -613,10 +608,10 @@ func (q *Queries) MarkVerificationRequestVerified(ctx context.Context, id uuid.U
 	return result.RowsAffected(), nil
 }
 
-const updateVerificationRequestResend = `-- name: UpdateVerificationRequestResend :one
+const updateVerificationRequestPINIssued = `-- name: UpdateVerificationRequestPINIssued :one
 UPDATE verification_requests
 SET
-    resend_count = resend_count + 1,
+    pin_issued_count = pin_issued_count + 1,
     last_sent_at = NOW()
 WHERE id = $1
 RETURNING
@@ -625,13 +620,13 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at
 `
 
-func (q *Queries) UpdateVerificationRequestResend(ctx context.Context, id uuid.UUID) (VerificationRequest, error) {
-	row := q.db.QueryRow(ctx, updateVerificationRequestResend, id)
+func (q *Queries) UpdateVerificationRequestPINIssued(ctx context.Context, id uuid.UUID) (VerificationRequest, error) {
+	row := q.db.QueryRow(ctx, updateVerificationRequestPINIssued, id)
 	var i VerificationRequest
 	err := row.Scan(
 		&i.ID,
@@ -639,7 +634,7 @@ func (q *Queries) UpdateVerificationRequestResend(ctx context.Context, id uuid.U
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 	)

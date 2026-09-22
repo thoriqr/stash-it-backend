@@ -18,7 +18,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
-func TestService_ResendVerification(t *testing.T) {
+func TestService_CreatePIN(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
@@ -38,7 +38,6 @@ func TestService_ResendVerification(t *testing.T) {
 
 	testStartedAt := time.Now()
 	registrationExpiresAt := testStartedAt.Add(7 * 24 * time.Hour)
-	lastSentAt := testStartedAt.Add(-2 * time.Minute)
 
 	repository.
 		EXPECT().
@@ -50,10 +49,6 @@ func TestService_ResendVerification(t *testing.T) {
 				RegistrationStatus: string(registration.PendingRegistrationPending),
 				RegistrationExpiresAt: pgtype.Timestamptz{
 					Time:  registrationExpiresAt,
-					Valid: true,
-				},
-				LastSentAt: pgtype.Timestamptz{
-					Time:  lastSentAt,
 					Valid: true,
 				},
 			},
@@ -104,10 +99,11 @@ func TestService_ResendVerification(t *testing.T) {
 			}, nil
 		})
 
-	result, err := service.ResendVerification(
+	result, err := service.CreatePIN(
 		ctx,
 		verificationID,
 	)
+
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -121,73 +117,7 @@ func TestService_ResendVerification(t *testing.T) {
 	}
 }
 
-func TestService_ResendVerification_Cooldown(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
-
-	ctx := context.Background()
-	verificationID := uuid.New()
-
-	repository.
-		EXPECT().
-		GetVerification(ctx, verificationID).
-		Return(
-			registrationdb.GetVerificationRow{
-				ID:                 verificationID,
-				Status:             string(registration.VerificationRequestPending),
-				RegistrationStatus: string(registration.PendingRegistrationPending),
-				RegistrationExpiresAt: pgtype.Timestamptz{
-					Time:  time.Now().Add(7 * 24 * time.Hour),
-					Valid: true,
-				},
-				LastSentAt: pgtype.Timestamptz{
-					Time:  time.Now().Add(-30 * time.Second),
-					Valid: true,
-				},
-			},
-			nil,
-		)
-
-	_, err := service.ResendVerification(
-		ctx,
-		verificationID,
-	)
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	appErr := apperror.FromError(err)
-
-	if appErr.Code != registration.CodeVerificationResendCooldown {
-		t.Errorf(
-			"expected error code %q, got %q",
-			registration.CodeVerificationResendCooldown,
-			appErr.Code,
-		)
-	}
-
-	if appErr.Status != http.StatusConflict {
-		t.Errorf(
-			"expected status %d, got %d",
-			http.StatusConflict,
-			appErr.Status,
-		)
-	}
-}
-
-func TestService_ResendVerification_GetVerificationError(t *testing.T) {
+func TestService_CreatePIN_GetVerificationError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
@@ -217,7 +147,7 @@ func TestService_ResendVerification_GetVerificationError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.ResendVerification(
+	_, err := service.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -234,7 +164,7 @@ func TestService_ResendVerification_GetVerificationError(t *testing.T) {
 	}
 }
 
-func TestService_ResendVerification_RepositoryError(t *testing.T) {
+func TestService_CreatePIN_RegistrationExpired(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 
@@ -261,7 +191,193 @@ func TestService_ResendVerification_RepositoryError(t *testing.T) {
 				Status:             string(registration.VerificationRequestPending),
 				RegistrationStatus: string(registration.PendingRegistrationPending),
 				RegistrationExpiresAt: pgtype.Timestamptz{
-					Time:  time.Now().Add(7 * 24 * time.Hour),
+					Time:  time.Now().Add(-time.Hour),
+					Valid: true,
+				},
+			},
+			nil,
+		)
+
+	_, err := service.CreatePIN(
+		ctx,
+		verificationID,
+	)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	appErr := apperror.FromError(err)
+
+	if appErr.Code != registration.CodeRegistrationExpired {
+		t.Errorf(
+			"expected error code %q, got %q",
+			registration.CodeRegistrationExpired,
+			appErr.Code,
+		)
+	}
+
+	if appErr.Status != http.StatusConflict {
+		t.Errorf(
+			"expected status %d, got %d",
+			http.StatusConflict,
+			appErr.Status,
+		)
+	}
+}
+
+func TestService_CreatePIN_VerificationNotPending(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repository := mocks.NewMockRepository(ctrl)
+
+	passwordHasher := security.NewPasswordHasher()
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte("test-secret"),
+	)
+
+	service := registration.NewService(
+		repository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+
+	repository.
+		EXPECT().
+		GetVerification(ctx, verificationID).
+		Return(
+			registrationdb.GetVerificationRow{
+				ID:                 verificationID,
+				Status:             string(registration.VerificationRequestVerified),
+				RegistrationStatus: string(registration.PendingRegistrationPending),
+				RegistrationExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(time.Hour),
+					Valid: true,
+				},
+			},
+			nil,
+		)
+
+	_, err := service.CreatePIN(
+		ctx,
+		verificationID,
+	)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	appErr := apperror.FromError(err)
+
+	if appErr.Code != registration.CodeVerificationNotPending {
+		t.Errorf(
+			"expected error code %q, got %q",
+			registration.CodeVerificationNotPending,
+			appErr.Code,
+		)
+	}
+
+	if appErr.Status != http.StatusConflict {
+		t.Errorf(
+			"expected status %d, got %d",
+			http.StatusConflict,
+			appErr.Status,
+		)
+	}
+}
+
+func TestService_CreatePIN_RegistrationNotPending(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repository := mocks.NewMockRepository(ctrl)
+
+	passwordHasher := security.NewPasswordHasher()
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte("test-secret"),
+	)
+
+	service := registration.NewService(
+		repository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+
+	repository.
+		EXPECT().
+		GetVerification(ctx, verificationID).
+		Return(
+			registrationdb.GetVerificationRow{
+				ID:                 verificationID,
+				Status:             string(registration.VerificationRequestPending),
+				RegistrationStatus: string(registration.PendingRegistrationCompleted),
+				RegistrationExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(time.Hour),
+					Valid: true,
+				},
+			},
+			nil,
+		)
+
+	_, err := service.CreatePIN(
+		ctx,
+		verificationID,
+	)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	appErr := apperror.FromError(err)
+
+	if appErr.Code != registration.CodeRegistrationNotPending {
+		t.Errorf(
+			"expected error code %q, got %q",
+			registration.CodeRegistrationNotPending,
+			appErr.Code,
+		)
+	}
+
+	if appErr.Status != http.StatusConflict {
+		t.Errorf(
+			"expected status %d, got %d",
+			http.StatusConflict,
+			appErr.Status,
+		)
+	}
+}
+
+func TestService_CreatePIN_IssueVerificationCodeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repository := mocks.NewMockRepository(ctrl)
+
+	passwordHasher := security.NewPasswordHasher()
+	verificationCodeHasher := security.NewVerificationCodeHasher(
+		[]byte("test-secret"),
+	)
+
+	service := registration.NewService(
+		repository,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+
+	repository.
+		EXPECT().
+		GetVerification(ctx, verificationID).
+		Return(
+			registrationdb.GetVerificationRow{
+				ID:                 verificationID,
+				Status:             string(registration.VerificationRequestPending),
+				RegistrationStatus: string(registration.PendingRegistrationPending),
+				RegistrationExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(time.Hour),
 					Valid: true,
 				},
 			},
@@ -283,7 +399,7 @@ func TestService_ResendVerification_RepositoryError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.ResendVerification(
+	_, err := service.CreatePIN(
 		ctx,
 		verificationID,
 	)

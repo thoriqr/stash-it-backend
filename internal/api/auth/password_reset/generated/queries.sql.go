@@ -201,7 +201,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at
 `
@@ -215,7 +215,7 @@ func (q *Queries) CreateVerificationRequest(ctx context.Context, subjectID uuid.
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 	)
@@ -434,7 +434,7 @@ SELECT
     vr.subject_id,
     vr.purpose,
     vr.status,
-    vr.resend_count,
+    vr.pin_issued_count,
     vr.last_sent_at,
     vr.created_at,
 
@@ -452,7 +452,7 @@ type GetVerificationRow struct {
 	SubjectID              uuid.UUID
 	Purpose                string
 	Status                 string
-	ResendCount            int32
+	PinIssuedCount         int32
 	LastSentAt             pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
 	PasswordResetStatus    string
@@ -468,7 +468,7 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 		&i.PasswordResetStatus,
@@ -546,7 +546,7 @@ func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID
 const updateVerificationRequestResend = `-- name: UpdateVerificationRequestResend :one
 UPDATE verification_requests
 SET
-    resend_count = resend_count + 1,
+    pin_issued_count = pin_issued_count + 1,
     last_sent_at = NOW()
 WHERE id = $1
 RETURNING
@@ -555,7 +555,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at
 `
@@ -569,7 +569,7 @@ func (q *Queries) UpdateVerificationRequestResend(ctx context.Context, id uuid.U
 		&i.SubjectID,
 		&i.Purpose,
 		&i.Status,
-		&i.ResendCount,
+		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
 	)

@@ -81,7 +81,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at;
 
@@ -113,7 +113,7 @@ SELECT
     vr.subject_id,
     vr.purpose,
     vr.status,
-    vr.resend_count,
+    vr.pin_issued_count,
     vr.last_sent_at,
     vr.created_at,
 
@@ -140,7 +140,7 @@ WHERE id = (
 -- name: UpdateVerificationRequestResend :one
 UPDATE verification_requests
 SET
-    resend_count = resend_count + 1,
+    pin_issued_count = pin_issued_count + 1,
     last_sent_at = NOW()
 WHERE id = sqlc.arg(id)
 RETURNING
@@ -149,7 +149,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at;
 

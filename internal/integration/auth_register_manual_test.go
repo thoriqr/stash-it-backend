@@ -66,7 +66,7 @@ func TestRegisterManual_Success(t *testing.T) {
 		registration.VerificationRequestPending,
 		registration.VerificationRequestStatus(state.VerificationStatus),
 	)
-	require.NotEqual(t, uuid.Nil, state.VerificationCodeID)
+	require.Equal(t, int32(0), state.PinIssuedCount)
 }
 
 func TestRegisterManual_AlreadyPending(t *testing.T) {
@@ -181,6 +181,16 @@ func TestVerifyRegistration_InvalidPIN(t *testing.T) {
 
 	require.NotEqual(t, uuid.Nil, registerBody.Data.VerificationID)
 
+	createPINReq := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+registerBody.Data.VerificationID.String()+"/pin",
+		nil,
+	)
+
+	createPINResp, err := testApp.Test(createPINReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResp.StatusCode)
+
 	verifyReq := httptest.NewRequest(
 		http.MethodPost,
 		"/auth/register/verification/"+registerBody.Data.VerificationID.String()+"/verify",
@@ -240,6 +250,16 @@ func TestVerifyRegistration_AttemptsExceeded(t *testing.T) {
 
 	verificationID := registerBody.Data.VerificationID
 	require.NotEqual(t, uuid.Nil, verificationID)
+
+	createPINReq := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+verificationID.String()+"/pin",
+		nil,
+	)
+
+	createPINResp, err := testApp.Test(createPINReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResp.StatusCode)
 
 	verifyURL := "/auth/register/verification/" +
 		verificationID.String() +
@@ -331,6 +351,7 @@ func TestGetVerification_Success(t *testing.T) {
 		Data struct {
 			VerificationID  string `json:"verification_id"`
 			Status          string `json:"status"`
+			PINIssued       bool   `json:"pin_issued"`
 			ResendInSeconds int    `json:"resend_in_seconds"`
 		} `json:"data"`
 	}
@@ -350,7 +371,8 @@ func TestGetVerification_Success(t *testing.T) {
 		string(registration.VerificationRequestPending),
 		getBody.Data.Status,
 	)
-	require.GreaterOrEqual(t, getBody.Data.ResendInSeconds, 0)
+	require.False(t, getBody.Data.PINIssued)
+	require.Equal(t, 0, getBody.Data.ResendInSeconds)
 }
 
 func TestGetVerification_NotFound(t *testing.T) {
@@ -406,9 +428,21 @@ func TestResendVerification_Cooldown(t *testing.T) {
 	verificationID := registerBody.Data.VerificationID
 	require.NotEqual(t, uuid.Nil, verificationID)
 
+	createPINReq := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+verificationID.String()+"/pin",
+		nil,
+	)
+
+	createPINResp, err := testApp.Test(createPINReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResp.StatusCode)
+
+	require.NoError(t, db.MakeVerificationResendable(ctx, verificationID))
+
 	resendURL := "/auth/register/verification/" +
-		verificationID.String() +
-		"/resend"
+    verificationID.String() +
+    "/resend"
 
 	// First resend should succeed and start the cooldown.
 	firstResendReq := httptest.NewRequest(
@@ -716,5 +750,5 @@ func TestRegisterManual_ExpiredPendingIsReconciled(t *testing.T) {
 	require.Equal(t, oldVerificationID, history[0].VerificationID)
 	require.Equal(t, "pending", history[1].Status)
 	require.Equal(t, body.Data.VerificationID, history[1].VerificationID)
-	require.NotEqual(t, uuid.Nil, history[1].VerificationCodeID)
+	require.Equal(t, int32(0), history[1].PinIssuedCount)
 }

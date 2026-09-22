@@ -11,6 +11,11 @@ func Routes(router fiber.Router, h *Handler) {
 	)
 
 	router.Post(
+		"/register/verification/:verification_id/pin",
+		h.CreatePIN,
+	)
+
+	router.Post(
 		"/register/verification/:verification_id/resend",
 		h.ResendVerification,
 	)

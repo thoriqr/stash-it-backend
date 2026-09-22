@@ -14,15 +14,13 @@ SELECT
     pr.expires_at,
     vr.id AS verification_id,
     vr.status AS verification_status,
-    vc.id AS verification_code_id,
-    vc.expires_at AS verification_code_expires_at
+    vr.pin_issued_count,
+    vr.last_sent_at
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
-JOIN verification_codes vc
-    ON vc.verification_request_id = vr.id
 WHERE pr.email = sqlc.arg(email);
 
 -- name: CreateCompletedRegistration :one
@@ -126,21 +124,24 @@ WITH registration AS (
     SELECT 'pending_registration', id, 'registration', 'pending' FROM registration
     RETURNING id
 )
-INSERT INTO verification_codes (verification_request_id, code_hash, expires_at)
-SELECT id, 'expired-code', NOW() - INTERVAL '30 minutes' FROM verification
-RETURNING verification_request_id;
+SELECT id
+FROM verification;
 
 -- name: GetRegistrationHistory :many
 SELECT
     pr.id,
     pr.status,
     vr.id AS verification_id,
-    vc.id AS verification_code_id
+    vr.pin_issued_count
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
-JOIN verification_codes vc ON vc.verification_request_id = vr.id
 WHERE pr.email = sqlc.arg(email)
 ORDER BY pr.created_at, pr.id;
+
+-- name: MakeVerificationResendable :exec
+UPDATE verification_requests
+SET last_sent_at = NOW() - INTERVAL '1 day'
+WHERE id = sqlc.arg(id);

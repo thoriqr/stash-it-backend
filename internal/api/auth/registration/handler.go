@@ -77,6 +77,35 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 	)
 }
 
+func (h *Handler) CreatePIN(c fiber.Ctx) error {
+	verificationID, err := uuid.Parse(c.Params("verification_id"))
+	if err != nil {
+		return apperror.BadRequestWith(
+			"",
+			"invalid verification id",
+			err,
+		)
+	}
+
+	result, err := h.service.CreatePIN(
+		c.Context(),
+		verificationID,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := CreatePINResponse{
+		VerificationID: result.VerificationID.String(),
+	}
+
+	return httpx.Created(
+		c,
+		"verification PIN created",
+		&response,
+	)
+}
+
 func (h *Handler) ResendVerification(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
 	if err != nil {

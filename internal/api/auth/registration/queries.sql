@@ -37,7 +37,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at;
 
@@ -69,7 +69,7 @@ SELECT
     vr.subject_id,
     vr.purpose,
     vr.status,
-    vr.resend_count,
+    vr.pin_issued_count,
     vr.last_sent_at,
     vr.created_at,
 
@@ -93,10 +93,10 @@ WHERE id = (
     LIMIT 1
 );
 
--- name: UpdateVerificationRequestResend :one
+-- name: UpdateVerificationRequestPINIssued :one
 UPDATE verification_requests
 SET
-    resend_count = resend_count + 1,
+    pin_issued_count = pin_issued_count + 1,
     last_sent_at = NOW()
 WHERE id = sqlc.arg(id)
 RETURNING
@@ -105,7 +105,7 @@ RETURNING
     subject_id,
     purpose,
     status,
-    resend_count,
+    pin_issued_count,
     last_sent_at,
     created_at;
 
@@ -168,26 +168,21 @@ RETURNING
     consumed_at,
     created_at;
 
--- name: GetRegistrationByEmail :one
+-- name: GetCompletedRegistrationByEmail :one
 SELECT
-    pr.id,
-    pr.email,
-    pr.registration_type,
-    pr.status,
-    pr.created_at,
-    pr.expires_at,
-    vr.id AS verification_id
+    pr.id
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
     AND vr.subject_id = pr.id
     AND vr.purpose = 'registration'
 WHERE pr.email = sqlc.arg(email)
-  AND pr.status IN ('pending', 'completed');
+  AND pr.status = 'completed';
 
 -- name: GetPendingRegistrationByEmailForUpdate :one
 SELECT
     pr.id,
+    pr.registration_type,
     pr.expires_at,
     pr.expires_at <= NOW() AS is_expired,
     vr.id AS verification_id
@@ -199,6 +194,13 @@ JOIN verification_requests vr
 WHERE pr.email = sqlc.arg(email)
   AND pr.status = 'pending'
 FOR UPDATE;
+
+-- name: ForceExpireSocialPendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = sqlc.arg(id)
+  AND registration_type = 'social'
+  AND status = 'pending';
 
 -- name: ExpirePendingRegistration :execrows
 UPDATE pending_registrations

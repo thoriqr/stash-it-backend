@@ -93,12 +93,12 @@ type VerificationCode struct {
 }
 
 type VerificationRequest struct {
-	ID          uuid.UUID
-	SubjectType string
-	SubjectID   uuid.UUID
-	Purpose     string
-	Status      string
-	ResendCount int32
-	LastSentAt  pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	ID             uuid.UUID
+	SubjectType    string
+	SubjectID      uuid.UUID
+	Purpose        string
+	Status         string
+	PinIssuedCount int32
+	LastSentAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
