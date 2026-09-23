@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	uuid "github.com/google/uuid"
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -39,6 +40,123 @@ func NewMockRepository(ctrl *gomock.Controller) *MockRepository {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
+}
+
+// CreateAuthIdentity mocks base method.
+func (m *MockRepository) CreateAuthIdentity(ctx context.Context, params logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateAuthIdentity", ctx, params)
+	ret0, _ := ret[0].(logindb.AuthIdentity)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateAuthIdentity indicates an expected call of CreateAuthIdentity.
+func (mr *MockRepositoryMockRecorder) CreateAuthIdentity(ctx, params any) *MockRepositoryCreateAuthIdentityCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateAuthIdentity", reflect.TypeOf((*MockRepository)(nil).CreateAuthIdentity), ctx, params)
+	return &MockRepositoryCreateAuthIdentityCall{Call: call}
+}
+
+// MockRepositoryCreateAuthIdentityCall wrap *gomock.Call
+type MockRepositoryCreateAuthIdentityCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryCreateAuthIdentityCall) Return(arg0 logindb.AuthIdentity, arg1 error) *MockRepositoryCreateAuthIdentityCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryCreateAuthIdentityCall) Do(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error)) *MockRepositoryCreateAuthIdentityCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryCreateAuthIdentityCall) DoAndReturn(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error)) *MockRepositoryCreateAuthIdentityCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetAuthIdentity mocks base method.
+func (m *MockRepository) GetAuthIdentity(ctx context.Context, provider, providerSubject string) (logindb.GetAuthIdentityRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAuthIdentity", ctx, provider, providerSubject)
+	ret0, _ := ret[0].(logindb.GetAuthIdentityRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAuthIdentity indicates an expected call of GetAuthIdentity.
+func (mr *MockRepositoryMockRecorder) GetAuthIdentity(ctx, provider, providerSubject any) *MockRepositoryGetAuthIdentityCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAuthIdentity", reflect.TypeOf((*MockRepository)(nil).GetAuthIdentity), ctx, provider, providerSubject)
+	return &MockRepositoryGetAuthIdentityCall{Call: call}
+}
+
+// MockRepositoryGetAuthIdentityCall wrap *gomock.Call
+type MockRepositoryGetAuthIdentityCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetAuthIdentityCall) Return(arg0 logindb.GetAuthIdentityRow, arg1 error) *MockRepositoryGetAuthIdentityCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetAuthIdentityCall) Do(f func(context.Context, string, string) (logindb.GetAuthIdentityRow, error)) *MockRepositoryGetAuthIdentityCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetAuthIdentityCall) DoAndReturn(f func(context.Context, string, string) (logindb.GetAuthIdentityRow, error)) *MockRepositoryGetAuthIdentityCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetUserByEmail mocks base method.
+func (m *MockRepository) GetUserByEmail(ctx context.Context, email string) (logindb.GetUserByEmailRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserByEmail", ctx, email)
+	ret0, _ := ret[0].(logindb.GetUserByEmailRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserByEmail indicates an expected call of GetUserByEmail.
+func (mr *MockRepositoryMockRecorder) GetUserByEmail(ctx, email any) *MockRepositoryGetUserByEmailCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserByEmail", reflect.TypeOf((*MockRepository)(nil).GetUserByEmail), ctx, email)
+	return &MockRepositoryGetUserByEmailCall{Call: call}
+}
+
+// MockRepositoryGetUserByEmailCall wrap *gomock.Call
+type MockRepositoryGetUserByEmailCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetUserByEmailCall) Return(arg0 logindb.GetUserByEmailRow, arg1 error) *MockRepositoryGetUserByEmailCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetUserByEmailCall) Do(f func(context.Context, string) (logindb.GetUserByEmailRow, error)) *MockRepositoryGetUserByEmailCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetUserByEmailCall) DoAndReturn(f func(context.Context, string) (logindb.GetUserByEmailRow, error)) *MockRepositoryGetUserByEmailCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
 }
 
 // GetUserForLogin mocks base method.
@@ -76,6 +194,45 @@ func (c *MockRepositoryGetUserForLoginCall) Do(f func(context.Context, string) (
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryGetUserForLoginCall) DoAndReturn(f func(context.Context, string) (logindb.GetUserForLoginRow, error)) *MockRepositoryGetUserForLoginCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetUserForLoginByID mocks base method.
+func (m *MockRepository) GetUserForLoginByID(ctx context.Context, userID uuid.UUID) (logindb.GetUserForLoginByIDRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserForLoginByID", ctx, userID)
+	ret0, _ := ret[0].(logindb.GetUserForLoginByIDRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserForLoginByID indicates an expected call of GetUserForLoginByID.
+func (mr *MockRepositoryMockRecorder) GetUserForLoginByID(ctx, userID any) *MockRepositoryGetUserForLoginByIDCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserForLoginByID", reflect.TypeOf((*MockRepository)(nil).GetUserForLoginByID), ctx, userID)
+	return &MockRepositoryGetUserForLoginByIDCall{Call: call}
+}
+
+// MockRepositoryGetUserForLoginByIDCall wrap *gomock.Call
+type MockRepositoryGetUserForLoginByIDCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetUserForLoginByIDCall) Return(arg0 logindb.GetUserForLoginByIDRow, arg1 error) *MockRepositoryGetUserForLoginByIDCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetUserForLoginByIDCall) Do(f func(context.Context, uuid.UUID) (logindb.GetUserForLoginByIDRow, error)) *MockRepositoryGetUserForLoginByIDCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetUserForLoginByIDCall) DoAndReturn(f func(context.Context, uuid.UUID) (logindb.GetUserForLoginByIDRow, error)) *MockRepositoryGetUserForLoginByIDCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	DatabaseURL            string
-	VerificationCodeSecret string
-	AccessTokenSecret      string
+  DatabaseURL            string
+  VerificationCodeSecret string
+  AccessTokenSecret      string
+  GoogleClientID         string
 }
 
 func Load() (Config, error) {
@@ -33,9 +34,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("ACCESS_TOKEN_SECRET is required")
 	}
 
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	if googleClientID == "" {
+    return Config{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
+	}
+
 	return Config{
 		DatabaseURL:            databaseURL,
 		VerificationCodeSecret: verificationCodeSecret,
 		AccessTokenSecret:      accessTokenSecret,
+		GoogleClientID:         googleClientID,
 	}, nil
 }

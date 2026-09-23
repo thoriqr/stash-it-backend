@@ -95,9 +95,14 @@ func RegisterModule(
 		loginQueries,
 	)
 
+	googleTokenVerifier := login.NewGoogleTokenVerifier(
+    cfg.GoogleClientID,
+	)
+
 	loginService := login.NewService(
 		loginRepository,
 		sessionService,
+		googleTokenVerifier,
 		passwordHasher,
 		accessTokenGenerator,
 	)

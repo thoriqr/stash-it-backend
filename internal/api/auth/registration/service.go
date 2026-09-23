@@ -13,22 +13,60 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
-type Service struct {
+type RegistrationService interface {
+    RegisterManual(
+        ctx context.Context,
+        email string,
+    ) (RegisterManualResult, error)
+
+    CreatePIN(
+        ctx context.Context,
+        verificationID uuid.UUID,
+    ) (CreatePINResult, error)
+
+    GetVerification(
+        ctx context.Context,
+        verificationID uuid.UUID,
+    ) (GetVerificationResult, error)
+
+    ResendVerification(
+        ctx context.Context,
+        verificationID uuid.UUID,
+    ) (ResendVerificationResult, error)
+
+    VerifyRegistration(
+        ctx context.Context,
+        verificationID uuid.UUID,
+        pin string,
+    ) (VerifyRegistrationResult, error)
+
+    GetRegistrationContinuation(
+        ctx context.Context,
+        token string,
+    ) (GetRegistrationContinuationResult, error)
+
+    FinalizeManualRegistration(
+        ctx context.Context,
+        params FinalizeManualRegistrationInput,
+    ) (FinalizeManualRegistrationResult, error)
+}
+
+type service struct {
 	repository             Repository
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
 }
 
 func NewService(
-	repository Repository,
-	passwordHasher *security.PasswordHasher,
-	verificationCodeHasher *security.VerificationCodeHasher,
-) *Service {
-	return &Service{
-		repository:             repository,
-		passwordHasher:         passwordHasher,
-		verificationCodeHasher: verificationCodeHasher,
-	}
+    repository Repository,
+    passwordHasher *security.PasswordHasher,
+    verificationCodeHasher *security.VerificationCodeHasher,
+) *service {
+    return &service{
+        repository:             repository,
+        passwordHasher:         passwordHasher,
+        verificationCodeHasher: verificationCodeHasher,
+    }
 }
 
 type RegisterManualResult struct {
@@ -40,7 +78,7 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (s *Service) RegisterManual(
+func (s *service) RegisterManual(
 	ctx context.Context,
 	email string,
 ) (RegisterManualResult, error) {
@@ -91,7 +129,7 @@ type CreatePINResult struct {
 	VerificationID uuid.UUID
 }
 
-func (s *Service) CreatePIN(
+func (s *service) CreatePIN(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (CreatePINResult, error) {
@@ -153,7 +191,7 @@ type GetVerificationResult struct {
 	PinIssuedCount int32
 }
 
-func (s *Service) GetVerification(
+func (s *service) GetVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (GetVerificationResult, error) {
@@ -188,7 +226,7 @@ type ResendVerificationResult struct {
 	VerificationID uuid.UUID
 }
 
-func (s *Service) ResendVerification(
+func (s *service) ResendVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (ResendVerificationResult, error) {
@@ -263,7 +301,7 @@ type VerifyRegistrationResult struct {
 	RegistrationContinuationToken string
 }
 
-func (s *Service) VerifyRegistration(
+func (s *service) VerifyRegistration(
 	ctx context.Context,
 	verificationID uuid.UUID,
 	pin string,
@@ -354,7 +392,7 @@ type GetRegistrationContinuationResult struct {
 	ExpiresAt        time.Time
 }
 
-func (s *Service) GetRegistrationContinuation(
+func (s *service) GetRegistrationContinuation(
 	ctx context.Context,
 	token string,
 ) (GetRegistrationContinuationResult, error) {
@@ -392,7 +430,7 @@ type FinalizeManualRegistrationResult struct {
 	DisplayName string
 }
 
-func (s *Service) FinalizeManualRegistration(
+func (s *service) FinalizeManualRegistration(
 	ctx context.Context,
 	params FinalizeManualRegistrationInput,
 ) (FinalizeManualRegistrationResult, error) {

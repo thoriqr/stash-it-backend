@@ -9,7 +9,111 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createAuthIdentity = `-- name: CreateAuthIdentity :one
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject
+)
+VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id,
+    user_id,
+    provider,
+    provider_subject,
+    created_at
+`
+
+type CreateAuthIdentityParams struct {
+	UserID          uuid.UUID
+	Provider        string
+	ProviderSubject string
+}
+
+func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (AuthIdentity, error) {
+	row := q.db.QueryRow(ctx, createAuthIdentity, arg.UserID, arg.Provider, arg.ProviderSubject)
+	var i AuthIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAuthIdentity = `-- name: GetAuthIdentity :one
+SELECT
+    ai.id,
+    ai.user_id,
+    ai.provider,
+    ai.provider_subject,
+    u.email,
+    u.display_name
+FROM auth_identities ai
+JOIN users u
+    ON u.id = ai.user_id
+WHERE ai.provider = $1
+  AND ai.provider_subject = $2
+`
+
+type GetAuthIdentityParams struct {
+	Provider        string
+	ProviderSubject string
+}
+
+type GetAuthIdentityRow struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	Provider        string
+	ProviderSubject string
+	Email           string
+	DisplayName     string
+}
+
+func (q *Queries) GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams) (GetAuthIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getAuthIdentity, arg.Provider, arg.ProviderSubject)
+	var i GetAuthIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.Email,
+		&i.DisplayName,
+	)
+	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT
+    u.id,
+    u.email,
+    u.display_name
+FROM users u
+WHERE u.email = $1
+`
+
+type GetUserByEmailRow struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName string
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i GetUserByEmailRow
+	err := row.Scan(&i.ID, &i.Email, &i.DisplayName)
+	return i, err
+}
 
 const getUserForLogin = `-- name: GetUserForLogin :one
 SELECT
@@ -33,6 +137,37 @@ type GetUserForLoginRow struct {
 func (q *Queries) GetUserForLogin(ctx context.Context, email string) (GetUserForLoginRow, error) {
 	row := q.db.QueryRow(ctx, getUserForLogin, email)
 	var i GetUserForLoginRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+	)
+	return i, err
+}
+
+const getUserForLoginByID = `-- name: GetUserForLoginByID :one
+SELECT
+    u.id,
+    u.email,
+    u.display_name,
+    pc.password_hash
+FROM users u
+LEFT JOIN password_credentials pc
+    ON pc.user_id = u.id
+WHERE u.id = $1
+`
+
+type GetUserForLoginByIDRow struct {
+	ID           uuid.UUID
+	Email        string
+	DisplayName  string
+	PasswordHash pgtype.Text
+}
+
+func (q *Queries) GetUserForLoginByID(ctx context.Context, userID uuid.UUID) (GetUserForLoginByIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserForLoginByID, userID)
+	var i GetUserForLoginByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
