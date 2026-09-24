@@ -1,5 +1,5 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-017.
+-- Represents the final database state after migrations 001-019.
 
 -- ============================================================
 -- Functions
@@ -37,6 +37,9 @@ CREATE TABLE auth_identities (
 
     provider VARCHAR(32) NOT NULL,
     provider_subject VARCHAR(255) NOT NULL,
+
+    email_snapshot TEXT,
+    display_name_snapshot TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -105,6 +108,24 @@ CREATE UNIQUE INDEX refresh_tokens_token_hash_idx
 CREATE INDEX refresh_tokens_session_idx
     ON refresh_tokens (session_id);
 
+CREATE TABLE account_link_confirmations (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+
+    user_id UUID NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    provider VARCHAR(32) NOT NULL,
+    provider_subject VARCHAR(255) NOT NULL,
+
+    email_snapshot TEXT,
+    display_name_snapshot TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    confirmed_at TIMESTAMPTZ
+);
+
 CREATE TABLE pending_registrations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     email TEXT NOT NULL,
@@ -140,7 +161,8 @@ CREATE TABLE pending_social_identities (
     provider VARCHAR(32) NOT NULL,
     provider_subject VARCHAR(255) NOT NULL,
 
-    display_name TEXT,
+    email_snapshot TEXT,
+    display_name_snapshot TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

@@ -3,8 +3,10 @@ package login
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
@@ -97,8 +99,10 @@ func (s *Service) LoginManual(
 }
 
 type LoginGoogleResult struct {
-    RequiresRegistration bool
-    VerificationID       uuid.UUID
+    Outcome LoginOutcome
+
+    VerificationID uuid.UUID
+    ConfirmationID uuid.UUID
 
     User         *logindb.GetUserForLoginByIDRow
     Session      *sessiondb.Session
@@ -145,46 +149,109 @@ func (s *Service) LoginGoogle(
 	}
 
 	if user.ID != uuid.Nil {
-		_, err := s.repository.CreateAuthIdentity(
+		expiresAt := time.Now().Add(
+			AccountLinkConfirmationLifetime,
+		)
+
+		confirmation, err := s.repository.CreateAccountLinkConfirmation(
 			ctx,
-			logindb.CreateAuthIdentityParams{
-				UserID:          user.ID,
-				Provider:        "google",
-				ProviderSubject: identity.Subject,
+			logindb.CreateAccountLinkConfirmationParams{
+				UserID:              user.ID,
+				Provider:            "google",
+				ProviderSubject:     identity.Subject,
+				EmailSnapshot:       pgtype.Text{
+					String: identity.Email,
+					Valid:  true,
+				},
+				DisplayNameSnapshot: pgtype.Text{
+					String: identity.DisplayName,
+					Valid:  identity.DisplayName != "",
+				},
+				ExpiresAt: pgtype.Timestamptz{
+					Time:  expiresAt,
+					Valid: true,
+				},
 			},
 		)
 		if err != nil {
 			return LoginGoogleResult{}, err
 		}
 
-		return s.loginWithUser(
-			ctx,
-			user.ID,
-			metadata,
-		)
+		return LoginGoogleResult{
+			Outcome:        LoginOutcomeAccountLinkRequired,
+			ConfirmationID: confirmation.ID,
+		}, nil
 	}
 
 	// TODO: start social registration.
 	// registrationResult, err := s.registrationService.RegisterSocial(
-	//     ctx,
-	//     registration.RegisterSocialParams{
-	//         Email:           identity.Email,
-	//         Provider:        "google",
-	//         ProviderSubject: identity.Subject,
-	//         DisplayName:     identity.DisplayName,
-	//     },
+	// 	ctx,
+	// 	registration.RegisterSocialParams{
+	// 		Email:           identity.Email,
+	// 		Provider:        "google",
+	// 		ProviderSubject: identity.Subject,
+	// 		DisplayName:     identity.DisplayName,
+	// 	},
 	// )
 	// if err != nil {
-	//     return LoginGoogleResult{}, err
+	// 	return LoginGoogleResult{}, err
 	// }
 	//
 	// return LoginGoogleResult{
-	//     RequiresRegistration: true,
-	//     VerificationID:       registrationResult.VerificationID,
+	// 	Outcome:        LoginOutcomeRegistrationRequired,
+	// 	VerificationID: registrationResult.VerificationID,
 	// }, nil
 
 	return LoginGoogleResult{}, apperror.Internal(
 		errors.New("social registration is not implemented"),
+	)
+}
+
+type GetAccountLinkConfirmationResult struct {
+	ID                  uuid.UUID
+	Provider            string
+	EmailSnapshot       string
+	DisplayNameSnapshot string
+	UserEmail           string
+	UserDisplayName     string
+}
+
+func (s *Service) GetAccountLinkConfirmation(
+	ctx context.Context,
+	id uuid.UUID,
+) (GetAccountLinkConfirmationResult, error) {
+	confirmation, err := s.repository.GetActiveAccountLinkConfirmation(ctx, id)
+	if err != nil {
+		return GetAccountLinkConfirmationResult{}, err
+	}
+
+	return GetAccountLinkConfirmationResult{
+		ID:                  confirmation.ID,
+		Provider:            confirmation.Provider,
+		EmailSnapshot:       confirmation.EmailSnapshot.String,
+		DisplayNameSnapshot: confirmation.DisplayNameSnapshot.String,
+		UserEmail:           confirmation.UserEmail,
+		UserDisplayName:     confirmation.UserDisplayName,
+	}, nil
+}
+
+func (s *Service) ConfirmAccountLink(
+	ctx context.Context,
+	confirmationID uuid.UUID,
+	metadata session.SessionMetadata,
+) (LoginGoogleResult, error) {
+	identity, err := s.repository.ConfirmAccountLink(
+		ctx,
+		confirmationID,
+	)
+	if err != nil {
+		return LoginGoogleResult{}, err
+	}
+
+	return s.loginWithUser(
+		ctx,
+		identity.UserID,
+		metadata,
 	)
 }
 
@@ -219,10 +286,11 @@ func (s *Service) loginWithUser(
 		return LoginGoogleResult{}, apperror.Internal(err)
 	}
 
-    return LoginGoogleResult{
-        User:         &user,
-        Session:      &sessionResult.Session,
-        AccessToken:  accessToken,
-        RefreshToken: sessionResult.RefreshToken,
-    }, nil
+	return LoginGoogleResult{
+		Outcome:      LoginOutcomeAuthenticated,
+		User:         &user,
+		Session:      &sessionResult.Session,
+		AccessToken:  accessToken,
+		RefreshToken: sessionResult.RefreshToken,
+	}, nil
 }

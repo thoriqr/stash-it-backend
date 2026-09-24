@@ -1,7 +1,8 @@
 package login
 
 const (
-	CodeInvalidCredentials        = "INVALID_CREDENTIALS"
-	CodeAuthIdentityAlreadyExists = "AUTH_IDENTITY_ALREADY_EXISTS"
-	CodeInvalidGoogleToken        = "INVALID_GOOGLE_TOKEN"
+	CodeInvalidCredentials             = "INVALID_CREDENTIALS"
+	CodeAuthIdentityAlreadyExists      = "AUTH_IDENTITY_ALREADY_EXISTS"
+	CodeInvalidGoogleToken             = "INVALID_GOOGLE_TOKEN"
+	CodeAccountLinkConfirmationInvalid = "ACCOUNT_LINK_CONFIRMATION_INVALID"
 )

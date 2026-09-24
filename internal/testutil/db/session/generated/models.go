@@ -9,6 +9,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccountLinkConfirmation struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	ConfirmedAt         pgtype.Timestamptz
+}
+
+type AuthIdentity struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+}
+
 type PasswordCredential struct {
 	UserID       uuid.UUID
 	PasswordHash string
@@ -40,6 +62,16 @@ type PendingRegistration struct {
 	Status           string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+}
+
+type PendingSocialIdentity struct {
+	ID                    uuid.UUID
+	PendingRegistrationID uuid.UUID
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+	CreatedAt             pgtype.Timestamptz
 }
 
 type RefreshToken struct {

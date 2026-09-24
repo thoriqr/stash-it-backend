@@ -12,40 +12,226 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createAuthIdentity = `-- name: CreateAuthIdentity :one
-INSERT INTO auth_identities (
+const createAccountLinkConfirmation = `-- name: CreateAccountLinkConfirmation :one
+INSERT INTO account_link_confirmations (
     user_id,
     provider,
-    provider_subject
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    expires_at
 )
 VALUES (
     $1,
     $2,
-    $3
+    $3,
+    $4,
+    $5,
+    $6
 )
 RETURNING
     id,
     user_id,
     provider,
     provider_subject,
-    created_at
+    email_snapshot,
+    display_name_snapshot,
+    created_at,
+    expires_at,
+    confirmed_at
 `
 
-type CreateAuthIdentityParams struct {
-	UserID          uuid.UUID
-	Provider        string
-	ProviderSubject string
+type CreateAccountLinkConfirmationParams struct {
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	ExpiresAt           pgtype.Timestamptz
 }
 
-func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (AuthIdentity, error) {
-	row := q.db.QueryRow(ctx, createAuthIdentity, arg.UserID, arg.Provider, arg.ProviderSubject)
-	var i AuthIdentity
+func (q *Queries) CreateAccountLinkConfirmation(ctx context.Context, arg CreateAccountLinkConfirmationParams) (AccountLinkConfirmation, error) {
+	row := q.db.QueryRow(ctx, createAccountLinkConfirmation,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+		arg.ExpiresAt,
+	)
+	var i AccountLinkConfirmation
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.Provider,
 		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
 		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConfirmedAt,
+	)
+	return i, err
+}
+
+const createAuthIdentity = `-- name: CreateAuthIdentity :one
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING
+    id,
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at
+`
+
+type CreateAuthIdentityParams struct {
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+type CreateAuthIdentityRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (CreateAuthIdentityRow, error) {
+	row := q.db.QueryRow(ctx, createAuthIdentity,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var i CreateAuthIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAccountLinkConfirmationForUpdate = `-- name: GetAccountLinkConfirmationForUpdate :one
+SELECT
+    alc.id,
+    alc.user_id,
+    alc.provider,
+    alc.provider_subject,
+    alc.email_snapshot,
+    alc.display_name_snapshot,
+    u.email AS user_email,
+    u.display_name AS user_display_name
+FROM account_link_confirmations alc
+JOIN users u ON u.id = alc.user_id
+WHERE alc.id = $1
+  AND alc.confirmed_at IS NULL
+  AND alc.expires_at > NOW()
+FOR UPDATE
+`
+
+type GetAccountLinkConfirmationForUpdateRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	UserEmail           string
+	UserDisplayName     string
+}
+
+func (q *Queries) GetAccountLinkConfirmationForUpdate(ctx context.Context, id uuid.UUID) (GetAccountLinkConfirmationForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getAccountLinkConfirmationForUpdate, id)
+	var i GetAccountLinkConfirmationForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.UserEmail,
+		&i.UserDisplayName,
+	)
+	return i, err
+}
+
+const getActiveAccountLinkConfirmation = `-- name: GetActiveAccountLinkConfirmation :one
+SELECT
+    alc.id,
+    alc.user_id,
+    alc.provider,
+    alc.provider_subject,
+    alc.email_snapshot,
+    alc.display_name_snapshot,
+    alc.created_at,
+    alc.expires_at,
+    alc.confirmed_at,
+    u.email AS user_email,
+    u.display_name AS user_display_name
+FROM account_link_confirmations alc
+JOIN users u ON u.id = alc.user_id
+WHERE alc.id = $1
+  AND alc.confirmed_at IS NULL
+  AND alc.expires_at > NOW()
+`
+
+type GetActiveAccountLinkConfirmationRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	ConfirmedAt         pgtype.Timestamptz
+	UserEmail           string
+	UserDisplayName     string
+}
+
+func (q *Queries) GetActiveAccountLinkConfirmation(ctx context.Context, id uuid.UUID) (GetActiveAccountLinkConfirmationRow, error) {
+	row := q.db.QueryRow(ctx, getActiveAccountLinkConfirmation, id)
+	var i GetActiveAccountLinkConfirmationRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.ConfirmedAt,
+		&i.UserEmail,
+		&i.UserDisplayName,
 	)
 	return i, err
 }
@@ -175,4 +361,19 @@ func (q *Queries) GetUserForLoginByID(ctx context.Context, userID uuid.UUID) (Ge
 		&i.PasswordHash,
 	)
 	return i, err
+}
+
+const markAccountLinkConfirmationConfirmed = `-- name: MarkAccountLinkConfirmationConfirmed :execrows
+UPDATE account_link_confirmations
+SET confirmed_at = NOW()
+WHERE id = $1
+  AND confirmed_at IS NULL
+`
+
+func (q *Queries) MarkAccountLinkConfirmationConfirmed(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markAccountLinkConfirmationConfirmed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

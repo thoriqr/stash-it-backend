@@ -1,0 +1,2 @@
+ALTER TABLE pending_social_identities
+DROP COLUMN display_name;

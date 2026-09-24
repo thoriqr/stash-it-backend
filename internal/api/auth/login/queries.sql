@@ -46,16 +46,92 @@ WHERE u.email = sqlc.arg(email);
 INSERT INTO auth_identities (
     user_id,
     provider,
-    provider_subject
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
 )
 VALUES (
     sqlc.arg(user_id),
     sqlc.arg(provider),
-    sqlc.arg(provider_subject)
+    sqlc.arg(provider_subject),
+    sqlc.arg(email_snapshot),
+    sqlc.arg(display_name_snapshot)
 )
 RETURNING
     id,
     user_id,
     provider,
     provider_subject,
+    email_snapshot,
+    display_name_snapshot,
     created_at;
+
+-- name: CreateAccountLinkConfirmation :one
+INSERT INTO account_link_confirmations (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    expires_at
+)
+VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(provider),
+    sqlc.arg(provider_subject),
+    sqlc.arg(email_snapshot),
+    sqlc.arg(display_name_snapshot),
+    sqlc.arg(expires_at)
+)
+RETURNING
+    id,
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at,
+    expires_at,
+    confirmed_at;
+
+-- name: GetActiveAccountLinkConfirmation :one
+SELECT
+    alc.id,
+    alc.user_id,
+    alc.provider,
+    alc.provider_subject,
+    alc.email_snapshot,
+    alc.display_name_snapshot,
+    alc.created_at,
+    alc.expires_at,
+    alc.confirmed_at,
+    u.email AS user_email,
+    u.display_name AS user_display_name
+FROM account_link_confirmations alc
+JOIN users u ON u.id = alc.user_id
+WHERE alc.id = sqlc.arg(id)
+  AND alc.confirmed_at IS NULL
+  AND alc.expires_at > NOW();
+
+-- name: GetAccountLinkConfirmationForUpdate :one
+SELECT
+    alc.id,
+    alc.user_id,
+    alc.provider,
+    alc.provider_subject,
+    alc.email_snapshot,
+    alc.display_name_snapshot,
+    u.email AS user_email,
+    u.display_name AS user_display_name
+FROM account_link_confirmations alc
+JOIN users u ON u.id = alc.user_id
+WHERE alc.id = sqlc.arg(id)
+  AND alc.confirmed_at IS NULL
+  AND alc.expires_at > NOW()
+FOR UPDATE;
+
+-- name: MarkAccountLinkConfirmationConfirmed :execrows
+UPDATE account_link_confirmations
+SET confirmed_at = NOW()
+WHERE id = sqlc.arg(id)
+  AND confirmed_at IS NULL;
