@@ -87,12 +87,13 @@ func RegisterModule(
 		accessTokenVerifier,
 	)
 
-	// Login
+// Login
 
 	loginQueries := logindb.New(pool)
 
 	loginRepository := login.NewRepository(
-		loginQueries,
+    pool,
+    loginQueries,
 	)
 
 	googleTokenVerifier := login.NewGoogleTokenVerifier(
@@ -100,20 +101,21 @@ func RegisterModule(
 	)
 
 	loginService := login.NewService(
-		loginRepository,
-		sessionService,
-		googleTokenVerifier,
-		passwordHasher,
-		accessTokenGenerator,
+    loginRepository,
+    sessionService,
+    registrationService,
+    googleTokenVerifier,
+    passwordHasher,
+    accessTokenGenerator,
 	)
 
 	loginHandler := login.NewHandler(
-		loginService,
+    loginService,
 	)
 
 	login.Routes(
-		authRouter,
-		loginHandler,
+    authRouter,
+    loginHandler,
 	)
 
 	// Password reset

@@ -36,3 +36,7 @@ type FinalizeManualRegistrationResponse struct {
     DisplayName string `json:"display_name"`
 }
 
+type FinalizeSocialRegistrationResponse struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}

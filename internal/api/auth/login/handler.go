@@ -46,3 +46,33 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 		&response,
 	)
 }
+
+func (h *Handler) LoginGoogle(c fiber.Ctx) error {
+	var req LoginGoogleRequest
+
+	if err := httpx.BindBody(c, &req); err != nil {
+		return err
+	}
+
+	metadata, err := session.ExtractMetadata(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.service.LoginGoogle(
+		c.Context(),
+		req.IDToken,
+		metadata,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := mapLoginGoogleResponse(result)
+
+	return httpx.OK(
+		c,
+		"login successful",
+		&response,
+	)
+}

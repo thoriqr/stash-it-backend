@@ -3,6 +3,7 @@ package registration
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,11 @@ type Repository interface {
 		ctx context.Context,
 		params CreateManualRegistrationParams,
 	) (CreateManualRegistrationResult, error)
+
+	CreateSocialRegistration(
+		ctx context.Context,
+		params CreateSocialRegistrationParams,
+	) (CreateSocialRegistrationResult, error)
 
 	GetVerification(
 		ctx context.Context,
@@ -46,7 +52,6 @@ type Repository interface {
 		ctx context.Context,
 		params CompleteVerificationParams,
 	) (registrationdb.RegistrationContinuation, error)
-	
 
 	GetCompletedRegistrationByEmail(
 		ctx context.Context,
@@ -61,6 +66,11 @@ type Repository interface {
 	FinalizeManualRegistration(
 		ctx context.Context,
 		params FinalizeManualRegistrationParams,
+	) (registrationdb.CreateUserRow, error)
+
+	FinalizeSocialRegistration(
+		ctx context.Context,
+		params FinalizeSocialRegistrationParams,
 	) (registrationdb.CreateUserRow, error)
 }
 
@@ -77,11 +87,6 @@ func NewRepository(
 		pool:    pool,
 		queries: queries,
 	}
-}
-
-type CreateManualRegistrationResult struct {
-	VerificationRequest registrationdb.VerificationRequest
-	AlreadyPending      bool
 }
 
 func (r *repository) GetCompletedRegistrationByEmail(
@@ -101,6 +106,11 @@ func (r *repository) GetCompletedRegistrationByEmail(
 	}
 
 	return id, nil
+}
+
+type CreateManualRegistrationResult struct {
+	VerificationRequest registrationdb.VerificationRequest
+	AlreadyPending      bool
 }
 
 type CreateManualRegistrationParams struct {
@@ -201,6 +211,160 @@ func (r *repository) CreateManualRegistration(
 	}
 
 	return CreateManualRegistrationResult{
+		VerificationRequest: verificationRequest,
+	}, nil
+}
+
+type CreateSocialRegistrationResult struct {
+	VerificationRequest registrationdb.VerificationRequest
+}
+
+type CreateSocialRegistrationParams struct {
+	Email                 string
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+	RegistrationExpiresAt pgtype.Timestamptz
+}
+
+func (r *repository) CreateSocialRegistration(
+	ctx context.Context,
+	params CreateSocialRegistrationParams,
+) (CreateSocialRegistrationResult, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return CreateSocialRegistrationResult{}, apperror.Internal(err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	existing, err := qtx.GetPendingRegistrationByEmailForUpdate(
+		ctx,
+		params.Email,
+	)
+
+	if err == nil {
+		if existing.RegistrationType == string(RegistrationTypeManual) {
+			rowsAffected, err := qtx.ForceExpireManualPendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateSocialRegistrationResult{}, apperror.Internal(err)
+			}
+
+			if rowsAffected != 1 {
+				return CreateSocialRegistrationResult{}, apperror.ConflictWith(
+					"",
+					"registration is no longer pending",
+					nil,
+				)
+			}
+		} else if existing.RegistrationType == string(RegistrationTypeSocial) {
+			pendingSocialIdentity, err := qtx.GetPendingSocialIdentity(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return CreateSocialRegistrationResult{}, apperror.Internal(
+						errors.New("social pending registration has no pending social identity"),
+					)
+				}
+
+				return CreateSocialRegistrationResult{}, apperror.Internal(err)
+			}
+			if pendingSocialIdentity.Provider != params.Provider ||
+    			pendingSocialIdentity.ProviderSubject != params.ProviderSubject {
+    			return CreateSocialRegistrationResult{}, apperror.Internal(
+        			fmt.Errorf(
+            			"pending social identity mismatch: expected provider=%q subject=%q, got provider=%q subject=%q",
+            			pendingSocialIdentity.Provider,
+            			pendingSocialIdentity.ProviderSubject,
+            			params.Provider,
+            			params.ProviderSubject,
+        			),
+    			)
+			}
+
+			if !existing.IsExpired {
+				return CreateSocialRegistrationResult{
+					VerificationRequest: registrationdb.VerificationRequest{
+						ID: existing.VerificationID,
+					},
+				}, nil
+			}
+
+			rowsAffected, err := qtx.ExpirePendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateSocialRegistrationResult{}, apperror.Internal(err)
+			}
+
+			if rowsAffected != 1 {
+				return CreateSocialRegistrationResult{}, apperror.ConflictWith(
+					"",
+					"registration is no longer pending",
+					nil,
+				)
+			}
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return CreateSocialRegistrationResult{}, apperror.Internal(err)
+	}
+
+	// create new social pending registration
+	pendingRegistration, err := qtx.CreatePendingRegistration(
+		ctx,
+		registrationdb.CreatePendingRegistrationParams{
+			Email:            params.Email,
+			RegistrationType: string(RegistrationTypeSocial),
+			Status:           string(PendingRegistrationPending),
+			ExpiresAt:        params.RegistrationExpiresAt,
+		},
+	)
+	if err != nil {
+		return CreateSocialRegistrationResult{}, mapRegistrationDBError(err)
+	}
+
+	// create pending social identity
+	_, err = qtx.CreatePendingSocialIdentity(
+		ctx,
+		registrationdb.CreatePendingSocialIdentityParams{
+			PendingRegistrationID: pendingRegistration.ID,
+			Provider:              params.Provider,
+			ProviderSubject:       params.ProviderSubject,
+			EmailSnapshot:         params.EmailSnapshot,
+			DisplayNameSnapshot:   params.DisplayNameSnapshot,
+		},
+	)
+	if err != nil {
+		return CreateSocialRegistrationResult{}, mapRegistrationDBError(err)
+	}
+
+	// create verification request
+	verificationRequest, err := qtx.CreateVerificationRequest(
+		ctx,
+		registrationdb.CreateVerificationRequestParams{
+			SubjectType: string(VerificationSubjectPendingRegistration),
+			SubjectID:   pendingRegistration.ID,
+			Purpose:     string(VerificationPurposeRegistration),
+			Status:      string(VerificationRequestPending),
+		},
+	)
+	if err != nil {
+		return CreateSocialRegistrationResult{}, apperror.Internal(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return CreateSocialRegistrationResult{}, apperror.Internal(err)
+	}
+
+	return CreateSocialRegistrationResult{
 		VerificationRequest: verificationRequest,
 	}, nil
 }
@@ -509,6 +673,105 @@ func (r *repository) FinalizeManualRegistration(
 	return user, nil
 }
 
+type FinalizeSocialRegistrationParams struct {
+	PendingRegistrationID uuid.UUID
+	ContinuationID        uuid.UUID
+	DisplayName           string
+	EmailVerifiedAt       pgtype.Timestamptz
+}
+
+func (r *repository) FinalizeSocialRegistration(
+	ctx context.Context,
+	params FinalizeSocialRegistrationParams,
+) (registrationdb.CreateUserRow, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	pendingSocialIdentity, err := qtx.GetPendingSocialIdentity(
+		ctx,
+		params.PendingRegistrationID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return registrationdb.CreateUserRow{}, apperror.Internal(
+				errors.New("social pending registration has no pending social identity"),
+			)
+		}
+
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
+	user, err := qtx.CreateUser(
+		ctx,
+		registrationdb.CreateUserParams{
+			Email:           pendingSocialIdentity.EmailSnapshot.String,
+			DisplayName:     params.DisplayName,
+			EmailVerifiedAt: params.EmailVerifiedAt,
+		},
+	)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, mapRegistrationDBError(err)
+	}
+
+	_, err = qtx.CreateAuthIdentity(
+		ctx,
+		registrationdb.CreateAuthIdentityParams{
+			UserID:              user.ID,
+			Provider:            pendingSocialIdentity.Provider,
+			ProviderSubject:     pendingSocialIdentity.ProviderSubject,
+			EmailSnapshot:       pendingSocialIdentity.EmailSnapshot,
+			DisplayNameSnapshot: pendingSocialIdentity.DisplayNameSnapshot,
+		},
+	)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, mapRegistrationDBError(err)
+	}
+
+	rowsAffected, err := qtx.ConsumeRegistrationContinuation(
+		ctx,
+		params.ContinuationID,
+	)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.CreateUserRow{}, apperror.ConflictWith(
+			"",
+			"registration continuation is no longer available",
+			nil,
+		)
+	}
+
+	rowsAffected, err = qtx.CompletePendingRegistration(
+		ctx,
+		params.PendingRegistrationID,
+	)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.CreateUserRow{}, apperror.ConflictWith(
+			"",
+			"registration is no longer pending",
+			nil,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
+	return user, nil
+}
+
 func mapRegistrationDBError(err error) error {
 	var pgErr *pgconn.PgError
 
@@ -532,6 +795,13 @@ func mapRegistrationDBError(err error) error {
 			return apperror.ConflictWith(
 				CodeUserAlreadyExists,
 				"user already exists",
+				err,
+			)
+
+		case "auth_identities_provider_subject_unique":
+			return apperror.ConflictWith(
+				CodeAuthIdentityAlreadyExists,
+				"auth identity already exists",
 				err,
 			)
 		}

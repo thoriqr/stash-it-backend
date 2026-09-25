@@ -234,3 +234,38 @@ func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
         &response,
     )
 }
+
+func (h *Handler) FinalizeSocialRegistration(c fiber.Ctx) error {
+	var req FinalizeSocialRegistrationRequest
+
+	if err := httpx.BindBody(c, &req); err != nil {
+		return err
+	}
+
+	continuationToken, err := extractRegistrationContinuationToken(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.service.FinalizeSocialRegistration(
+		c.Context(),
+		FinalizeSocialRegistrationInput{
+			ContinuationToken: continuationToken,
+			DisplayName:       req.DisplayName,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	response := FinalizeSocialRegistrationResponse{
+		Email:       result.Email,
+		DisplayName: result.DisplayName,
+	}
+
+	return httpx.Created(
+		c,
+		"registration completed successfully",
+		&response,
+	)
+}

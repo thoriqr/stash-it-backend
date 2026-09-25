@@ -61,6 +61,70 @@ func (q *Queries) ConsumeVerificationCode(ctx context.Context, id uuid.UUID) (in
 	return result.RowsAffected(), nil
 }
 
+const createAuthIdentity = `-- name: CreateAuthIdentity :one
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING
+    id,
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at
+`
+
+type CreateAuthIdentityParams struct {
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+type CreateAuthIdentityRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (CreateAuthIdentityRow, error) {
+	row := q.db.QueryRow(ctx, createAuthIdentity,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var i CreateAuthIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createPasswordCredential = `-- name: CreatePasswordCredential :one
 INSERT INTO password_credentials (
     user_id,
@@ -137,6 +201,70 @@ func (q *Queries) CreatePendingRegistration(ctx context.Context, arg CreatePendi
 		&i.Status,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const createPendingSocialIdentity = `-- name: CreatePendingSocialIdentity :one
+INSERT INTO pending_social_identities (
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING
+    id,
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at
+`
+
+type CreatePendingSocialIdentityParams struct {
+	PendingRegistrationID uuid.UUID
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+}
+
+type CreatePendingSocialIdentityRow struct {
+	ID                    uuid.UUID
+	PendingRegistrationID uuid.UUID
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) CreatePendingSocialIdentity(ctx context.Context, arg CreatePendingSocialIdentityParams) (CreatePendingSocialIdentityRow, error) {
+	row := q.db.QueryRow(ctx, createPendingSocialIdentity,
+		arg.PendingRegistrationID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var i CreatePendingSocialIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.PendingRegistrationID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -340,6 +468,22 @@ func (q *Queries) ExpirePendingRegistration(ctx context.Context, id uuid.UUID) (
 	return result.RowsAffected(), nil
 }
 
+const forceExpireManualPendingRegistration = `-- name: ForceExpireManualPendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = $1
+  AND registration_type = 'manual'
+  AND status = 'pending'
+`
+
+func (q *Queries) ForceExpireManualPendingRegistration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, forceExpireManualPendingRegistration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const forceExpireSocialPendingRegistration = `-- name: ForceExpireSocialPendingRegistration :execrows
 UPDATE pending_registrations
 SET status = 'expired'
@@ -450,6 +594,44 @@ func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, em
 		&i.ExpiresAt,
 		&i.IsExpired,
 		&i.VerificationID,
+	)
+	return i, err
+}
+
+const getPendingSocialIdentity = `-- name: GetPendingSocialIdentity :one
+SELECT
+    id,
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at
+FROM pending_social_identities
+WHERE pending_registration_id = $1
+`
+
+type GetPendingSocialIdentityRow struct {
+	ID                    uuid.UUID
+	PendingRegistrationID uuid.UUID
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) GetPendingSocialIdentity(ctx context.Context, pendingRegistrationID uuid.UUID) (GetPendingSocialIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getPendingSocialIdentity, pendingRegistrationID)
+	var i GetPendingSocialIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.PendingRegistrationID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.CreatedAt,
 	)
 	return i, err
 }

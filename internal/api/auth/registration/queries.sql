@@ -202,6 +202,13 @@ WHERE id = sqlc.arg(id)
   AND registration_type = 'social'
   AND status = 'pending';
 
+-- name: ForceExpireManualPendingRegistration :execrows
+UPDATE pending_registrations
+SET status = 'expired'
+WHERE id = sqlc.arg(id)
+  AND registration_type = 'manual'
+  AND status = 'pending';
+
 -- name: ExpirePendingRegistration :execrows
 UPDATE pending_registrations
 SET status = 'expired'
@@ -274,3 +281,63 @@ SET status = 'completed'
 WHERE id = sqlc.arg(id)
   AND status = 'pending'
   AND expires_at > NOW();
+
+-- name: GetPendingSocialIdentity :one
+SELECT
+    id,
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at
+FROM pending_social_identities
+WHERE pending_registration_id = sqlc.arg(pending_registration_id);
+
+-- name: CreatePendingSocialIdentity :one
+INSERT INTO pending_social_identities (
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    sqlc.arg(pending_registration_id),
+    sqlc.arg(provider),
+    sqlc.arg(provider_subject),
+    sqlc.arg(email_snapshot),
+    sqlc.arg(display_name_snapshot)
+)
+RETURNING
+    id,
+    pending_registration_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at;
+
+-- name: CreateAuthIdentity :one
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(provider),
+    sqlc.arg(provider_subject),
+    sqlc.arg(email_snapshot),
+    sqlc.arg(display_name_snapshot)
+)
+RETURNING
+    id,
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    created_at;

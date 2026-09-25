@@ -34,4 +34,9 @@ func Routes(router fiber.Router, h *Handler) {
     "/register/finalize/manual",
     h.FinalizeManualRegistration,
 	)
+
+	router.Post(
+    "/register/finalize/social",
+    h.FinalizeSocialRegistration,
+	)
 }

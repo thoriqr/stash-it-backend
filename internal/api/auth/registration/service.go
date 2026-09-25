@@ -13,6 +13,13 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
+type SocialRegistrationService interface {
+	CreateSocialRegistration(
+		ctx context.Context,
+		params CreateSocialRegistrationInput,
+	) (uuid.UUID, error)
+}
+
 type RegistrationService interface {
     RegisterManual(
         ctx context.Context,
@@ -49,6 +56,11 @@ type RegistrationService interface {
         ctx context.Context,
         params FinalizeManualRegistrationInput,
     ) (FinalizeManualRegistrationResult, error)
+
+		FinalizeSocialRegistration(
+			ctx context.Context,
+			params FinalizeSocialRegistrationInput,
+		) (FinalizeSocialRegistrationResult, error)
 }
 
 type service struct {
@@ -123,6 +135,45 @@ func (s *service) RegisterManual(
 		VerificationID: result.VerificationRequest.ID,
 		AlreadyPending: result.AlreadyPending,
 	}, nil
+}
+
+type CreateSocialRegistrationInput struct {
+	Email               string
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (s *service) CreateSocialRegistration(
+	ctx context.Context,
+	params CreateSocialRegistrationInput,
+) (uuid.UUID, error) {
+	email := normalizeEmail(params.Email)
+
+	now := time.Now()
+
+	registrationExpiresAt := pgtype.Timestamptz{
+		Time:  now.Add(registrationExpiresIn),
+		Valid: true,
+	}
+
+	result, err := s.repository.CreateSocialRegistration(
+		ctx,
+		CreateSocialRegistrationParams{
+			Email:                 email,
+			Provider:              params.Provider,
+			ProviderSubject:       params.ProviderSubject,
+			EmailSnapshot:         params.EmailSnapshot,
+			DisplayNameSnapshot:   params.DisplayNameSnapshot,
+			RegistrationExpiresAt: registrationExpiresAt,
+		},
+	)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	return result.VerificationRequest.ID, nil
 }
 
 type CreatePINResult struct {
@@ -482,6 +533,69 @@ func (s *service) FinalizeManualRegistration(
 	}
 
 	return FinalizeManualRegistrationResult{
+		UserID:      user.ID,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+	}, nil
+}
+
+
+type FinalizeSocialRegistrationInput struct {
+	ContinuationToken string
+	DisplayName       string
+}
+
+type FinalizeSocialRegistrationResult struct {
+	UserID      uuid.UUID
+	Email       string
+	DisplayName string
+}
+
+func (s *service) FinalizeSocialRegistration(
+	ctx context.Context,
+	params FinalizeSocialRegistrationInput,
+) (FinalizeSocialRegistrationResult, error) {
+	tokenHash := security.HashToken(params.ContinuationToken)
+
+	continuation, err := s.repository.GetRegistrationContinuation(
+		ctx,
+		tokenHash,
+	)
+	if err != nil {
+		return FinalizeSocialRegistrationResult{}, err
+	}
+
+	if err := validateRegistrationContinuation(continuation); err != nil {
+		return FinalizeSocialRegistrationResult{}, err
+	}
+
+	if continuation.RegistrationType != string(RegistrationTypeSocial) {
+		return FinalizeSocialRegistrationResult{}, apperror.ConflictWith(
+			CodeInvalidRegistrationType,
+			"registration is not a social registration",
+			nil,
+		)
+	}
+
+	now := time.Now()
+
+	user, err := s.repository.FinalizeSocialRegistration(
+		ctx,
+		FinalizeSocialRegistrationParams{
+			PendingRegistrationID: continuation.PendingRegistrationID,
+			ContinuationID:        continuation.ID,
+			DisplayName:           params.DisplayName,
+			EmailVerifiedAt: pgtype.Timestamptz{
+				Time:  now,
+				Valid: true,
+			},
+		},
+	)
+	if err != nil {
+		return FinalizeSocialRegistrationResult{}, err
+	}
+
+	return FinalizeSocialRegistrationResult{
 		UserID:      user.ID,
 		Email:       user.Email,
 		DisplayName: user.DisplayName,

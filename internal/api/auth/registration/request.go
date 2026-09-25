@@ -12,3 +12,7 @@ type FinalizeManualRegistrationRequest struct {
 	DisplayName string `json:"display_name" validate:"required,min=2,max=100"`
 	Password    string `json:"password" validate:"required,min=8"`
 }
+
+type FinalizeSocialRegistrationRequest struct {
+	DisplayName string `json:"display_name" validate:"required,min=2,max=100"`
+}

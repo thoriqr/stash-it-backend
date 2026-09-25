@@ -121,6 +121,45 @@ func (c *MockRepositoryCreateManualRegistrationCall) DoAndReturn(f func(context.
 	return c
 }
 
+// CreateSocialRegistration mocks base method.
+func (m *MockRepository) CreateSocialRegistration(ctx context.Context, params registration.CreateSocialRegistrationParams) (registration.CreateSocialRegistrationResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateSocialRegistration", ctx, params)
+	ret0, _ := ret[0].(registration.CreateSocialRegistrationResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateSocialRegistration indicates an expected call of CreateSocialRegistration.
+func (mr *MockRepositoryMockRecorder) CreateSocialRegistration(ctx, params any) *MockRepositoryCreateSocialRegistrationCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSocialRegistration", reflect.TypeOf((*MockRepository)(nil).CreateSocialRegistration), ctx, params)
+	return &MockRepositoryCreateSocialRegistrationCall{Call: call}
+}
+
+// MockRepositoryCreateSocialRegistrationCall wrap *gomock.Call
+type MockRepositoryCreateSocialRegistrationCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryCreateSocialRegistrationCall) Return(arg0 registration.CreateSocialRegistrationResult, arg1 error) *MockRepositoryCreateSocialRegistrationCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryCreateSocialRegistrationCall) Do(f func(context.Context, registration.CreateSocialRegistrationParams) (registration.CreateSocialRegistrationResult, error)) *MockRepositoryCreateSocialRegistrationCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryCreateSocialRegistrationCall) DoAndReturn(f func(context.Context, registration.CreateSocialRegistrationParams) (registration.CreateSocialRegistrationResult, error)) *MockRepositoryCreateSocialRegistrationCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // FinalizeManualRegistration mocks base method.
 func (m *MockRepository) FinalizeManualRegistration(ctx context.Context, params registration.FinalizeManualRegistrationParams) (registrationdb.CreateUserRow, error) {
 	m.ctrl.T.Helper()
@@ -156,6 +195,45 @@ func (c *MockRepositoryFinalizeManualRegistrationCall) Do(f func(context.Context
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryFinalizeManualRegistrationCall) DoAndReturn(f func(context.Context, registration.FinalizeManualRegistrationParams) (registrationdb.CreateUserRow, error)) *MockRepositoryFinalizeManualRegistrationCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// FinalizeSocialRegistration mocks base method.
+func (m *MockRepository) FinalizeSocialRegistration(ctx context.Context, params registration.FinalizeSocialRegistrationParams) (registrationdb.CreateUserRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FinalizeSocialRegistration", ctx, params)
+	ret0, _ := ret[0].(registrationdb.CreateUserRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FinalizeSocialRegistration indicates an expected call of FinalizeSocialRegistration.
+func (mr *MockRepositoryMockRecorder) FinalizeSocialRegistration(ctx, params any) *MockRepositoryFinalizeSocialRegistrationCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinalizeSocialRegistration", reflect.TypeOf((*MockRepository)(nil).FinalizeSocialRegistration), ctx, params)
+	return &MockRepositoryFinalizeSocialRegistrationCall{Call: call}
+}
+
+// MockRepositoryFinalizeSocialRegistrationCall wrap *gomock.Call
+type MockRepositoryFinalizeSocialRegistrationCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryFinalizeSocialRegistrationCall) Return(arg0 registrationdb.CreateUserRow, arg1 error) *MockRepositoryFinalizeSocialRegistrationCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryFinalizeSocialRegistrationCall) Do(f func(context.Context, registration.FinalizeSocialRegistrationParams) (registrationdb.CreateUserRow, error)) *MockRepositoryFinalizeSocialRegistrationCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryFinalizeSocialRegistrationCall) DoAndReturn(f func(context.Context, registration.FinalizeSocialRegistrationParams) (registrationdb.CreateUserRow, error)) *MockRepositoryFinalizeSocialRegistrationCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

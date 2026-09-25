@@ -2,12 +2,12 @@ package login
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
@@ -15,30 +15,30 @@ import (
 )
 
 type Service struct {
-	repository            Repository
-	sessionService        session.SessionCreator
-	// registrationService   registration.SocialRegistrationStarter
-	googleTokenVerifier   GoogleTokenVerifier
-	passwordHasher        *security.PasswordHasher
-	accessTokenGenerator  *security.AccessTokenGenerator
+    repository          Repository
+    sessionService      session.SessionCreator
+    registrationService registration.SocialRegistrationService
+    googleTokenVerifier GoogleTokenVerifier
+    passwordHasher      *security.PasswordHasher
+    accessTokenGenerator *security.AccessTokenGenerator
 }
 
 func NewService(
-	repository Repository,
-	sessionService session.SessionCreator,
-	// registrationService registration.SocialRegistrationStarter,
-	googleTokenVerifier GoogleTokenVerifier,
-	passwordHasher *security.PasswordHasher,
-	accessTokenGenerator *security.AccessTokenGenerator,
+    repository Repository,
+    sessionService session.SessionCreator,
+    registrationService registration.SocialRegistrationService,
+    googleTokenVerifier GoogleTokenVerifier,
+    passwordHasher *security.PasswordHasher,
+    accessTokenGenerator *security.AccessTokenGenerator,
 ) *Service {
-	return &Service{
-		repository:          repository,
-		sessionService:      sessionService,
-		// registrationService: registrationService,
-		googleTokenVerifier: googleTokenVerifier,
-		passwordHasher:      passwordHasher,
-		accessTokenGenerator: accessTokenGenerator,
-	}
+    return &Service{
+        repository:          repository,
+        sessionService:      sessionService,
+        registrationService: registrationService,
+        googleTokenVerifier: googleTokenVerifier,
+        passwordHasher:      passwordHasher,
+        accessTokenGenerator: accessTokenGenerator,
+    }
 }
 
 type LoginResult struct {
@@ -183,28 +183,30 @@ func (s *Service) LoginGoogle(
 		}, nil
 	}
 
-	// TODO: start social registration.
-	// registrationResult, err := s.registrationService.RegisterSocial(
-	// 	ctx,
-	// 	registration.RegisterSocialParams{
-	// 		Email:           identity.Email,
-	// 		Provider:        "google",
-	// 		ProviderSubject: identity.Subject,
-	// 		DisplayName:     identity.DisplayName,
-	// 	},
-	// )
-	// if err != nil {
-	// 	return LoginGoogleResult{}, err
-	// }
-	//
-	// return LoginGoogleResult{
-	// 	Outcome:        LoginOutcomeRegistrationRequired,
-	// 	VerificationID: registrationResult.VerificationID,
-	// }, nil
-
-	return LoginGoogleResult{}, apperror.Internal(
-		errors.New("social registration is not implemented"),
+	verificationID, err := s.registrationService.CreateSocialRegistration(
+    	ctx,
+    	registration.CreateSocialRegistrationInput{
+        	Email:               identity.Email,
+        	Provider:            "google",
+        	ProviderSubject:     identity.Subject,
+        	EmailSnapshot:       pgtype.Text{
+            String: identity.Email,
+            Valid:  true,
+        	},
+        	DisplayNameSnapshot: pgtype.Text{
+            String: identity.DisplayName,
+            Valid:  identity.DisplayName != "",
+        	},
+    	},
 	)
+	if err != nil {
+    return LoginGoogleResult{}, err
+	}
+
+	return LoginGoogleResult{
+    Outcome:        LoginOutcomeRegistrationRequired,
+    VerificationID: verificationID,
+	}, nil
 }
 
 type GetAccountLinkConfirmationResult struct {
