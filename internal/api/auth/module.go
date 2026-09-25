@@ -20,6 +20,7 @@ func RegisterModule(
 	app *fiber.App,
 	pool *pgxpool.Pool,
 	cfg config.Config,
+	googleTokenVerifier login.GoogleTokenVerifier,
 ) {
 	authRouter := app.Group("/auth")
 
@@ -94,10 +95,6 @@ func RegisterModule(
 	loginRepository := login.NewRepository(
     pool,
     loginQueries,
-	)
-
-	googleTokenVerifier := login.NewGoogleTokenVerifier(
-    cfg.GoogleClientID,
 	)
 
 	loginService := login.NewService(

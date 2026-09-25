@@ -26,6 +26,81 @@ func (q *Queries) CountUserSessions(ctx context.Context, userID uuid.UUID) (int6
 	return count, err
 }
 
+const createAccountLinkConfirmation = `-- name: CreateAccountLinkConfirmation :one
+INSERT INTO account_link_confirmations (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot,
+    expires_at
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    NOW() + INTERVAL '15 minutes'
+)
+RETURNING id
+`
+
+type CreateAccountLinkConfirmationParams struct {
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (q *Queries) CreateAccountLinkConfirmation(ctx context.Context, arg CreateAccountLinkConfirmationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createAccountLinkConfirmation,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createGoogleAuthIdentity = `-- name: CreateGoogleAuthIdentity :exec
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    $1,
+    'google',
+    $2,
+    $3,
+    $4
+)
+`
+
+type CreateGoogleAuthIdentityParams struct {
+	UserID              uuid.UUID
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (q *Queries) CreateGoogleAuthIdentity(ctx context.Context, arg CreateGoogleAuthIdentityParams) error {
+	_, err := q.db.Exec(ctx, createGoogleAuthIdentity,
+		arg.UserID,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	return err
+}
+
 const createLoginUser = `-- name: CreateLoginUser :one
 INSERT INTO users (
     email,
@@ -73,6 +148,97 @@ func (q *Queries) CreatePasswordCredential(ctx context.Context, arg CreatePasswo
 	return err
 }
 
+const getAccountLinkConfirmationState = `-- name: GetAccountLinkConfirmationState :one
+SELECT
+    alc.id,
+    alc.user_id,
+    alc.provider,
+    alc.provider_subject,
+    alc.email_snapshot,
+    alc.display_name_snapshot,
+    alc.expires_at,
+    alc.confirmed_at,
+    u.email AS user_email,
+    u.display_name AS user_display_name
+FROM account_link_confirmations alc
+JOIN users u
+    ON u.id = alc.user_id
+WHERE alc.id = $1
+`
+
+type GetAccountLinkConfirmationStateRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	ExpiresAt           pgtype.Timestamptz
+	ConfirmedAt         pgtype.Timestamptz
+	UserEmail           string
+	UserDisplayName     string
+}
+
+func (q *Queries) GetAccountLinkConfirmationState(ctx context.Context, id uuid.UUID) (GetAccountLinkConfirmationStateRow, error) {
+	row := q.db.QueryRow(ctx, getAccountLinkConfirmationState, id)
+	var i GetAccountLinkConfirmationStateRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+		&i.ExpiresAt,
+		&i.ConfirmedAt,
+		&i.UserEmail,
+		&i.UserDisplayName,
+	)
+	return i, err
+}
+
+const getGoogleAuthIdentityState = `-- name: GetGoogleAuthIdentityState :one
+SELECT
+    ai.id,
+    ai.user_id,
+    ai.provider,
+    ai.provider_subject,
+    ai.email_snapshot,
+    ai.display_name_snapshot
+FROM auth_identities ai
+WHERE ai.user_id = $1
+  AND ai.provider = 'google'
+  AND ai.provider_subject = $2
+`
+
+type GetGoogleAuthIdentityStateParams struct {
+	UserID          uuid.UUID
+	ProviderSubject string
+}
+
+type GetGoogleAuthIdentityStateRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (q *Queries) GetGoogleAuthIdentityState(ctx context.Context, arg GetGoogleAuthIdentityStateParams) (GetGoogleAuthIdentityStateRow, error) {
+	row := q.db.QueryRow(ctx, getGoogleAuthIdentityState, arg.UserID, arg.ProviderSubject)
+	var i GetGoogleAuthIdentityStateRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
+	)
+	return i, err
+}
+
 const getLoginUserState = `-- name: GetLoginUserState :one
 SELECT
     u.id,
@@ -100,6 +266,55 @@ func (q *Queries) GetLoginUserState(ctx context.Context, email string) (GetLogin
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordUserID,
+	)
+	return i, err
+}
+
+const getSocialRegistrationState = `-- name: GetSocialRegistrationState :one
+SELECT
+    vr.id AS verification_id,
+    vr.subject_id AS pending_registration_id,
+    pr.email,
+    pr.registration_type,
+    pr.status AS registration_status,
+    psi.provider,
+    psi.provider_subject,
+    psi.email_snapshot,
+    psi.display_name_snapshot
+FROM verification_requests vr
+JOIN pending_registrations pr
+    ON pr.id = vr.subject_id
+JOIN pending_social_identities psi
+    ON psi.pending_registration_id = pr.id
+WHERE vr.id = $1
+  AND vr.subject_type = 'pending_registration'
+`
+
+type GetSocialRegistrationStateRow struct {
+	VerificationID        uuid.UUID
+	PendingRegistrationID uuid.UUID
+	Email                 string
+	RegistrationType      string
+	RegistrationStatus    string
+	Provider              string
+	ProviderSubject       string
+	EmailSnapshot         pgtype.Text
+	DisplayNameSnapshot   pgtype.Text
+}
+
+func (q *Queries) GetSocialRegistrationState(ctx context.Context, verificationID uuid.UUID) (GetSocialRegistrationStateRow, error) {
+	row := q.db.QueryRow(ctx, getSocialRegistrationState, verificationID)
+	var i GetSocialRegistrationStateRow
+	err := row.Scan(
+		&i.VerificationID,
+		&i.PendingRegistrationID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.RegistrationStatus,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
 	)
 	return i, err
 }

@@ -8,6 +8,7 @@ import (
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/health"
@@ -43,10 +44,15 @@ func main() {
 	healthHandler := health.NewHandler()
 	health.Routes(app, healthHandler)
 
+	googleTokenVerifier := login.NewGoogleTokenVerifier(
+    cfg.GoogleClientID,
+	)
+
 	auth.RegisterModule(
-		app,
-		pool,
-		cfg,
+    app,
+    pool,
+    cfg,
+    googleTokenVerifier,
 	)
 
 	fmt.Println("Database connected")

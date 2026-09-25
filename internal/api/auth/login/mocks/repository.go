@@ -42,11 +42,89 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
 }
 
+// ConfirmAccountLink mocks base method.
+func (m *MockRepository) ConfirmAccountLink(ctx context.Context, confirmationID uuid.UUID) (logindb.CreateAuthIdentityRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ConfirmAccountLink", ctx, confirmationID)
+	ret0, _ := ret[0].(logindb.CreateAuthIdentityRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ConfirmAccountLink indicates an expected call of ConfirmAccountLink.
+func (mr *MockRepositoryMockRecorder) ConfirmAccountLink(ctx, confirmationID any) *MockRepositoryConfirmAccountLinkCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ConfirmAccountLink", reflect.TypeOf((*MockRepository)(nil).ConfirmAccountLink), ctx, confirmationID)
+	return &MockRepositoryConfirmAccountLinkCall{Call: call}
+}
+
+// MockRepositoryConfirmAccountLinkCall wrap *gomock.Call
+type MockRepositoryConfirmAccountLinkCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryConfirmAccountLinkCall) Return(arg0 logindb.CreateAuthIdentityRow, arg1 error) *MockRepositoryConfirmAccountLinkCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryConfirmAccountLinkCall) Do(f func(context.Context, uuid.UUID) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryConfirmAccountLinkCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryConfirmAccountLinkCall) DoAndReturn(f func(context.Context, uuid.UUID) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryConfirmAccountLinkCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// CreateAccountLinkConfirmation mocks base method.
+func (m *MockRepository) CreateAccountLinkConfirmation(ctx context.Context, params logindb.CreateAccountLinkConfirmationParams) (logindb.AccountLinkConfirmation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateAccountLinkConfirmation", ctx, params)
+	ret0, _ := ret[0].(logindb.AccountLinkConfirmation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateAccountLinkConfirmation indicates an expected call of CreateAccountLinkConfirmation.
+func (mr *MockRepositoryMockRecorder) CreateAccountLinkConfirmation(ctx, params any) *MockRepositoryCreateAccountLinkConfirmationCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateAccountLinkConfirmation", reflect.TypeOf((*MockRepository)(nil).CreateAccountLinkConfirmation), ctx, params)
+	return &MockRepositoryCreateAccountLinkConfirmationCall{Call: call}
+}
+
+// MockRepositoryCreateAccountLinkConfirmationCall wrap *gomock.Call
+type MockRepositoryCreateAccountLinkConfirmationCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryCreateAccountLinkConfirmationCall) Return(arg0 logindb.AccountLinkConfirmation, arg1 error) *MockRepositoryCreateAccountLinkConfirmationCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryCreateAccountLinkConfirmationCall) Do(f func(context.Context, logindb.CreateAccountLinkConfirmationParams) (logindb.AccountLinkConfirmation, error)) *MockRepositoryCreateAccountLinkConfirmationCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryCreateAccountLinkConfirmationCall) DoAndReturn(f func(context.Context, logindb.CreateAccountLinkConfirmationParams) (logindb.AccountLinkConfirmation, error)) *MockRepositoryCreateAccountLinkConfirmationCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // CreateAuthIdentity mocks base method.
-func (m *MockRepository) CreateAuthIdentity(ctx context.Context, params logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error) {
+func (m *MockRepository) CreateAuthIdentity(ctx context.Context, params logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateAuthIdentity", ctx, params)
-	ret0, _ := ret[0].(logindb.AuthIdentity)
+	ret0, _ := ret[0].(logindb.CreateAuthIdentityRow)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -64,19 +142,58 @@ type MockRepositoryCreateAuthIdentityCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryCreateAuthIdentityCall) Return(arg0 logindb.AuthIdentity, arg1 error) *MockRepositoryCreateAuthIdentityCall {
+func (c *MockRepositoryCreateAuthIdentityCall) Return(arg0 logindb.CreateAuthIdentityRow, arg1 error) *MockRepositoryCreateAuthIdentityCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryCreateAuthIdentityCall) Do(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error)) *MockRepositoryCreateAuthIdentityCall {
+func (c *MockRepositoryCreateAuthIdentityCall) Do(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryCreateAuthIdentityCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryCreateAuthIdentityCall) DoAndReturn(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.AuthIdentity, error)) *MockRepositoryCreateAuthIdentityCall {
+func (c *MockRepositoryCreateAuthIdentityCall) DoAndReturn(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryCreateAuthIdentityCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetActiveAccountLinkConfirmation mocks base method.
+func (m *MockRepository) GetActiveAccountLinkConfirmation(ctx context.Context, id uuid.UUID) (logindb.GetActiveAccountLinkConfirmationRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveAccountLinkConfirmation", ctx, id)
+	ret0, _ := ret[0].(logindb.GetActiveAccountLinkConfirmationRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveAccountLinkConfirmation indicates an expected call of GetActiveAccountLinkConfirmation.
+func (mr *MockRepositoryMockRecorder) GetActiveAccountLinkConfirmation(ctx, id any) *MockRepositoryGetActiveAccountLinkConfirmationCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveAccountLinkConfirmation", reflect.TypeOf((*MockRepository)(nil).GetActiveAccountLinkConfirmation), ctx, id)
+	return &MockRepositoryGetActiveAccountLinkConfirmationCall{Call: call}
+}
+
+// MockRepositoryGetActiveAccountLinkConfirmationCall wrap *gomock.Call
+type MockRepositoryGetActiveAccountLinkConfirmationCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetActiveAccountLinkConfirmationCall) Return(arg0 logindb.GetActiveAccountLinkConfirmationRow, arg1 error) *MockRepositoryGetActiveAccountLinkConfirmationCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetActiveAccountLinkConfirmationCall) Do(f func(context.Context, uuid.UUID) (logindb.GetActiveAccountLinkConfirmationRow, error)) *MockRepositoryGetActiveAccountLinkConfirmationCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetActiveAccountLinkConfirmationCall) DoAndReturn(f func(context.Context, uuid.UUID) (logindb.GetActiveAccountLinkConfirmationRow, error)) *MockRepositoryGetActiveAccountLinkConfirmationCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
