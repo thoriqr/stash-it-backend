@@ -12,6 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countUserSessions = `-- name: CountUserSessions :one
+SELECT COUNT(*) AS count
+FROM sessions
+WHERE user_id = $1
+  AND revoked_at IS NULL
+`
+
+func (q *Queries) CountUserSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserSessions, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCompletedRegistration = `-- name: CreateCompletedRegistration :one
 WITH registration AS (
     INSERT INTO pending_registrations (
@@ -47,6 +61,42 @@ func (q *Queries) CreateCompletedRegistration(ctx context.Context, email string)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const createExistingAuthIdentity = `-- name: CreateExistingAuthIdentity :exec
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+`
+
+type CreateExistingAuthIdentityParams struct {
+	UserID              uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (q *Queries) CreateExistingAuthIdentity(ctx context.Context, arg CreateExistingAuthIdentityParams) error {
+	_, err := q.db.Exec(ctx, createExistingAuthIdentity,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	return err
 }
 
 const createExistingUser = `-- name: CreateExistingUser :one
@@ -143,6 +193,86 @@ func (q *Queries) CreateRegistrationContinuation(ctx context.Context, arg Create
 	return i, err
 }
 
+const createSocialRegistrationContinuation = `-- name: CreateSocialRegistrationContinuation :one
+WITH registration AS (
+    INSERT INTO pending_registrations (
+        email,
+        registration_type,
+        status,
+        expires_at
+    ) VALUES (
+        $2,
+        'social',
+        'pending',
+        NOW() + INTERVAL '7 days'
+    )
+    RETURNING id
+),
+social_identity AS (
+    INSERT INTO pending_social_identities (
+        pending_registration_id,
+        provider,
+        provider_subject,
+        email_snapshot,
+        display_name_snapshot
+    )
+    SELECT
+        id,
+        $3,
+        $4,
+        $5,
+        $6
+    FROM registration
+)
+INSERT INTO registration_continuations (
+    pending_registration_id,
+    token_hash,
+    expires_at
+)
+SELECT
+    id,
+    $1,
+    NOW() + INTERVAL '15 minutes'
+FROM registration
+RETURNING
+    id,
+    pending_registration_id,
+    token_hash,
+    expires_at,
+    consumed_at,
+    created_at
+`
+
+type CreateSocialRegistrationContinuationParams struct {
+	TokenHash           string
+	Email               string
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+func (q *Queries) CreateSocialRegistrationContinuation(ctx context.Context, arg CreateSocialRegistrationContinuationParams) (RegistrationContinuation, error) {
+	row := q.db.QueryRow(ctx, createSocialRegistrationContinuation,
+		arg.TokenHash,
+		arg.Email,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var i RegistrationContinuation
+	err := row.Scan(
+		&i.ID,
+		&i.PendingRegistrationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getFinalizedRegistrationState = `-- name: GetFinalizedRegistrationState :one
 SELECT
     u.id AS user_id,
@@ -178,6 +308,62 @@ func (q *Queries) GetFinalizedRegistrationState(ctx context.Context, email strin
 		&i.Email,
 		&i.DisplayName,
 		&i.PasswordUserID,
+		&i.RegistrationStatus,
+		&i.ConsumedAt,
+	)
+	return i, err
+}
+
+const getFinalizedSocialRegistrationState = `-- name: GetFinalizedSocialRegistrationState :one
+SELECT
+    u.id AS user_id,
+    u.email,
+    u.display_name,
+    u.email_verified_at,
+    ai.id AS auth_identity_id,
+    ai.provider,
+    ai.provider_subject,
+    ai.email_snapshot,
+    ai.display_name_snapshot,
+    pr.status AS registration_status,
+    rc.consumed_at
+FROM users u
+JOIN auth_identities ai
+    ON ai.user_id = u.id
+JOIN pending_registrations pr
+    ON pr.email = u.email
+JOIN registration_continuations rc
+    ON rc.pending_registration_id = pr.id
+WHERE u.email = $1
+`
+
+type GetFinalizedSocialRegistrationStateRow struct {
+	UserID              uuid.UUID
+	Email               string
+	DisplayName         string
+	EmailVerifiedAt     pgtype.Timestamptz
+	AuthIdentityID      uuid.UUID
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+	RegistrationStatus  string
+	ConsumedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) GetFinalizedSocialRegistrationState(ctx context.Context, email string) (GetFinalizedSocialRegistrationStateRow, error) {
+	row := q.db.QueryRow(ctx, getFinalizedSocialRegistrationState, email)
+	var i GetFinalizedSocialRegistrationStateRow
+	err := row.Scan(
+		&i.UserID,
+		&i.Email,
+		&i.DisplayName,
+		&i.EmailVerifiedAt,
+		&i.AuthIdentityID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.EmailSnapshot,
+		&i.DisplayNameSnapshot,
 		&i.RegistrationStatus,
 		&i.ConsumedAt,
 	)
@@ -295,7 +481,14 @@ TRUNCATE TABLE
     verification_codes,
     verification_requests,
     registration_continuations,
-    pending_registrations
+    pending_social_identities,
+    pending_registrations,
+    auth_identities,
+    password_credentials,
+    refresh_tokens,
+    sessions,
+    users
+CASCADE
 `
 
 func (q *Queries) TruncateRegistrationData(ctx context.Context) error {

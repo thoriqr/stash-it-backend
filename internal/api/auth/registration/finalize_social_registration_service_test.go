@@ -15,9 +15,12 @@ import (
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
+	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 )
 
-func TestService_FinalizeManualRegistration(t *testing.T) {
+func TestService_FinalizeSocialRegistration(t *testing.T) {
 	test := newTestService(t)
 
 	ctx := context.Background()
@@ -28,11 +31,27 @@ func TestService_FinalizeManualRegistration(t *testing.T) {
 	continuationID := uuid.New()
 	pendingRegistrationID := uuid.New()
 	userID := uuid.New()
+	sessionID := uuid.New()
 
-	input := registration.FinalizeManualRegistrationInput{
+	metadata := session.SessionMetadata{
+		Platform: "web",
+		InstallationID: pgtype.UUID{
+			Bytes: uuid.New(),
+			Valid: true,
+		},
+		DeviceName: pgtype.Text{
+			String: "Test Browser",
+			Valid:  true,
+		},
+		UserAgent: pgtype.Text{
+			String: "test-agent",
+			Valid:  true,
+		},
+	}
+
+	input := registration.FinalizeSocialRegistrationInput{
 		ContinuationToken: continuationToken,
 		DisplayName:       "John Doe",
-		Password:          "password123",
 	}
 
 	testStartedAt := time.Now()
@@ -47,7 +66,7 @@ func TestService_FinalizeManualRegistration(t *testing.T) {
 				ID:                    continuationID,
 				PendingRegistrationID: pendingRegistrationID,
 				Email:                 "john@example.com",
-				RegistrationType:      string(registration.RegistrationTypeManual),
+				RegistrationType:     string(registration.RegistrationTypeSocial),
 				ExpiresAt: pgtype.Timestamptz{
 					Time:  continuationExpiresAt,
 					Valid: true,
@@ -68,73 +87,71 @@ func TestService_FinalizeManualRegistration(t *testing.T) {
 
 	test.repository.
 		EXPECT().
-		FinalizeManualRegistration(
+		FinalizeSocialRegistration(
 			ctx,
 			gomock.Any(),
 		).
 		DoAndReturn(func(
-			_ context.Context,
-			params registration.FinalizeManualRegistrationParams,
+    		_ context.Context,
+    		params registration.FinalizeSocialRegistrationParams,
 		) (registrationdb.CreateUserRow, error) {
-			if params.PendingRegistrationID != pendingRegistrationID {
-				t.Errorf(
-					"expected pending registration ID %s, got %s",
-					pendingRegistrationID,
-					params.PendingRegistrationID,
-				)
-			}
+    		if params.PendingRegistrationID != pendingRegistrationID {
+        		t.Errorf(
+            		"expected pending registration ID %s, got %s",
+            		pendingRegistrationID,
+            		params.PendingRegistrationID,
+        		)
+    		}
 
-			if params.ContinuationID != continuationID {
-				t.Errorf(
-					"expected continuation ID %s, got %s",
-					continuationID,
-					params.ContinuationID,
-				)
-			}
+    		if params.ContinuationID != continuationID {
+        		t.Errorf(
+            		"expected continuation ID %s, got %s",
+            		continuationID,
+            		params.ContinuationID,
+        		)
+    		}
 
-			if params.Email != "john@example.com" {
-				t.Errorf(
-					"expected email %q, got %q",
-					"john@example.com",
-					params.Email,
-				)
-			}
+    		if params.DisplayName != input.DisplayName {
+        		t.Errorf(
+            		"expected display name %q, got %q",
+            		input.DisplayName,
+            		params.DisplayName,
+        		)
+    		}
 
-			if params.DisplayName != input.DisplayName {
-				t.Errorf(
-					"expected display name %q, got %q",
-					input.DisplayName,
-					params.DisplayName,
-				)
-			}
+    		if !params.EmailVerifiedAt.Valid {
+        		t.Error("expected email verified at to be valid")
+    		}
 
-			if params.PasswordHash == "" {
-				t.Error("expected password hash to be set")
-			}
+    		if params.EmailVerifiedAt.Time.IsZero() {
+        		t.Error("expected email verified at to be set")
+    		}
 
-			if params.PasswordHash == input.Password {
-				t.Error("expected password to be hashed")
-			}
-
-			if !params.EmailVerifiedAt.Valid {
-				t.Error("expected email verified at to be valid")
-			}
-
-			if !params.EmailVerifiedAt.Time.After(testStartedAt) {
-				t.Errorf(
-					"expected email verified at after test start, got %v",
-					params.EmailVerifiedAt.Time,
-				)
-			}
-
-			return registrationdb.CreateUserRow{
-				ID:          userID,
-				Email:       "john@example.com",
-				DisplayName: input.DisplayName,
-			}, nil
+    		return registrationdb.CreateUserRow{
+        		ID:          userID,
+        		Email:       "john@example.com",
+        		DisplayName: input.DisplayName,
+    		}, nil
 		})
 
-	result, err := test.registrationService.FinalizeManualRegistration(ctx, input)
+	sessionResult := session.CreateSessionResult{
+		Session: sessiondb.Session{
+			ID:     sessionID,
+			UserID: userID,
+		},
+		RefreshToken: "refresh-token",
+	}
+
+	test.sessionCreator.
+		EXPECT().
+		CreateSession(ctx, userID, metadata).
+		Return(sessionResult, nil)
+
+	result, err := test.registrationService.FinalizeSocialRegistration(
+		ctx,
+		input,
+		metadata,
+	)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -162,9 +179,29 @@ func TestService_FinalizeManualRegistration(t *testing.T) {
 			result.DisplayName,
 		)
 	}
+
+	if result.Session != sessionResult.Session {
+		t.Errorf(
+			"expected session %+v, got %+v",
+			sessionResult.Session,
+			result.Session,
+		)
+	}
+
+	if result.RefreshToken != sessionResult.RefreshToken {
+		t.Errorf(
+			"expected refresh token %q, got %q",
+			sessionResult.RefreshToken,
+			result.RefreshToken,
+		)
+	}
+
+	if result.AccessToken == "" {
+		t.Fatal("expected access token")
+	}
 }
 
-func TestService_FinalizeManualRegistration_GetRegistrationContinuationError(t *testing.T) {
+func TestService_FinalizeSocialRegistration_GetRegistrationContinuationError(t *testing.T) {
 	test := newTestService(t)
 
 	ctx := context.Background()
@@ -185,13 +222,13 @@ func TestService_FinalizeManualRegistration_GetRegistrationContinuationError(t *
 			repositoryErr,
 		)
 
-	_, err := test.registrationService.FinalizeManualRegistration(
+	_, err := test.registrationService.FinalizeSocialRegistration(
 		ctx,
-		registration.FinalizeManualRegistrationInput{
+		registration.FinalizeSocialRegistrationInput{
 			ContinuationToken: continuationToken,
 			DisplayName:       "John Doe",
-			Password:          "password123",
 		},
+		session.SessionMetadata{},
 	)
 
 	if err == nil {
@@ -206,7 +243,7 @@ func TestService_FinalizeManualRegistration_GetRegistrationContinuationError(t *
 	}
 }
 
-func TestService_FinalizeManualRegistration_ValidationError(t *testing.T) {
+func TestService_FinalizeSocialRegistration_ValidationError(t *testing.T) {
 	test := newTestService(t)
 
 	ctx := context.Background()
@@ -237,13 +274,13 @@ func TestService_FinalizeManualRegistration_ValidationError(t *testing.T) {
 			nil,
 		)
 
-	_, err := test.registrationService.FinalizeManualRegistration(
+	_, err := test.registrationService.FinalizeSocialRegistration(
 		ctx,
-		registration.FinalizeManualRegistrationInput{
+		registration.FinalizeSocialRegistrationInput{
 			ContinuationToken: continuationToken,
 			DisplayName:       "John Doe",
-			Password:          "password123",
 		},
+		session.SessionMetadata{},
 	)
 
 	if err == nil {
@@ -269,7 +306,7 @@ func TestService_FinalizeManualRegistration_ValidationError(t *testing.T) {
 	}
 }
 
-func TestService_FinalizeManualRegistration_InvalidRegistrationType(t *testing.T) {
+func TestService_FinalizeSocialRegistration_InvalidRegistrationType(t *testing.T) {
 	test := newTestService(t)
 
 	ctx := context.Background()
@@ -284,7 +321,7 @@ func TestService_FinalizeManualRegistration_InvalidRegistrationType(t *testing.T
 				ID:                    uuid.New(),
 				PendingRegistrationID: uuid.New(),
 				Email:                 "john@example.com",
-				RegistrationType:      "social",
+				RegistrationType:     string(registration.RegistrationTypeManual),
 				ExpiresAt: pgtype.Timestamptz{
 					Time:  time.Now().Add(15 * time.Minute),
 					Valid: true,
@@ -303,13 +340,13 @@ func TestService_FinalizeManualRegistration_InvalidRegistrationType(t *testing.T
 			nil,
 		)
 
-	_, err := test.registrationService.FinalizeManualRegistration(
+	_, err := test.registrationService.FinalizeSocialRegistration(
 		ctx,
-		registration.FinalizeManualRegistrationInput{
+		registration.FinalizeSocialRegistrationInput{
 			ContinuationToken: continuationToken,
 			DisplayName:       "John Doe",
-			Password:          "password123",
 		},
+		session.SessionMetadata{},
 	)
 
 	if err == nil {
@@ -335,7 +372,7 @@ func TestService_FinalizeManualRegistration_InvalidRegistrationType(t *testing.T
 	}
 }
 
-func TestService_FinalizeManualRegistration_RepositoryError(t *testing.T) {
+func TestService_FinalizeSocialRegistration_RepositoryError(t *testing.T) {
 	test := newTestService(t)
 
 	ctx := context.Background()
@@ -353,7 +390,7 @@ func TestService_FinalizeManualRegistration_RepositoryError(t *testing.T) {
 				ID:                    continuationID,
 				PendingRegistrationID: pendingRegistrationID,
 				Email:                 "john@example.com",
-				RegistrationType:      string(registration.RegistrationTypeManual),
+				RegistrationType:     string(registration.RegistrationTypeSocial),
 				ExpiresAt: pgtype.Timestamptz{
 					Time:  time.Now().Add(15 * time.Minute),
 					Valid: true,
@@ -378,7 +415,7 @@ func TestService_FinalizeManualRegistration_RepositoryError(t *testing.T) {
 
 	test.repository.
 		EXPECT().
-		FinalizeManualRegistration(
+		FinalizeSocialRegistration(
 			ctx,
 			gomock.Any(),
 		).
@@ -387,13 +424,13 @@ func TestService_FinalizeManualRegistration_RepositoryError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := test.registrationService.FinalizeManualRegistration(
+	_, err := test.registrationService.FinalizeSocialRegistration(
 		ctx,
-		registration.FinalizeManualRegistrationInput{
+		registration.FinalizeSocialRegistrationInput{
 			ContinuationToken: continuationToken,
 			DisplayName:       "John Doe",
-			Password:          "password123",
 		},
+		session.SessionMetadata{},
 	)
 
 	if err == nil {
@@ -403,6 +440,91 @@ func TestService_FinalizeManualRegistration_RepositoryError(t *testing.T) {
 	if !errors.Is(err, repositoryErr) {
 		t.Fatalf(
 			"expected repository error, got %v",
+			err,
+		)
+	}
+}
+
+func TestService_FinalizeSocialRegistration_SessionCreationError(t *testing.T) {
+	test := newTestService(t)
+
+	ctx := context.Background()
+
+	continuationToken := "test-continuation-token"
+	tokenHash := security.HashToken(continuationToken)
+
+	continuationID := uuid.New()
+	pendingRegistrationID := uuid.New()
+	userID := uuid.New()
+
+	metadata := session.SessionMetadata{}
+
+	test.repository.
+		EXPECT().
+		GetRegistrationContinuation(ctx, tokenHash).
+		Return(
+			registrationdb.GetRegistrationContinuationRow{
+				ID:                    continuationID,
+				PendingRegistrationID: pendingRegistrationID,
+				Email:                 "john@example.com",
+				RegistrationType:     string(registration.RegistrationTypeSocial),
+				ExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(15 * time.Minute),
+					Valid: true,
+				},
+				ConsumedAt: pgtype.Timestamptz{
+					Valid: false,
+				},
+				RegistrationStatus: string(
+					registration.PendingRegistrationPending,
+				),
+				RegistrationExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(7 * 24 * time.Hour),
+					Valid: true,
+				},
+			},
+			nil,
+		)
+
+	test.repository.
+		EXPECT().
+		FinalizeSocialRegistration(
+			ctx,
+			gomock.Any(),
+		).
+		Return(
+			registrationdb.CreateUserRow{
+				ID:          userID,
+				Email:       "john@example.com",
+				DisplayName: "John Doe",
+			},
+			nil,
+		)
+
+	expectedErr := errors.New("session creation failed")
+
+	test.sessionCreator.
+		EXPECT().
+		CreateSession(ctx, userID, metadata).
+		Return(session.CreateSessionResult{}, expectedErr)
+
+	_, err := test.registrationService.FinalizeSocialRegistration(
+		ctx,
+		registration.FinalizeSocialRegistrationInput{
+			ContinuationToken: continuationToken,
+			DisplayName:       "John Doe",
+		},
+		metadata,
+	)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf(
+			"expected error %v, got %v",
+			expectedErr,
 			err,
 		)
 	}

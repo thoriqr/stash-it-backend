@@ -13,25 +13,11 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestService_CreatePIN(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -39,7 +25,7 @@ func TestService_CreatePIN(t *testing.T) {
 	testStartedAt := time.Now()
 	registrationExpiresAt := testStartedAt.Add(7 * 24 * time.Hour)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -55,7 +41,7 @@ func TestService_CreatePIN(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		IssueVerificationCode(
 			ctx,
@@ -99,7 +85,7 @@ func TestService_CreatePIN(t *testing.T) {
 			}, nil
 		})
 
-	result, err := service.CreatePIN(
+	result, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -118,19 +104,7 @@ func TestService_CreatePIN(t *testing.T) {
 }
 
 func TestService_CreatePIN_GetVerificationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -139,7 +113,7 @@ func TestService_CreatePIN_GetVerificationError(t *testing.T) {
 		errors.New("verification not found"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -147,7 +121,7 @@ func TestService_CreatePIN_GetVerificationError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.CreatePIN(
+	_, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -165,24 +139,12 @@ func TestService_CreatePIN_GetVerificationError(t *testing.T) {
 }
 
 func TestService_CreatePIN_RegistrationExpired(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -198,7 +160,7 @@ func TestService_CreatePIN_RegistrationExpired(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.CreatePIN(
+	_, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -227,24 +189,12 @@ func TestService_CreatePIN_RegistrationExpired(t *testing.T) {
 }
 
 func TestService_CreatePIN_VerificationNotPending(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -260,7 +210,7 @@ func TestService_CreatePIN_VerificationNotPending(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.CreatePIN(
+	_, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -289,24 +239,12 @@ func TestService_CreatePIN_VerificationNotPending(t *testing.T) {
 }
 
 func TestService_CreatePIN_RegistrationNotPending(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -322,7 +260,7 @@ func TestService_CreatePIN_RegistrationNotPending(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.CreatePIN(
+	_, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)
@@ -351,24 +289,12 @@ func TestService_CreatePIN_RegistrationNotPending(t *testing.T) {
 }
 
 func TestService_CreatePIN_IssueVerificationCodeError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -388,7 +314,7 @@ func TestService_CreatePIN_IssueVerificationCodeError(t *testing.T) {
 		errors.New("database connection failed"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		IssueVerificationCode(
 			ctx,
@@ -399,7 +325,7 @@ func TestService_CreatePIN_IssueVerificationCodeError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.CreatePIN(
+	_, err := test.registrationService.CreatePIN(
 		ctx,
 		verificationID,
 	)

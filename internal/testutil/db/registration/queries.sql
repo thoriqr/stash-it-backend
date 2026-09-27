@@ -3,7 +3,14 @@ TRUNCATE TABLE
     verification_codes,
     verification_requests,
     registration_continuations,
-    pending_registrations;
+    pending_social_identities,
+    pending_registrations,
+    auth_identities,
+    password_credentials,
+    refresh_tokens,
+    sessions,
+    users
+CASCADE;
 
 -- name: GetRegistrationState :one
 SELECT
@@ -145,3 +152,96 @@ ORDER BY pr.created_at, pr.id;
 UPDATE verification_requests
 SET last_sent_at = NOW() - INTERVAL '1 day'
 WHERE id = sqlc.arg(id);
+
+-- name: CreateSocialRegistrationContinuation :one
+WITH registration AS (
+    INSERT INTO pending_registrations (
+        email,
+        registration_type,
+        status,
+        expires_at
+    ) VALUES (
+        sqlc.arg(email),
+        'social',
+        'pending',
+        NOW() + INTERVAL '7 days'
+    )
+    RETURNING id
+),
+social_identity AS (
+    INSERT INTO pending_social_identities (
+        pending_registration_id,
+        provider,
+        provider_subject,
+        email_snapshot,
+        display_name_snapshot
+    )
+    SELECT
+        id,
+        sqlc.arg(provider),
+        sqlc.arg(provider_subject),
+        sqlc.arg(email_snapshot),
+        sqlc.arg(display_name_snapshot)
+    FROM registration
+)
+INSERT INTO registration_continuations (
+    pending_registration_id,
+    token_hash,
+    expires_at
+)
+SELECT
+    id,
+    sqlc.arg(token_hash),
+    NOW() + INTERVAL '15 minutes'
+FROM registration
+RETURNING
+    id,
+    pending_registration_id,
+    token_hash,
+    expires_at,
+    consumed_at,
+    created_at;
+
+-- name: GetFinalizedSocialRegistrationState :one
+SELECT
+    u.id AS user_id,
+    u.email,
+    u.display_name,
+    u.email_verified_at,
+    ai.id AS auth_identity_id,
+    ai.provider,
+    ai.provider_subject,
+    ai.email_snapshot,
+    ai.display_name_snapshot,
+    pr.status AS registration_status,
+    rc.consumed_at
+FROM users u
+JOIN auth_identities ai
+    ON ai.user_id = u.id
+JOIN pending_registrations pr
+    ON pr.email = u.email
+JOIN registration_continuations rc
+    ON rc.pending_registration_id = pr.id
+WHERE u.email = sqlc.arg(email);
+
+-- name: CountUserSessions :one
+SELECT COUNT(*) AS count
+FROM sessions
+WHERE user_id = sqlc.arg(user_id)
+  AND revoked_at IS NULL;
+
+-- name: CreateExistingAuthIdentity :exec
+INSERT INTO auth_identities (
+    user_id,
+    provider,
+    provider_subject,
+    email_snapshot,
+    display_name_snapshot
+)
+VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(provider),
+    sqlc.arg(provider_subject),
+    sqlc.arg(email_snapshot),
+    sqlc.arg(display_name_snapshot)
+);

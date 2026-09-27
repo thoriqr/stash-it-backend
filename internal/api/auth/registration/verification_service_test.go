@@ -13,25 +13,12 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestService_GetVerification(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -40,7 +27,7 @@ func TestService_GetVerification(t *testing.T) {
 	registrationExpiresAt := testStartedAt.Add(7 * 24 * time.Hour)
 	lastSentAt := testStartedAt
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -60,7 +47,7 @@ func TestService_GetVerification(t *testing.T) {
 			nil,
 		)
 
-	result, err := service.GetVerification(ctx, verificationID)
+	result, err := test.registrationService.GetVerification(ctx, verificationID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -103,24 +90,12 @@ func TestService_GetVerification(t *testing.T) {
 }
 
 func TestService_GetVerification_ValidationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -136,7 +111,7 @@ func TestService_GetVerification_ValidationError(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.GetVerification(ctx, verificationID)
+	_, err := test.registrationService.GetVerification(ctx, verificationID)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -162,24 +137,12 @@ func TestService_GetVerification_ValidationError(t *testing.T) {
 }
 
 func TestService_GetVerification_LastSentAtUnavailable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -198,7 +161,7 @@ func TestService_GetVerification_LastSentAtUnavailable(t *testing.T) {
 			nil,
 		)
 
-	result, err := service.GetVerification(ctx, verificationID)
+	result, err := test.registrationService.GetVerification(ctx, verificationID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -209,19 +172,7 @@ func TestService_GetVerification_LastSentAtUnavailable(t *testing.T) {
 }
 
 func TestService_GetVerification_RepositoryError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -230,7 +181,7 @@ func TestService_GetVerification_RepositoryError(t *testing.T) {
 		errors.New("database connection failed"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -238,7 +189,7 @@ func TestService_GetVerification_RepositoryError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.GetVerification(ctx, verificationID)
+	_, err := test.registrationService.GetVerification(ctx, verificationID)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -252,19 +203,7 @@ func TestService_GetVerification_RepositoryError(t *testing.T) {
 }
 
 func TestService_VerifyRegistration(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -272,14 +211,14 @@ func TestService_VerifyRegistration(t *testing.T) {
 	verificationCodeID := uuid.New()
 
 	pin := "123456"
-	codeHash := verificationCodeHasher.Hash(pin)
+	codeHash := test.verificationCodeHasher.Hash(pin)
 
 	testStartedAt := time.Now()
 	registrationExpiresAt := testStartedAt.Add(7 * 24 * time.Hour)
 
 	var continuationTokenHash string
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -298,7 +237,7 @@ func TestService_VerifyRegistration(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -314,7 +253,7 @@ func TestService_VerifyRegistration(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		CompleteVerification(
 			ctx,
@@ -368,7 +307,7 @@ func TestService_VerifyRegistration(t *testing.T) {
 			return registrationdb.RegistrationContinuation{}, nil
 		})
 
-	result, err := service.VerifyRegistration(
+	result, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		pin,
@@ -395,19 +334,7 @@ func TestService_VerifyRegistration(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_GetVerificationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -416,7 +343,7 @@ func TestService_VerifyRegistration_GetVerificationError(t *testing.T) {
 		errors.New("verification not found"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -424,7 +351,7 @@ func TestService_VerifyRegistration_GetVerificationError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"123456",
@@ -443,24 +370,12 @@ func TestService_VerifyRegistration_GetVerificationError(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_ValidationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -476,7 +391,7 @@ func TestService_VerifyRegistration_ValidationError(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"123456",
@@ -506,24 +421,12 @@ func TestService_VerifyRegistration_ValidationError(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_GetActiveVerificationCodeError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -545,7 +448,7 @@ func TestService_VerifyRegistration_GetActiveVerificationCodeError(t *testing.T)
 		nil,
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -557,7 +460,7 @@ func TestService_VerifyRegistration_GetActiveVerificationCodeError(t *testing.T)
 			repositoryErr,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"123456",
@@ -576,28 +479,16 @@ func TestService_VerifyRegistration_GetActiveVerificationCodeError(t *testing.T)
 }
 
 func TestService_VerifyRegistration_InvalidPIN(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 	verificationCodeID := uuid.New()
 
 	correctPIN := "123456"
-	codeHash := verificationCodeHasher.Hash(correctPIN)
+	codeHash := test.verificationCodeHasher.Hash(correctPIN)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -613,7 +504,7 @@ func TestService_VerifyRegistration_InvalidPIN(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -629,7 +520,7 @@ func TestService_VerifyRegistration_InvalidPIN(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		IncrementVerificationCodeAttempts(
 			ctx,
@@ -641,7 +532,7 @@ func TestService_VerifyRegistration_InvalidPIN(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"654321",
@@ -671,27 +562,15 @@ func TestService_VerifyRegistration_InvalidPIN(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_AttemptsExceeded(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 	verificationCodeID := uuid.New()
 
-	codeHash := verificationCodeHasher.Hash("123456")
+	codeHash := test.verificationCodeHasher.Hash("123456")
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -707,7 +586,7 @@ func TestService_VerifyRegistration_AttemptsExceeded(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -723,7 +602,7 @@ func TestService_VerifyRegistration_AttemptsExceeded(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		IncrementVerificationCodeAttempts(
 			ctx,
@@ -735,7 +614,7 @@ func TestService_VerifyRegistration_AttemptsExceeded(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"654321",
@@ -765,27 +644,15 @@ func TestService_VerifyRegistration_AttemptsExceeded(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_IncrementAttemptsError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 	verificationCodeID := uuid.New()
 
-	codeHash := verificationCodeHasher.Hash("123456")
+	codeHash := test.verificationCodeHasher.Hash("123456")
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -801,7 +668,7 @@ func TestService_VerifyRegistration_IncrementAttemptsError(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -821,7 +688,7 @@ func TestService_VerifyRegistration_IncrementAttemptsError(t *testing.T) {
 		errors.New("database connection failed"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		IncrementVerificationCodeAttempts(
 			ctx,
@@ -833,7 +700,7 @@ func TestService_VerifyRegistration_IncrementAttemptsError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		"654321",
@@ -852,19 +719,7 @@ func TestService_VerifyRegistration_IncrementAttemptsError(t *testing.T) {
 }
 
 func TestService_VerifyRegistration_CompleteVerificationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
@@ -872,9 +727,9 @@ func TestService_VerifyRegistration_CompleteVerificationError(t *testing.T) {
 	verificationCodeID := uuid.New()
 
 	pin := "123456"
-	codeHash := verificationCodeHasher.Hash(pin)
+	codeHash := test.verificationCodeHasher.Hash(pin)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetVerification(ctx, verificationID).
 		Return(
@@ -891,7 +746,7 @@ func TestService_VerifyRegistration_CompleteVerificationError(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetActiveVerificationCode(
 			ctx,
@@ -911,7 +766,7 @@ func TestService_VerifyRegistration_CompleteVerificationError(t *testing.T) {
 		errors.New("database connection failed"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		CompleteVerification(
 			ctx,
@@ -922,7 +777,7 @@ func TestService_VerifyRegistration_CompleteVerificationError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.VerifyRegistration(
+	_, err := test.registrationService.VerifyRegistration(
 		ctx,
 		verificationID,
 		pin,

@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
+	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
@@ -60,22 +62,29 @@ type RegistrationService interface {
 		FinalizeSocialRegistration(
 			ctx context.Context,
 			params FinalizeSocialRegistrationInput,
+			metadata session.SessionMetadata,
 		) (FinalizeSocialRegistrationResult, error)
 }
 
 type service struct {
-	repository             Repository
-	passwordHasher         *security.PasswordHasher
-	verificationCodeHasher *security.VerificationCodeHasher
+    repository             Repository
+    sessionService         session.SessionCreator
+    accessTokenGenerator   *security.AccessTokenGenerator
+    passwordHasher         *security.PasswordHasher
+    verificationCodeHasher *security.VerificationCodeHasher
 }
 
 func NewService(
     repository Repository,
+    sessionService session.SessionCreator,
+		accessTokenGenerator *security.AccessTokenGenerator,
     passwordHasher *security.PasswordHasher,
     verificationCodeHasher *security.VerificationCodeHasher,
 ) *service {
     return &service{
         repository:             repository,
+        sessionService:         sessionService,
+				accessTokenGenerator:   accessTokenGenerator,
         passwordHasher:         passwordHasher,
         verificationCodeHasher: verificationCodeHasher,
     }
@@ -546,14 +555,18 @@ type FinalizeSocialRegistrationInput struct {
 }
 
 type FinalizeSocialRegistrationResult struct {
-	UserID      uuid.UUID
-	Email       string
-	DisplayName string
+    UserID       uuid.UUID
+    Email        string
+    DisplayName  string
+    Session      sessiondb.Session
+    RefreshToken string
+    AccessToken  string
 }
 
 func (s *service) FinalizeSocialRegistration(
 	ctx context.Context,
 	params FinalizeSocialRegistrationInput,
+	metadata session.SessionMetadata,
 ) (FinalizeSocialRegistrationResult, error) {
 	tokenHash := security.HashToken(params.ContinuationToken)
 
@@ -595,9 +608,30 @@ func (s *service) FinalizeSocialRegistration(
 		return FinalizeSocialRegistrationResult{}, err
 	}
 
+	sessionResult, err := s.sessionService.CreateSession(
+    ctx,
+    user.ID,
+    metadata,
+	)
+	if err != nil {
+    return FinalizeSocialRegistrationResult{}, err
+	}
+
+	accessToken, err := s.accessTokenGenerator.Generate(
+    user.ID,
+    sessionResult.Session.ID,
+    session.AccessTokenLifetime,
+)
+	if err != nil {
+    return FinalizeSocialRegistrationResult{}, apperror.Internal(err)
+	}
+
 	return FinalizeSocialRegistrationResult{
-		UserID:      user.ID,
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
+    UserID:       user.ID,
+    Email:        user.Email,
+    DisplayName:  user.DisplayName,
+    Session:      sessionResult.Session,
+    RefreshToken: sessionResult.RefreshToken,
+    AccessToken:  accessToken,
 	}, nil
 }

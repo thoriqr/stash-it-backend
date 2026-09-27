@@ -30,3 +30,17 @@ func mapGetVerificationResponse(
 		ResendInSeconds: resendInSeconds,
 	}
 }
+
+func mapFinalizeSocialRegistrationResponse(
+	result FinalizeSocialRegistrationResult,
+) FinalizeSocialRegistrationResponse {
+	return FinalizeSocialRegistrationResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		User: FinalizeSocialRegistrationUser{
+			ID:          result.UserID.String(),
+			Email:       result.Email,
+			DisplayName: result.DisplayName,
+		},
+	}
+}

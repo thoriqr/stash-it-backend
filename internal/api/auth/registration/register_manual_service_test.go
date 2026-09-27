@@ -11,27 +11,18 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
-	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestService_RegisterManual(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	service := registration.NewService(
-		repository,
-		security.NewPasswordHasher(),
-		security.NewVerificationCodeHasher([]byte("test-secret")),
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
 	testStartedAt := time.Now()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetCompletedRegistrationByEmail(
 			ctx,
@@ -42,7 +33,7 @@ func TestService_RegisterManual(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		CreateManualRegistration(
 			ctx,
@@ -84,7 +75,7 @@ func TestService_RegisterManual(t *testing.T) {
 			}, nil
 		})
 
-	result, err := service.RegisterManual(
+	result, err := test.registrationService.RegisterManual(
 		ctx,
 		"  Test@Example.COM  ",
 	)
@@ -106,19 +97,12 @@ func TestService_RegisterManual(t *testing.T) {
 }
 
 func TestService_RegisterManual_AlreadyPending(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	service := registration.NewService(
-		repository,
-		security.NewPasswordHasher(),
-		security.NewVerificationCodeHasher([]byte("test-secret")),
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetCompletedRegistrationByEmail(
 			ctx,
@@ -129,7 +113,7 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		CreateManualRegistration(
 			ctx,
@@ -145,7 +129,7 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 			nil,
 		)
 
-	result, err := service.RegisterManual(
+	result, err := test.registrationService.RegisterManual(
 		ctx,
 		"  Test@Example.COM  ",
 	)
@@ -167,19 +151,12 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 }
 
 func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	service := registration.NewService(
-		repository,
-		security.NewPasswordHasher(),
-		security.NewVerificationCodeHasher([]byte("test-secret")),
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	registrationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetCompletedRegistrationByEmail(
 			ctx,
@@ -190,7 +167,7 @@ func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.RegisterManual(
+	_, err := test.registrationService.RegisterManual(
 		ctx,
 		"  Test@Example.COM  ",
 	)
@@ -217,21 +194,14 @@ func TestService_RegisterManual_AlreadyCompleted(t *testing.T) {
 }
 
 func TestService_RegisterManual_RepositoryError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	service := registration.NewService(
-		repository,
-		security.NewPasswordHasher(),
-		security.NewVerificationCodeHasher([]byte("test-secret")),
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	repositoryErr := apperror.Internal(
 		errors.New("database connection failed"),
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetCompletedRegistrationByEmail(
 			ctx,
@@ -242,7 +212,7 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 			repositoryErr,
 		)
 
-	_, err := service.RegisterManual(
+	_, err := test.registrationService.RegisterManual(
 		ctx,
 		"  Test@Example.COM  ",
 	)
@@ -259,19 +229,12 @@ func TestService_RegisterManual_RepositoryError(t *testing.T) {
 }
 
 func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	service := registration.NewService(
-		repository,
-		security.NewPasswordHasher(),
-		security.NewVerificationCodeHasher([]byte("test-secret")),
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	verificationID := uuid.New()
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetCompletedRegistrationByEmail(
 			ctx,
@@ -282,7 +245,7 @@ func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.
 			nil,
 		)
 
-	repository.
+	test.repository.
 		EXPECT().
 		CreateManualRegistration(
 			ctx,
@@ -298,7 +261,7 @@ func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.
 			nil,
 		)
 
-	result, err := service.RegisterManual(
+	result, err := test.registrationService.RegisterManual(
 		ctx,
 		"test@example.com",
 	)

@@ -8,29 +8,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestService_GetRegistrationContinuation(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	token := "test-continuation-token"
@@ -39,7 +25,7 @@ func TestService_GetRegistrationContinuation(t *testing.T) {
 	testStartedAt := time.Now()
 	expiresAt := testStartedAt.Add(15 * time.Minute)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetRegistrationContinuation(ctx, tokenHash).
 		Return(
@@ -64,7 +50,7 @@ func TestService_GetRegistrationContinuation(t *testing.T) {
 			nil,
 		)
 
-	result, err := service.GetRegistrationContinuation(ctx, token)
+	result, err := test.registrationService.GetRegistrationContinuation(ctx, token)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -99,19 +85,7 @@ func TestService_GetRegistrationContinuation(t *testing.T) {
 }
 
 func TestService_GetRegistrationContinuation_GetRegistrationContinuationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	token := "test-continuation-token"
@@ -123,7 +97,7 @@ func TestService_GetRegistrationContinuation_GetRegistrationContinuationError(t 
 		nil,
 	)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetRegistrationContinuation(ctx, tokenHash).
 		Return(
@@ -131,7 +105,7 @@ func TestService_GetRegistrationContinuation_GetRegistrationContinuationError(t 
 			repositoryErr,
 		)
 
-	_, err := service.GetRegistrationContinuation(ctx, token)
+	_, err := test.registrationService.GetRegistrationContinuation(ctx, token)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -145,25 +119,13 @@ func TestService_GetRegistrationContinuation_GetRegistrationContinuationError(t 
 }
 
 func TestService_GetRegistrationContinuation_ValidationError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-
-	passwordHasher := security.NewPasswordHasher()
-	verificationCodeHasher := security.NewVerificationCodeHasher(
-		[]byte("test-secret"),
-	)
-
-	service := registration.NewService(
-		repository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
+	test := newTestService(t)
 
 	ctx := context.Background()
 	token := "test-continuation-token"
 	tokenHash := security.HashToken(token)
 
-	repository.
+	test.repository.
 		EXPECT().
 		GetRegistrationContinuation(ctx, tokenHash).
 		Return(
@@ -187,7 +149,7 @@ func TestService_GetRegistrationContinuation_ValidationError(t *testing.T) {
 			nil,
 		)
 
-	_, err := service.GetRegistrationContinuation(ctx, token)
+	_, err := test.registrationService.GetRegistrationContinuation(ctx, token)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

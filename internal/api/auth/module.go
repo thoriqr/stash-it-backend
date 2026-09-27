@@ -25,7 +25,6 @@ func RegisterModule(
 	authRouter := app.Group("/auth")
 
 	// Shared security dependencies
-
 	passwordHasher := security.NewPasswordHasher()
 
 	verificationCodeHasher := security.NewVerificationCodeHasher(
@@ -40,32 +39,7 @@ func RegisterModule(
 	[]byte(cfg.AccessTokenSecret),
 )
 
-	// Registration
-
-	registrationQueries := registrationdb.New(pool)
-
-	registrationRepository := registration.NewRepository(
-		pool,
-		registrationQueries,
-	)
-
-	registrationService := registration.NewService(
-		registrationRepository,
-		passwordHasher,
-		verificationCodeHasher,
-	)
-
-	registrationHandler := registration.NewHandler(
-		registrationService,
-	)
-
-	registration.Routes(
-		authRouter,
-		registrationHandler,
-	)
-
 	// Session
-
 	sessionQueries := sessiondb.New(pool)
 
 	sessionRepository := session.NewRepository(
@@ -88,8 +62,32 @@ func RegisterModule(
 		accessTokenVerifier,
 	)
 
-// Login
+	// Registration
+	registrationQueries := registrationdb.New(pool)
 
+	registrationRepository := registration.NewRepository(
+		pool,
+		registrationQueries,
+	)
+
+	registrationService := registration.NewService(
+		registrationRepository,
+		sessionService,
+		accessTokenGenerator,
+		passwordHasher,
+		verificationCodeHasher,
+	)
+
+	registrationHandler := registration.NewHandler(
+		registrationService,
+	)
+
+	registration.Routes(
+		authRouter,
+		registrationHandler,
+	)
+
+	// Login
 	loginQueries := logindb.New(pool)
 
 	loginRepository := login.NewRepository(
@@ -116,7 +114,6 @@ func RegisterModule(
 	)
 
 	// Password reset
-
 	passwordResetQueries := passwordresetdb.New(pool)
 
 	passwordResetRepository := passwordreset.NewRepository(

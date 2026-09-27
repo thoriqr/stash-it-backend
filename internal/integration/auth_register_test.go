@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
@@ -751,4 +752,262 @@ func TestRegisterManual_ExpiredPendingIsReconciled(t *testing.T) {
 	require.Equal(t, "pending", history[1].Status)
 	require.Equal(t, body.Data.VerificationID, history[1].VerificationID)
 	require.Equal(t, int32(0), history[1].PinIssuedCount)
+}
+
+func TestFinalizeSocialRegistration_Success(t *testing.T) {
+	ctx := context.Background()
+
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	email := "google@example.com"
+	provider := "google"
+	providerSubject := "google-subject-123"
+	socialDisplayName := "Google User"
+	displayName := "Test User"
+
+	continuationToken := "test-social-continuation-token"
+	tokenHash := security.HashToken(continuationToken)
+
+	_, err := db.CreateSocialRegistrationContinuation(
+		ctx,
+		registrationtestdb.CreateSocialRegistrationContinuationParams{
+			TokenHash:       tokenHash,
+			Email:           email,
+			Provider:        provider,
+			ProviderSubject: providerSubject,
+			EmailSnapshot: pgtype.Text{
+				String: email,
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: socialDisplayName,
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "Test User"
+		}`),
+	)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Continuation", continuationToken)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body struct {
+		Data struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			User         struct {
+				ID          string `json:"id"`
+				Email       string `json:"email"`
+				DisplayName string `json:"display_name"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	require.NotEmpty(t, body.Data.AccessToken)
+	require.NotEmpty(t, body.Data.RefreshToken)
+
+	require.NotEmpty(t, body.Data.User.ID)
+	require.Equal(t, email, body.Data.User.Email)
+	require.Equal(t, displayName, body.Data.User.DisplayName)
+
+	userID, err := uuid.Parse(body.Data.User.ID)
+	require.NoError(t, err)
+
+	state, err := db.GetFinalizedSocialRegistrationState(ctx, email)
+	require.NoError(t, err)
+
+	require.Equal(t, userID, state.UserID)
+	require.Equal(t, email, state.Email)
+	require.Equal(t, displayName, state.DisplayName)
+
+	require.True(t, state.EmailVerifiedAt.Valid)
+
+	require.NotEqual(t, uuid.Nil, state.AuthIdentityID)
+	require.Equal(t, provider, state.Provider)
+	require.Equal(t, providerSubject, state.ProviderSubject)
+
+	require.True(t, state.EmailSnapshot.Valid)
+	require.Equal(t, email, state.EmailSnapshot.String)
+
+	require.True(t, state.DisplayNameSnapshot.Valid)
+	require.Equal(
+		t,
+		socialDisplayName,
+		state.DisplayNameSnapshot.String,
+	)
+
+	require.Equal(
+		t,
+		"completed",
+		state.RegistrationStatus,
+	)
+
+	require.True(t, state.ConsumedAt.Valid)
+
+	sessionCount, err := db.CountUserSessions(ctx, userID)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(1), sessionCount)
+}
+
+func TestFinalizeSocialRegistration_UserAlreadyExists(t *testing.T) {
+	ctx := context.Background()
+
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	email := "existing-social@example.com"
+	token := "test-social-continuation-token"
+	tokenHash := security.HashToken(token)
+
+	_, err := db.CreateSocialRegistrationContinuation(
+		ctx,
+		registrationtestdb.CreateSocialRegistrationContinuationParams{
+			TokenHash:       tokenHash,
+			Email:           email,
+			Provider:        "google",
+			ProviderSubject: "google-subject-123",
+			EmailSnapshot: pgtype.Text{
+				String: email,
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: "Google User",
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	_, err = db.CreateExistingUser(ctx, email)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "New User"
+		}`),
+	)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Continuation", token)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	require.Equal(
+		t,
+		registration.CodeUserAlreadyExists,
+		body.Error.Code,
+	)
+}
+
+func TestFinalizeSocialRegistration_AuthIdentityAlreadyExists(t *testing.T) {
+	ctx := context.Background()
+
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	email := "social@example.com"
+	token := "test-social-continuation-token"
+	tokenHash := security.HashToken(token)
+
+	provider := "google"
+	providerSubject := "google-subject-123"
+
+	_, err := db.CreateSocialRegistrationContinuation(
+		ctx,
+		registrationtestdb.CreateSocialRegistrationContinuationParams{
+			TokenHash:       tokenHash,
+			Email:            email,
+			Provider:         provider,
+			ProviderSubject: providerSubject,
+			EmailSnapshot: pgtype.Text{
+				String: email,
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: "Google User",
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	existingUserID, err := db.CreateExistingUser(ctx, "existing@example.com")
+	require.NoError(t, err)
+
+	err = db.CreateExistingAuthIdentity(
+		ctx,
+		registrationtestdb.CreateExistingAuthIdentityParams{
+			UserID:          existingUserID,
+			Provider:        provider,
+			ProviderSubject: providerSubject,
+			EmailSnapshot: pgtype.Text{
+				String: "existing@example.com",
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: "Existing User",
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "New User"
+		}`),
+	)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Continuation", token)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	require.Equal(
+		t,
+		registration.CodeAuthIdentityAlreadyExists,
+		body.Error.Code,
+	)
 }

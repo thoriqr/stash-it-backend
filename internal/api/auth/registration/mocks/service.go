@@ -15,6 +15,7 @@ import (
 
 	uuid "github.com/google/uuid"
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
+	session "github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -184,18 +185,18 @@ func (c *MockRegistrationServiceFinalizeManualRegistrationCall) DoAndReturn(f fu
 }
 
 // FinalizeSocialRegistration mocks base method.
-func (m *MockRegistrationService) FinalizeSocialRegistration(ctx context.Context, params registration.FinalizeSocialRegistrationInput) (registration.FinalizeSocialRegistrationResult, error) {
+func (m *MockRegistrationService) FinalizeSocialRegistration(ctx context.Context, params registration.FinalizeSocialRegistrationInput, metadata session.SessionMetadata) (registration.FinalizeSocialRegistrationResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FinalizeSocialRegistration", ctx, params)
+	ret := m.ctrl.Call(m, "FinalizeSocialRegistration", ctx, params, metadata)
 	ret0, _ := ret[0].(registration.FinalizeSocialRegistrationResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FinalizeSocialRegistration indicates an expected call of FinalizeSocialRegistration.
-func (mr *MockRegistrationServiceMockRecorder) FinalizeSocialRegistration(ctx, params any) *MockRegistrationServiceFinalizeSocialRegistrationCall {
+func (mr *MockRegistrationServiceMockRecorder) FinalizeSocialRegistration(ctx, params, metadata any) *MockRegistrationServiceFinalizeSocialRegistrationCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinalizeSocialRegistration", reflect.TypeOf((*MockRegistrationService)(nil).FinalizeSocialRegistration), ctx, params)
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinalizeSocialRegistration", reflect.TypeOf((*MockRegistrationService)(nil).FinalizeSocialRegistration), ctx, params, metadata)
 	return &MockRegistrationServiceFinalizeSocialRegistrationCall{Call: call}
 }
 
@@ -211,13 +212,13 @@ func (c *MockRegistrationServiceFinalizeSocialRegistrationCall) Return(arg0 regi
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRegistrationServiceFinalizeSocialRegistrationCall) Do(f func(context.Context, registration.FinalizeSocialRegistrationInput) (registration.FinalizeSocialRegistrationResult, error)) *MockRegistrationServiceFinalizeSocialRegistrationCall {
+func (c *MockRegistrationServiceFinalizeSocialRegistrationCall) Do(f func(context.Context, registration.FinalizeSocialRegistrationInput, session.SessionMetadata) (registration.FinalizeSocialRegistrationResult, error)) *MockRegistrationServiceFinalizeSocialRegistrationCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRegistrationServiceFinalizeSocialRegistrationCall) DoAndReturn(f func(context.Context, registration.FinalizeSocialRegistrationInput) (registration.FinalizeSocialRegistrationResult, error)) *MockRegistrationServiceFinalizeSocialRegistrationCall {
+func (c *MockRegistrationServiceFinalizeSocialRegistrationCall) DoAndReturn(f func(context.Context, registration.FinalizeSocialRegistrationInput, session.SessionMetadata) (registration.FinalizeSocialRegistrationResult, error)) *MockRegistrationServiceFinalizeSocialRegistrationCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

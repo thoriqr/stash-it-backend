@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 )
@@ -247,21 +248,24 @@ func (h *Handler) FinalizeSocialRegistration(c fiber.Ctx) error {
 		return err
 	}
 
+	metadata, err := session.ExtractMetadata(c)
+	if err != nil {
+		return err
+	}
+
 	result, err := h.service.FinalizeSocialRegistration(
 		c.Context(),
 		FinalizeSocialRegistrationInput{
 			ContinuationToken: continuationToken,
 			DisplayName:       req.DisplayName,
 		},
+		metadata,
 	)
 	if err != nil {
 		return err
 	}
 
-	response := FinalizeSocialRegistrationResponse{
-		Email:       result.Email,
-		DisplayName: result.DisplayName,
-	}
+	response := mapFinalizeSocialRegistrationResponse(result)
 
 	return httpx.Created(
 		c,

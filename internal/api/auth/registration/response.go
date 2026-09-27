@@ -36,7 +36,14 @@ type FinalizeManualRegistrationResponse struct {
     DisplayName string `json:"display_name"`
 }
 
-type FinalizeSocialRegistrationResponse struct {
+type FinalizeSocialRegistrationUser struct {
+	ID          string `json:"id"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
+}
+
+type FinalizeSocialRegistrationResponse struct {
+	AccessToken  string                          `json:"access_token"`
+	RefreshToken string                          `json:"refresh_token"`
+	User         FinalizeSocialRegistrationUser `json:"user"`
 }
