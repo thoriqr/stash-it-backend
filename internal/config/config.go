@@ -8,14 +8,28 @@ import (
 )
 
 type Config struct {
-  DatabaseURL            string
-  VerificationCodeSecret string
-  AccessTokenSecret      string
-  GoogleClientID         string
+	AppEnv                 string
+	DatabaseURL            string
+	VerificationCodeSecret string
+	AccessTokenSecret      string
+	GoogleClientID         string
 }
 
 func Load() (Config, error) {
-	_ = godotenv.Load()
+	appEnv := os.Getenv("APP_ENV")
+	if appEnv == "" {
+		appEnv = "development"
+	}
+
+	envFile := fmt.Sprintf(".env.%s", appEnv)
+
+	if err := godotenv.Load(envFile); err != nil {
+		return Config{}, fmt.Errorf(
+			"failed to load environment file %q: %w",
+			envFile,
+			err,
+		)
+	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -36,10 +50,11 @@ func Load() (Config, error) {
 
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	if googleClientID == "" {
-    return Config{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
+		return Config{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
 	}
 
 	return Config{
+		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
 		VerificationCodeSecret: verificationCodeSecret,
 		AccessTokenSecret:      accessTokenSecret,

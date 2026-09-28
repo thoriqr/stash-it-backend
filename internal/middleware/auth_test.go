@@ -11,8 +11,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
+	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
+
+func newTestApp(t *testing.T) *fiber.App {
+	t.Helper()
+
+	log, err := logger.New("development")
+	require.NoError(t, err)
+
+	return fiber.New(fiber.Config{
+		ErrorHandler: httpx.NewErrorHandler(log),
+	})
+}
 
 func TestAuth_ValidToken(t *testing.T) {
 	secret := []byte("test-secret")
@@ -25,9 +37,7 @@ func TestAuth_ValidToken(t *testing.T) {
 	token, err := generator.Generate(userID, sessionID, time.Hour)
 	require.NoError(t, err)
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
-	})
+	app := newTestApp(t)
 
 	var receivedClaims security.AccessTokenClaims
 
@@ -58,9 +68,7 @@ func TestAuth_ValidToken(t *testing.T) {
 func TestAuth_InvalidAuthorizationHeader(t *testing.T) {
 	verifier := security.NewAccessTokenVerifier([]byte("test-secret"))
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
-	})
+	app := newTestApp(t)
 
 	app.Get("/protected", Auth(verifier))
 
@@ -84,9 +92,7 @@ func TestAuth_InvalidAuthorizationHeader(t *testing.T) {
 func TestAuth_EmptyBearerToken(t *testing.T) {
 	verifier := security.NewAccessTokenVerifier([]byte("test-secret"))
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
-	})
+	app := newTestApp(t)
 
 	app.Get("/protected", Auth(verifier))
 
@@ -111,9 +117,7 @@ func TestAuth_EmptyBearerToken(t *testing.T) {
 func TestAuth_InvalidAccessToken(t *testing.T) {
 	verifier := security.NewAccessTokenVerifier([]byte("test-secret"))
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
-	})
+	app := newTestApp(t)
 
 	app.Get("/protected", Auth(verifier))
 
@@ -147,9 +151,7 @@ func TestAuth_ExpiredAccessToken(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.ErrorHandler,
-	})
+	app := newTestApp(t)
 
 	app.Get("/protected", Auth(verifier))
 

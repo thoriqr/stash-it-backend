@@ -13,6 +13,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
+	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -25,6 +26,13 @@ func main() {
 		return
 	}
 
+	log, err := logger.New(cfg.AppEnv)
+	if err != nil {
+		fmt.Println("Logger error:", err)
+		return
+	}
+	defer log.Sync()
+
 	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fmt.Println("Database error:", err)
@@ -35,7 +43,7 @@ func main() {
 	validate := validation.New()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler:   httpx.ErrorHandler,
+		ErrorHandler:  httpx.NewErrorHandler(log),
 		StructValidator: validate,
 	})
 

@@ -11,6 +11,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
+	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -31,8 +32,13 @@ func (f *fakeGoogleTokenVerifier) Verify(
 func NewApp(pool *pgxpool.Pool) *fiber.App {
 	validate := validation.New()
 
+	log, err := logger.New("development")
+	if err != nil {
+		panic(err)
+	}
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler:   httpx.ErrorHandler,
+		ErrorHandler:   httpx.NewErrorHandler(log),
 		StructValidator: validate,
 	})
 
