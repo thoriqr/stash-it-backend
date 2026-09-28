@@ -34,10 +34,10 @@ type Repository interface {
 		id uuid.UUID,
 	) (passwordresetdb.GetVerificationRow, error)
 
-	ResendVerification(
-		ctx context.Context,
-		params ResendVerificationParams,
-	) (passwordresetdb.VerificationRequest, error)
+	IssueVerificationCode(
+    ctx context.Context,
+    params IssueVerificationCodeParams,
+  ) (passwordresetdb.VerificationRequest, error)
 
 	GetActiveVerificationCode(
 		ctx context.Context,
@@ -83,10 +83,8 @@ func NewRepository(
 }
 
 type CreatePasswordResetParams struct {
-	Email          string
-	ResetExpiresAt pgtype.Timestamptz
-	CodeHash       string
-	CodeExpiresAt  pgtype.Timestamptz
+    Email          string
+    ResetExpiresAt pgtype.Timestamptz
 }
 
 func (r *repository) GetUserByEmail(
@@ -182,17 +180,6 @@ func (r *repository) CreatePasswordReset(
 		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
 	}
 
-	_, err = qtx.CreateVerificationCode(
-		ctx,
-		passwordresetdb.CreateVerificationCodeParams{
-			VerificationRequestID: verificationRequest.ID,
-			CodeHash:              params.CodeHash,
-			ExpiresAt:             params.CodeExpiresAt,
-		},
-	)
-	if err != nil {
-		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
-	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
@@ -217,60 +204,58 @@ func (r *repository) GetVerification(
 	return verification, nil
 }
 
-type ResendVerificationParams struct {
-	VerificationID uuid.UUID
-	CodeHash       string
-	CodeExpiresAt  pgtype.Timestamptz
+type IssueVerificationCodeParams struct {
+    VerificationID uuid.UUID
+    CodeHash       string
+    CodeExpiresAt  pgtype.Timestamptz
 }
 
-func (r *repository) ResendVerification(
-	ctx context.Context,
-	params ResendVerificationParams,
+func (r *repository) IssueVerificationCode(
+    ctx context.Context,
+    params IssueVerificationCodeParams,
 ) (passwordresetdb.VerificationRequest, error) {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
-	}
-	defer tx.Rollback(ctx)
+    tx, err := r.db.Begin(ctx)
+    if err != nil {
+        return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+    }
+    defer tx.Rollback(ctx)
 
-	qtx := r.queries.WithTx(tx)
+    qtx := r.queries.WithTx(tx)
 
-	// Invalidate the currently active verification code.
-	if err := qtx.InvalidateVerificationCode(
-		ctx,
-		params.VerificationID,
-	); err != nil {
-		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
-	}
+    if err := qtx.InvalidateVerificationCode(
+        ctx,
+        params.VerificationID,
+    ); err != nil {
+        return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+    }
 
-	// Create the new verification code.
-	_, err = qtx.CreateVerificationCode(
-		ctx,
-		passwordresetdb.CreateVerificationCodeParams{
-			VerificationRequestID: params.VerificationID,
-			CodeHash:              params.CodeHash,
-			ExpiresAt:             params.CodeExpiresAt,
-		},
-	)
-	if err != nil {
-		return passwordresetdb.VerificationRequest{}, mapPasswordResetDBError(err)
-	}
+    _, err = qtx.CreateVerificationCode(
+        ctx,
+        passwordresetdb.CreateVerificationCodeParams{
+            VerificationRequestID: params.VerificationID,
+            CodeHash:              params.CodeHash,
+            ExpiresAt:             params.CodeExpiresAt,
+        },
+    )
+    if err != nil {
+        return passwordresetdb.VerificationRequest{}, mapPasswordResetDBError(err)
+    }
 
-	// Update resend metadata.
-	verificationRequest, err := qtx.UpdateVerificationRequestResend(
-		ctx,
-		params.VerificationID,
-	)
-	if err != nil {
-		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
-	}
+    verificationRequest, err := qtx.UpdateVerificationRequestResend(
+        ctx,
+        params.VerificationID,
+    )
+    if err != nil {
+        return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+    }
 
-	if err := tx.Commit(ctx); err != nil {
-		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
-	}
+    if err := tx.Commit(ctx); err != nil {
+        return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
+    }
 
-	return verificationRequest, nil
+    return verificationRequest, nil
 }
+
 
 func (r *repository) GetActiveVerificationCode(
 	ctx context.Context,

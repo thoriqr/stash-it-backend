@@ -6,72 +6,254 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"go.uber.org/mock/gomock"
 
 	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
 	passwordresetdb "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 func TestService_GetPasswordResetContinuation(t *testing.T) {
 	ctx := context.Background()
-	for _, credential := range []bool{false, true} {
-		t.Run("success", func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			repository := mocks.NewMockRepository(ctrl)
-			token := "token"
-			row := pendingContinuation(uuid.New(), uuid.New(), "user@example.com")
-			row.HasPasswordCredential = credential
-			repository.EXPECT().GetPasswordResetContinuation(ctx, security.HashToken(token)).Return(row, nil)
-			result, err := newService(repository).GetPasswordResetContinuation(ctx, token)
-			if err != nil || result.Email != row.Email || result.HasPasswordCredential != credential {
-				t.Fatalf("unexpected %#v %v", result, err)
-			}
-		})
-	}
-	tests := []struct {
-		name string
-		row  passwordresetdb.GetPasswordResetContinuationRow
-		code string
-	}{{"consumed", func() passwordresetdb.GetPasswordResetContinuationRow {
-		row := pendingContinuation(uuid.New(), uuid.New(), "x")
-		row.ConsumedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return row
-	}(), passwordreset.CodePasswordResetContinuationConsumed}, {"expired", func() passwordresetdb.GetPasswordResetContinuationRow {
-		row := pendingContinuation(uuid.New(), uuid.New(), "x")
-		row.ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
-		return row
-	}(), passwordreset.CodePasswordResetContinuationExpired}, {"reset not pending", func() passwordresetdb.GetPasswordResetContinuationRow {
-		row := pendingContinuation(uuid.New(), uuid.New(), "x")
-		row.PasswordResetStatus = string(passwordreset.PendingPasswordResetCompleted)
-		return row
-	}(), passwordreset.CodePasswordResetNotPending}, {"reset expired", func() passwordresetdb.GetPasswordResetContinuationRow {
-		row := pendingContinuation(uuid.New(), uuid.New(), "x")
-		row.PasswordResetExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
-		return row
-	}(), passwordreset.CodePasswordResetExpired}}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			repository := mocks.NewMockRepository(ctrl)
-			token := uuid.NewString()
-			repository.EXPECT().GetPasswordResetContinuation(ctx, security.HashToken(token)).Return(tt.row, nil)
-			_, err := newService(repository).GetPasswordResetContinuation(ctx, token)
-			if got := apperror.FromError(err).Code; got != tt.code {
-				t.Fatalf("got %s", got)
-			}
-		})
-	}
-	ctrl := gomock.NewController(t)
-	repository := mocks.NewMockRepository(ctrl)
-	token, want := "bad", errors.New("lookup")
-	repository.EXPECT().GetPasswordResetContinuation(ctx, security.HashToken(token)).Return(passwordresetdb.GetPasswordResetContinuationRow{}, want)
-	_, err := newService(repository).GetPasswordResetContinuation(ctx, token)
-	if !errors.Is(err, want) {
-		t.Fatalf("got %v", err)
-	}
+
+	t.Run("success", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+		tokenHash := security.HashToken(token)
+
+		row := pendingContinuation(
+			"user@example.com",
+		)
+
+		row.HasPasswordCredential = true
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(ctx, tokenHash).
+			Return(row, nil)
+
+		result, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if result.Email != row.Email {
+			t.Errorf(
+				"expected email %q, got %q",
+				row.Email,
+				result.Email,
+			)
+		}
+
+		if result.HasPasswordCredential != row.HasPasswordCredential {
+			t.Errorf(
+				"expected has password credential %v, got %v",
+				row.HasPasswordCredential,
+				result.HasPasswordCredential,
+			)
+		}
+	})
+
+	t.Run("consumed", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+
+		row := pendingContinuation(
+			"user@example.com",
+		)
+
+		row.ConsumedAt = pgtype.Timestamptz{
+			Time:  time.Now(),
+			Valid: true,
+		}
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(
+				ctx,
+				security.HashToken(token),
+			).
+			Return(row, nil)
+
+		_, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != passwordreset.CodePasswordResetContinuationConsumed {
+			t.Errorf(
+				"expected error code %q, got %q",
+				passwordreset.CodePasswordResetContinuationConsumed,
+				appErr.Code,
+			)
+		}
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+
+		row := pendingContinuation(
+			"user@example.com",
+		)
+
+		row.ExpiresAt = pgtype.Timestamptz{
+			Time:  time.Now().Add(-time.Minute),
+			Valid: true,
+		}
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(
+				ctx,
+				security.HashToken(token),
+			).
+			Return(row, nil)
+
+		_, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != passwordreset.CodePasswordResetContinuationExpired {
+			t.Errorf(
+				"expected error code %q, got %q",
+				passwordreset.CodePasswordResetContinuationExpired,
+				appErr.Code,
+			)
+		}
+	})
+
+	t.Run("reset not pending", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+
+		row := pendingContinuation(
+			"user@example.com",
+		)
+
+		row.PasswordResetStatus = string(
+			passwordreset.PendingPasswordResetCompleted,
+		)
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(
+				ctx,
+				security.HashToken(token),
+			).
+			Return(row, nil)
+
+		_, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != passwordreset.CodePasswordResetNotPending {
+			t.Errorf(
+				"expected error code %q, got %q",
+				passwordreset.CodePasswordResetNotPending,
+				appErr.Code,
+			)
+		}
+	})
+
+	t.Run("reset expired", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+
+		row := pendingContinuation(
+			"user@example.com",
+		)
+
+		row.PasswordResetExpiresAt = pgtype.Timestamptz{
+			Time:  time.Now().Add(-time.Minute),
+			Valid: true,
+		}
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(
+				ctx,
+				security.HashToken(token),
+			).
+			Return(row, nil)
+
+		_, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != passwordreset.CodePasswordResetExpired {
+			t.Errorf(
+				"expected error code %q, got %q",
+				passwordreset.CodePasswordResetExpired,
+				appErr.Code,
+			)
+		}
+	})
+
+	t.Run("repository error", func(t *testing.T) {
+		test := newTestService(t)
+
+		token := "test-continuation-token"
+		repositoryErr := errors.New("lookup")
+
+		test.repository.
+			EXPECT().
+			GetPasswordResetContinuation(
+				ctx,
+				security.HashToken(token),
+			).
+			Return(
+				passwordresetdb.GetPasswordResetContinuationRow{},
+				repositoryErr,
+			)
+
+		_, err := test.passwordResetService.GetPasswordResetContinuation(
+			ctx,
+			token,
+		)
+
+		if !errors.Is(err, repositoryErr) {
+			t.Fatalf(
+				"expected repository error, got %v",
+				err,
+			)
+		}
+	})
 }

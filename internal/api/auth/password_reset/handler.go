@@ -33,7 +33,7 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 		return err
 	}
 
-	message := "verification code sent"
+	message := "password reset requested"
 
 	if result.AlreadyPending {
 		message = "password reset already in progress"
@@ -43,9 +43,38 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 		VerificationID: result.VerificationID,
 	}
 
-	return httpx.OK(
+	return httpx.Created(
 		c,
 		message,
+		&response,
+	)
+}
+
+func (h *Handler) CreatePIN(c fiber.Ctx) error {
+	verificationID, err := uuid.Parse(c.Params("verification_id"))
+	if err != nil {
+		return apperror.BadRequestWith(
+			"",
+			"invalid verification id",
+			err,
+		)
+	}
+
+	result, err := h.service.CreatePIN(
+		c.Context(),
+		verificationID,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := CreatePINResponse{
+		VerificationID: result.VerificationID.String(),
+	}
+
+	return httpx.Created(
+		c,
+		"verification PIN created",
 		&response,
 	)
 }

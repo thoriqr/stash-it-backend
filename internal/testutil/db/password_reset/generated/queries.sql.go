@@ -12,6 +12,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createExpiredPendingPasswordReset = `-- name: CreateExpiredPendingPasswordReset :one
+WITH pending_reset AS (
+    INSERT INTO pending_password_resets (
+        email,
+        status,
+        expires_at
+    )
+    VALUES (
+        $1,
+        'pending',
+        NOW() - INTERVAL '1 hour'
+    )
+    RETURNING id
+)
+INSERT INTO verification_requests (
+    subject_type,
+    subject_id,
+    purpose,
+    status
+)
+SELECT
+    'pending_password_reset',
+    id,
+    'password_reset',
+    'pending'
+FROM pending_reset
+RETURNING id
+`
+
+func (q *Queries) CreateExpiredPendingPasswordReset(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createExpiredPendingPasswordReset, email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createPasswordCredentialForUser = `-- name: CreatePasswordCredentialForUser :exec
 INSERT INTO password_credentials (user_id, password_hash)
 VALUES ($1, $2)
@@ -91,12 +127,10 @@ const getPasswordResetState = `-- name: GetPasswordResetState :one
 SELECT
     ppr.id AS password_reset_id,
     ppr.status AS password_reset_status,
-    vr.id AS verification_id,
-    vc.id AS verification_code_id
+    vr.id AS verification_id
 FROM pending_password_resets ppr
 JOIN verification_requests vr ON vr.subject_id = ppr.id
     AND vr.subject_type = 'pending_password_reset'
-JOIN verification_codes vc ON vc.verification_request_id = vr.id
 WHERE ppr.email = $1
 `
 
@@ -104,19 +138,47 @@ type GetPasswordResetStateRow struct {
 	PasswordResetID     uuid.UUID
 	PasswordResetStatus string
 	VerificationID      uuid.UUID
-	VerificationCodeID  uuid.UUID
 }
 
 func (q *Queries) GetPasswordResetState(ctx context.Context, email string) (GetPasswordResetStateRow, error) {
 	row := q.db.QueryRow(ctx, getPasswordResetState, email)
 	var i GetPasswordResetStateRow
-	err := row.Scan(
-		&i.PasswordResetID,
-		&i.PasswordResetStatus,
-		&i.VerificationID,
-		&i.VerificationCodeID,
-	)
+	err := row.Scan(&i.PasswordResetID, &i.PasswordResetStatus, &i.VerificationID)
 	return i, err
+}
+
+const getPasswordResetVerificationState = `-- name: GetPasswordResetVerificationState :one
+SELECT
+    vr.id AS verification_id,
+    vr.status AS verification_status,
+    vr.pin_issued_count
+FROM verification_requests vr
+WHERE vr.id = $1
+  AND vr.subject_type = 'pending_password_reset'
+`
+
+type GetPasswordResetVerificationStateRow struct {
+	VerificationID     uuid.UUID
+	VerificationStatus string
+	PinIssuedCount     int32
+}
+
+func (q *Queries) GetPasswordResetVerificationState(ctx context.Context, verificationID uuid.UUID) (GetPasswordResetVerificationStateRow, error) {
+	row := q.db.QueryRow(ctx, getPasswordResetVerificationState, verificationID)
+	var i GetPasswordResetVerificationStateRow
+	err := row.Scan(&i.VerificationID, &i.VerificationStatus, &i.PinIssuedCount)
+	return i, err
+}
+
+const makeVerificationResendable = `-- name: MakeVerificationResendable :exec
+UPDATE verification_requests
+SET last_sent_at = NOW() - INTERVAL '1 hour'
+WHERE id = $1
+`
+
+func (q *Queries) MakeVerificationResendable(ctx context.Context, verificationID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, makeVerificationResendable, verificationID)
+	return err
 }
 
 const setVerificationCodeHash = `-- name: SetVerificationCodeHash :exec

@@ -29,12 +29,10 @@ WHERE verification_request_id = sqlc.arg(verification_request_id)
 SELECT
     ppr.id AS password_reset_id,
     ppr.status AS password_reset_status,
-    vr.id AS verification_id,
-    vc.id AS verification_code_id
+    vr.id AS verification_id
 FROM pending_password_resets ppr
 JOIN verification_requests vr ON vr.subject_id = ppr.id
     AND vr.subject_type = 'pending_password_reset'
-JOIN verification_codes vc ON vc.verification_request_id = vr.id
 WHERE ppr.email = sqlc.arg(email);
 
 -- name: CreateSessionForUser :one
@@ -55,3 +53,45 @@ JOIN password_reset_continuations prc ON prc.pending_password_reset_id = ppr.id
 LEFT JOIN sessions s ON s.user_id = u.id
 WHERE u.email = sqlc.arg(email)
 GROUP BY pc.password_hash, ppr.status, prc.consumed_at;
+
+-- name: GetPasswordResetVerificationState :one
+SELECT
+    vr.id AS verification_id,
+    vr.status AS verification_status,
+    vr.pin_issued_count
+FROM verification_requests vr
+WHERE vr.id = sqlc.arg(verification_id)
+  AND vr.subject_type = 'pending_password_reset';
+
+-- name: MakeVerificationResendable :exec
+UPDATE verification_requests
+SET last_sent_at = NOW() - INTERVAL '1 hour'
+WHERE id = sqlc.arg(verification_id);
+
+-- name: CreateExpiredPendingPasswordReset :one
+WITH pending_reset AS (
+    INSERT INTO pending_password_resets (
+        email,
+        status,
+        expires_at
+    )
+    VALUES (
+        sqlc.arg(email),
+        'pending',
+        NOW() - INTERVAL '1 hour'
+    )
+    RETURNING id
+)
+INSERT INTO verification_requests (
+    subject_type,
+    subject_id,
+    purpose,
+    status
+)
+SELECT
+    'pending_password_reset',
+    id,
+    'password_reset',
+    'pending'
+FROM pending_reset
+RETURNING id;

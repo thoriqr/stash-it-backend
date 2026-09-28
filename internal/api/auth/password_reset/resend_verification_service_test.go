@@ -12,59 +12,215 @@ import (
 
 	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
 	passwordresetdb "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/generated"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 )
 
 func TestService_ResendVerification(t *testing.T) {
 	ctx := context.Background()
-	t.Run("rejects cooldown", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		repository := mocks.NewMockRepository(ctrl)
-		id := uuid.New()
-		row := pendingVerification(id, uuid.New())
-		row.LastSentAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		repository.EXPECT().GetVerification(ctx, id).Return(row, nil)
-		_, err := newService(repository).ResendVerification(ctx, id)
-		if got := apperror.FromError(err).Code; got != passwordreset.CodeVerificationResendCooldown {
-			t.Fatalf("got %s", got)
-		}
-	})
-	t.Run("get verification error", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		repository := mocks.NewMockRepository(ctrl)
-		id, want := uuid.New(), errors.New("lookup")
-		repository.EXPECT().GetVerification(ctx, id).Return(passwordresetdb.GetVerificationRow{}, want)
-		_, err := newService(repository).ResendVerification(ctx, id)
-		if !errors.Is(err, want) {
-			t.Fatalf("got %v", err)
-		}
-	})
-	t.Run("resend error", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		repository := mocks.NewMockRepository(ctrl)
-		id, want := uuid.New(), errors.New("resend")
-		repository.EXPECT().GetVerification(ctx, id).Return(pendingVerification(id, uuid.New()), nil)
-		repository.EXPECT().ResendVerification(ctx, gomock.Any()).Return(passwordresetdb.VerificationRequest{}, want)
-		_, err := newService(repository).ResendVerification(ctx, id)
-		if !errors.Is(err, want) {
-			t.Fatalf("got %v", err)
-		}
-	})
+
 	t.Run("success", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		repository := mocks.NewMockRepository(ctrl)
-		id := uuid.New()
-		repository.EXPECT().GetVerification(ctx, id).Return(pendingVerification(id, uuid.New()), nil)
-		repository.EXPECT().ResendVerification(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, params passwordreset.ResendVerificationParams) (passwordresetdb.VerificationRequest, error) {
-			if params.VerificationID != id || !params.CodeExpiresAt.Valid || params.CodeHash == "" {
-				t.Errorf("unexpected %#v", params)
-			}
-			return passwordresetdb.VerificationRequest{}, nil
-		})
-		result, err := newService(repository).ResendVerification(ctx, id)
-		if err != nil || result.VerificationID != id {
-			t.Fatalf("unexpected %#v %v", result, err)
+		test := newTestService(t)
+
+		verificationID := uuid.New()
+		startedAt := time.Now()
+
+		test.repository.
+			EXPECT().
+			GetVerification(ctx, verificationID).
+			Return(
+				passwordresetdb.GetVerificationRow{
+					ID:                 verificationID,
+					Status:             string(passwordreset.VerificationRequestPending),
+					PasswordResetStatus: string(passwordreset.PendingPasswordResetPending),
+					PasswordResetExpiresAt: pgtype.Timestamptz{
+						Time:  startedAt.Add(7 * 24 * time.Hour),
+						Valid: true,
+					},
+					LastSentAt: pgtype.Timestamptz{
+						Time:  startedAt.Add(-2 * time.Minute),
+						Valid: true,
+					},
+				},
+				nil,
+			)
+
+		test.repository.
+			EXPECT().
+			IssueVerificationCode(
+				ctx,
+				gomock.Any(),
+			).
+			DoAndReturn(func(
+				_ context.Context,
+				params passwordreset.IssueVerificationCodeParams,
+			) (passwordresetdb.VerificationRequest, error) {
+				if params.VerificationID != verificationID {
+					t.Errorf(
+						"expected verification ID %s, got %s",
+						verificationID,
+						params.VerificationID,
+					)
+				}
+
+				if params.CodeHash == "" {
+					t.Error("expected code hash to be set")
+				}
+
+				if !params.CodeExpiresAt.Valid {
+					t.Error("expected code expiration to be valid")
+				}
+
+				if params.CodeExpiresAt.Time.Before(
+					startedAt.Add(5 * time.Minute),
+				) {
+					t.Errorf(
+						"expected code expiration around 5 minutes, got %v",
+						params.CodeExpiresAt.Time,
+					)
+				}
+
+				return passwordresetdb.VerificationRequest{
+					ID: verificationID,
+				}, nil
+			})
+
+		result, err := test.passwordResetService.ResendVerification(
+			ctx,
+			verificationID,
+		)
+
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if result.VerificationID != verificationID {
+			t.Errorf(
+				"expected verification ID %s, got %s",
+				verificationID,
+				result.VerificationID,
+			)
+		}
+	})
+
+	t.Run("rejects cooldown", func(t *testing.T) {
+		test := newTestService(t)
+
+		verificationID := uuid.New()
+
+		test.repository.
+			EXPECT().
+			GetVerification(ctx, verificationID).
+			Return(
+				passwordresetdb.GetVerificationRow{
+					ID:   verificationID,
+					Status: string(passwordreset.VerificationRequestPending),
+					PasswordResetStatus: string(
+						passwordreset.PendingPasswordResetPending,
+					),
+					PasswordResetExpiresAt: pgtype.Timestamptz{
+						Time:  time.Now().Add(7 * 24 * time.Hour),
+						Valid: true,
+					},
+					LastSentAt: pgtype.Timestamptz{
+						Time:  time.Now().Add(-30 * time.Second),
+						Valid: true,
+					},
+				},
+				nil,
+			)
+
+		_, err := test.passwordResetService.ResendVerification(
+			ctx,
+			verificationID,
+		)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != passwordreset.CodeVerificationResendCooldown {
+			t.Errorf(
+				"expected error code %q, got %q",
+				passwordreset.CodeVerificationResendCooldown,
+				appErr.Code,
+			)
+		}
+	})
+
+	t.Run("get verification error", func(t *testing.T) {
+		test := newTestService(t)
+
+		verificationID := uuid.New()
+		repositoryErr := errors.New("lookup")
+
+		test.repository.
+			EXPECT().
+			GetVerification(ctx, verificationID).
+			Return(
+				passwordresetdb.GetVerificationRow{},
+				repositoryErr,
+			)
+
+		_, err := test.passwordResetService.ResendVerification(
+			ctx,
+			verificationID,
+		)
+
+		if !errors.Is(err, repositoryErr) {
+			t.Fatalf(
+				"expected repository error, got %v",
+				err,
+			)
+		}
+	})
+
+	t.Run("issue verification code error", func(t *testing.T) {
+		test := newTestService(t)
+
+		verificationID := uuid.New()
+		repositoryErr := errors.New("issue verification code")
+
+		test.repository.
+			EXPECT().
+			GetVerification(ctx, verificationID).
+			Return(
+				passwordresetdb.GetVerificationRow{
+					ID:   verificationID,
+					Status: string(passwordreset.VerificationRequestPending),
+					PasswordResetStatus: string(
+						passwordreset.PendingPasswordResetPending,
+					),
+					PasswordResetExpiresAt: pgtype.Timestamptz{
+						Time:  time.Now().Add(7 * 24 * time.Hour),
+						Valid: true,
+					},
+				},
+				nil,
+			)
+
+		test.repository.
+			EXPECT().
+			IssueVerificationCode(
+				ctx,
+				gomock.Any(),
+			).
+			Return(
+				passwordresetdb.VerificationRequest{},
+				repositoryErr,
+			)
+
+		_, err := test.passwordResetService.ResendVerification(
+			ctx,
+			verificationID,
+		)
+
+		if !errors.Is(err, repositoryErr) {
+			t.Fatalf(
+				"expected repository error, got %v",
+				err,
+			)
 		}
 	})
 }

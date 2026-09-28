@@ -9,6 +9,7 @@ type RequestPasswordResetResponse struct {
 type GetVerificationResponse struct {
 	VerificationID   string `json:"verification_id"`
 	Status           string `json:"status"`
+	PINIssued       bool   `json:"pin_issued"`
 	ResendInSeconds  int    `json:"resend_in_seconds"`
 }
 
@@ -28,4 +29,8 @@ type GetPasswordResetContinuationResponse struct {
 type FinalizeManualRegistrationResponse struct {
     Email       string `json:"email"`
     DisplayName string `json:"display_name"`
+}
+
+type CreatePINResponse struct {
+    VerificationID string `json:"verification_id"`
 }

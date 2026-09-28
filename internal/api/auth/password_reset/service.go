@@ -35,7 +35,6 @@ func NewService(
 	}
 }
 
-
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
@@ -63,13 +62,6 @@ func (s *Service) RequestPasswordReset(
 		}, nil
 	}
 
-	code, err := s.verificationCodeHasher.Generate()
-	if err != nil {
-		return RequestPasswordResetResult{}, apperror.Internal(err)
-	}
-
-	codeHash := s.verificationCodeHasher.Hash(code)
-
 	now := time.Now()
 
 	verificationRequest, err := s.repository.CreatePasswordReset(
@@ -77,17 +69,12 @@ func (s *Service) RequestPasswordReset(
 		CreatePasswordResetParams{
 			Email:          email,
 			ResetExpiresAt: pgtype.Timestamptz{Time: now.Add(passwordResetExpiresIn), Valid: true},
-			CodeHash:       codeHash,
-			CodeExpiresAt:  pgtype.Timestamptz{Time: now.Add(verificationCodeExpiresIn), Valid: true},
 		},
 	)
 	if err != nil {
 		return RequestPasswordResetResult{}, err
 	}
 
-	// TODO: Send verification code through email provider.
-	// Keep the code available for development until email delivery is implemented.
-	fmt.Printf("DEV password reset PIN for %s: %s\n", email, code)
 
 	return RequestPasswordResetResult{
 		VerificationID: verificationRequest.ID,
@@ -100,6 +87,7 @@ type GetVerificationResult struct {
 	Status                VerificationRequestStatus
 	PasswordResetExpiresAt time.Time
 	LastSentAt            *time.Time
+	PinIssuedCount int32
 }
 
 func (s *Service) GetVerification(
@@ -129,7 +117,66 @@ func (s *Service) GetVerification(
         Status:         VerificationRequestStatus(verification.Status),
         PasswordResetExpiresAt: verification.PasswordResetExpiresAt.Time,
         LastSentAt:      lastSentAt,
+				PinIssuedCount: verification.PinIssuedCount,
     }, nil
+}
+
+type CreatePINResult struct {
+	VerificationID uuid.UUID
+}
+
+func (s *Service) CreatePIN(
+	ctx context.Context,
+	verificationID uuid.UUID,
+) (CreatePINResult, error) {
+	verification, err := s.repository.GetVerification(
+		ctx,
+		verificationID,
+	)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	if err := validateVerificationPending(verification); err != nil {
+		return CreatePINResult{}, err
+	}
+
+	code, err := s.verificationCodeHasher.Generate()
+	if err != nil {
+		return CreatePINResult{}, apperror.Internal(err)
+	}
+
+	codeHash := s.verificationCodeHasher.Hash(code)
+
+	now := time.Now()
+
+	codeExpiresAt := pgtype.Timestamptz{
+		Time:  now.Add(verificationCodeExpiresIn),
+		Valid: true,
+	}
+
+	_, err = s.repository.IssueVerificationCode(
+		ctx,
+		IssueVerificationCodeParams{
+			VerificationID: verificationID,
+			CodeHash:       codeHash,
+			CodeExpiresAt:  codeExpiresAt,
+		},
+	)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	// TODO: send verification PIN to user's email.
+	fmt.Printf(
+		"DEV password reset PIN for create %s: %s\n",
+		verificationID,
+		code,
+	)
+
+	return CreatePINResult{
+		VerificationID: verificationID,
+	}, nil
 }
 
 type ResendVerificationResult struct {
@@ -181,9 +228,9 @@ func (s *Service) ResendVerification(
 		Valid: true,
 	}
 
-	_, err = s.repository.ResendVerification(
+	_, err = s.repository.IssueVerificationCode(
 		ctx,
-		ResendVerificationParams{
+		IssueVerificationCodeParams{
 			VerificationID: verificationID,
 			CodeHash:       codeHash,
 			CodeExpiresAt:  codeExpiresAt,

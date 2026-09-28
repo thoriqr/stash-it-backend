@@ -356,41 +356,41 @@ func (c *MockRepositoryIncrementVerificationCodeAttemptsCall) DoAndReturn(f func
 	return c
 }
 
-// ResendVerification mocks base method.
-func (m *MockRepository) ResendVerification(ctx context.Context, params password_reset.ResendVerificationParams) (passwordresetdb.VerificationRequest, error) {
+// IssueVerificationCode mocks base method.
+func (m *MockRepository) IssueVerificationCode(ctx context.Context, params password_reset.IssueVerificationCodeParams) (passwordresetdb.VerificationRequest, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResendVerification", ctx, params)
+	ret := m.ctrl.Call(m, "IssueVerificationCode", ctx, params)
 	ret0, _ := ret[0].(passwordresetdb.VerificationRequest)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ResendVerification indicates an expected call of ResendVerification.
-func (mr *MockRepositoryMockRecorder) ResendVerification(ctx, params any) *MockRepositoryResendVerificationCall {
+// IssueVerificationCode indicates an expected call of IssueVerificationCode.
+func (mr *MockRepositoryMockRecorder) IssueVerificationCode(ctx, params any) *MockRepositoryIssueVerificationCodeCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResendVerification", reflect.TypeOf((*MockRepository)(nil).ResendVerification), ctx, params)
-	return &MockRepositoryResendVerificationCall{Call: call}
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueVerificationCode", reflect.TypeOf((*MockRepository)(nil).IssueVerificationCode), ctx, params)
+	return &MockRepositoryIssueVerificationCodeCall{Call: call}
 }
 
-// MockRepositoryResendVerificationCall wrap *gomock.Call
-type MockRepositoryResendVerificationCall struct {
+// MockRepositoryIssueVerificationCodeCall wrap *gomock.Call
+type MockRepositoryIssueVerificationCodeCall struct {
 	*gomock.Call
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryResendVerificationCall) Return(arg0 passwordresetdb.VerificationRequest, arg1 error) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) Return(arg0 passwordresetdb.VerificationRequest, arg1 error) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryResendVerificationCall) Do(f func(context.Context, password_reset.ResendVerificationParams) (passwordresetdb.VerificationRequest, error)) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) Do(f func(context.Context, password_reset.IssueVerificationCodeParams) (passwordresetdb.VerificationRequest, error)) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryResendVerificationCall) DoAndReturn(f func(context.Context, password_reset.ResendVerificationParams) (passwordresetdb.VerificationRequest, error)) *MockRepositoryResendVerificationCall {
+func (c *MockRepositoryIssueVerificationCodeCall) DoAndReturn(f func(context.Context, password_reset.IssueVerificationCodeParams) (passwordresetdb.VerificationRequest, error)) *MockRepositoryIssueVerificationCodeCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
