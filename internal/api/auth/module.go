@@ -80,6 +80,7 @@ func RegisterModule(
 		accessTokenGenerator,
 		passwordHasher,
 		verificationCodeHasher,
+		emailSender,
 	)
 
 	registrationHandler := registration.NewHandler(

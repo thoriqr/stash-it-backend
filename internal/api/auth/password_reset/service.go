@@ -250,9 +250,9 @@ func (s *Service) ResendVerification(
 		code,
 	)
 
-if err := s.emailSender.Send(ctx, message); err != nil {
-	return ResendVerificationResult{}, apperror.Internal(err)
-}
+	if err := s.emailSender.Send(ctx, message); err != nil {
+		return ResendVerificationResult{}, apperror.Internal(err)
+	}
 
 	return ResendVerificationResult{
 		VerificationID: verificationID,

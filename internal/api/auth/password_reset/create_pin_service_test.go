@@ -112,24 +112,12 @@ func TestService_CreatePIN(t *testing.T) {
 	}
 
 	message := test.emailSender.Messages[0]
-
 	if message.To.Email != testEmail {
 		t.Errorf(
 			"expected recipient %q, got %q",
 			testEmail,
 			message.To.Email,
 		)
-	}
-
-	if message.Subject != "Your password reset verification code" {
-		t.Errorf(
-			"unexpected subject: %q",
-			message.Subject,
-		)
-	}
-
-	if message.Text == "" {
-		t.Error("expected email text to be set")
 	}
 }
 

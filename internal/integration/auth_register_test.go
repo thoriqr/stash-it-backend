@@ -313,6 +313,11 @@ func TestGetVerification_Success(t *testing.T) {
 
 	require.NoError(t, db.TruncateRegistrationData(ctx))
 
+	// Reset captured emails from previous tests.
+	testEmailSender.Messages = nil
+
+	email := "get-verification@example.com"
+
 	registerReq := httptest.NewRequest(
 		http.MethodPost,
 		"/auth/register/manual",
@@ -338,6 +343,7 @@ func TestGetVerification_Success(t *testing.T) {
 	verificationID := registerBody.Data.VerificationID
 	require.NotEqual(t, uuid.Nil, verificationID)
 
+	// Get verification before PIN is issued.
 	getReq := httptest.NewRequest(
 		http.MethodGet,
 		"/auth/register/verification/"+verificationID.String(),
@@ -374,6 +380,51 @@ func TestGetVerification_Success(t *testing.T) {
 	)
 	require.False(t, getBody.Data.PINIssued)
 	require.Equal(t, 0, getBody.Data.ResendInSeconds)
+
+	// Create verification PIN.
+	createPIN := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+
+			verificationID.String()+
+			"/pin",
+		nil,
+	)
+
+	createPINResponse, err := testApp.Test(createPIN)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResponse.StatusCode)
+
+	// Email should have been sent.
+	require.Len(t, testEmailSender.Messages, 1)
+
+	message := testEmailSender.Messages[0]
+
+	require.Equal(t, email, message.To.Email)
+
+	// Get verification after PIN is issued.
+	getReq = httptest.NewRequest(
+		http.MethodGet,
+		"/auth/register/verification/"+verificationID.String(),
+		nil,
+	)
+
+	getResp, err = testApp.Test(getReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
+
+	require.NoError(
+		t,
+		json.NewDecoder(getResp.Body).Decode(&getBody),
+	)
+
+	require.Equal(t, verificationID.String(), getBody.Data.VerificationID)
+	require.Equal(
+		t,
+		string(registration.VerificationRequestPending),
+		getBody.Data.Status,
+	)
+	require.True(t, getBody.Data.PINIssued)
+	require.Greater(t, getBody.Data.ResendInSeconds, 0)
 }
 
 func TestGetVerification_NotFound(t *testing.T) {
@@ -403,6 +454,11 @@ func TestResendVerification_Cooldown(t *testing.T) {
 
 	db := registrationtestdb.New(testPool)
 	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	// Reset captured emails from previous tests.
+	testEmailSender.Messages = nil
+
+	email := "resend@example.com"
 
 	registerReq := httptest.NewRequest(
 		http.MethodPost,
@@ -439,13 +495,20 @@ func TestResendVerification_Cooldown(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, createPINResp.StatusCode)
 
-	require.NoError(t, db.MakeVerificationResendable(ctx, verificationID))
+	// CreatePIN should send one email.
+	require.Len(t, testEmailSender.Messages, 1)
+	require.Equal(t, email, testEmailSender.Messages[0].To.Email)
+
+	require.NoError(
+		t,
+		db.MakeVerificationResendable(ctx, verificationID),
+	)
 
 	resendURL := "/auth/register/verification/" +
-    verificationID.String() +
-    "/resend"
+		verificationID.String() +
+		"/resend"
 
-	// First resend should succeed and start the cooldown.
+	// First resend should succeed and send another email.
 	firstResendReq := httptest.NewRequest(
 		http.MethodPost,
 		resendURL,
@@ -455,6 +518,9 @@ func TestResendVerification_Cooldown(t *testing.T) {
 	firstResendResp, err := testApp.Test(firstResendReq)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, firstResendResp.StatusCode)
+
+	require.Len(t, testEmailSender.Messages, 2)
+	require.Equal(t, email, testEmailSender.Messages[1].To.Email)
 
 	// Second resend should be rejected by the cooldown.
 	secondResendReq := httptest.NewRequest(
@@ -483,6 +549,9 @@ func TestResendVerification_Cooldown(t *testing.T) {
 		registration.CodeVerificationResendCooldown,
 		body.Error.Code,
 	)
+
+	// Cooldown rejection should not send another email.
+	require.Len(t, testEmailSender.Messages, 2)
 }
 
 func TestResendVerification_NotFound(t *testing.T) {

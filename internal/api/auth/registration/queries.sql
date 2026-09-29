@@ -73,6 +73,7 @@ SELECT
     vr.last_sent_at,
     vr.created_at,
 
+    pr.email,
     pr.status AS registration_status,
     pr.expires_at AS registration_expires_at
 FROM verification_requests vr

@@ -697,6 +697,7 @@ SELECT
     vr.last_sent_at,
     vr.created_at,
 
+    pr.email,
     pr.status AS registration_status,
     pr.expires_at AS registration_expires_at
 FROM verification_requests vr
@@ -714,6 +715,7 @@ type GetVerificationRow struct {
 	PinIssuedCount        int32
 	LastSentAt            pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
+	Email                 string
 	RegistrationStatus    string
 	RegistrationExpiresAt pgtype.Timestamptz
 }
@@ -730,6 +732,7 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
+		&i.Email,
 		&i.RegistrationStatus,
 		&i.RegistrationExpiresAt,
 	)

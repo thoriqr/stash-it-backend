@@ -2,7 +2,6 @@ package registration
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -72,21 +72,24 @@ type service struct {
     accessTokenGenerator   *security.AccessTokenGenerator
     passwordHasher         *security.PasswordHasher
     verificationCodeHasher *security.VerificationCodeHasher
+    emailSender            email.Sender
 }
 
 func NewService(
     repository Repository,
     sessionService session.SessionCreator,
-		accessTokenGenerator *security.AccessTokenGenerator,
+    accessTokenGenerator *security.AccessTokenGenerator,
     passwordHasher *security.PasswordHasher,
     verificationCodeHasher *security.VerificationCodeHasher,
+    emailSender email.Sender,
 ) *service {
     return &service{
         repository:             repository,
         sessionService:         sessionService,
-				accessTokenGenerator:   accessTokenGenerator,
+        accessTokenGenerator:   accessTokenGenerator,
         passwordHasher:         passwordHasher,
         verificationCodeHasher: verificationCodeHasher,
+        emailSender:            emailSender,
     }
 }
 
@@ -231,12 +234,11 @@ func (s *service) CreatePIN(
 		return CreatePINResult{}, err
 	}
 
-	// TODO: send verification PIN to user's email.
-	fmt.Printf(
-		"DEV verification PIN for create %s: %s\n",
-		verificationID,
-		code,
-	)
+	message := newVerificationPINEmail(verification.Email, code)
+
+	if err := s.emailSender.Send(ctx, message); err != nil {
+		return CreatePINResult{}, apperror.Internal(err)
+	}
 
 	return CreatePINResult{
 		VerificationID: verificationID,
@@ -343,14 +345,14 @@ func (s *service) ResendVerification(
 		return ResendVerificationResult{}, err
 	}
 
-	// TODO: send verification PIN to user's email.
-	// email + code
-
-	fmt.Printf(
-		"DEV verification PIN for resend %s: %s\n",
-		verificationID,
+	message := newVerificationPINEmail(
+		verification.Email,
 		code,
 	)
+
+	if err := s.emailSender.Send(ctx, message); err != nil {
+		return ResendVerificationResult{}, apperror.Internal(err)
+	}
 
 	return ResendVerificationResult{
 		VerificationID: verificationID,
@@ -437,8 +439,6 @@ func (s *service) VerifyRegistration(
 	if err != nil {
 		return VerifyRegistrationResult{}, err
 	}
-
-	fmt.Printf("DEV registration continuation token: %s\n", token)
 
 	return VerifyRegistrationResult{
 		RegistrationContinuationToken: token,

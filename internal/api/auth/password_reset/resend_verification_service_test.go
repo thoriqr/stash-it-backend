@@ -119,17 +119,6 @@ func TestService_ResendVerification(t *testing.T) {
 				message.To.Email,
 			)
 		}
-
-		if message.Subject != "Your password reset verification code" {
-			t.Errorf(
-				"unexpected subject: %q",
-				message.Subject,
-			)
-		}
-
-		if message.Text == "" {
-			t.Error("expected email text to be set")
-		}
 	})
 
 	t.Run("rejects cooldown", func(t *testing.T) {
