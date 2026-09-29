@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
@@ -29,7 +30,10 @@ func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
 
 		appErr := apperror.FromError(err)
 
+		requestID := requestid.FromContext(c)
+
 		fields := []zap.Field{
+			zap.String("request_id", requestID),
 			zap.String("method", c.Method()),
 			zap.String("path", c.Path()),
 			zap.Int("status", appErr.Status),

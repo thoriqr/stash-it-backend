@@ -438,6 +438,7 @@ SELECT
     vr.last_sent_at,
     vr.created_at,
 
+    ppr.email,
     ppr.status AS password_reset_status,
     ppr.expires_at AS password_reset_expires_at
 FROM verification_requests vr
@@ -455,6 +456,7 @@ type GetVerificationRow struct {
 	PinIssuedCount         int32
 	LastSentAt             pgtype.Timestamptz
 	CreatedAt              pgtype.Timestamptz
+	Email                  string
 	PasswordResetStatus    string
 	PasswordResetExpiresAt pgtype.Timestamptz
 }
@@ -471,6 +473,7 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 		&i.PinIssuedCount,
 		&i.LastSentAt,
 		&i.CreatedAt,
+		&i.Email,
 		&i.PasswordResetStatus,
 		&i.PasswordResetExpiresAt,
 	)

@@ -2,13 +2,13 @@ package password_reset
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -16,6 +16,7 @@ type Service struct {
 	repository             Repository
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
+	emailSender            email.Sender
 }
 
 type RequestPasswordResetResult struct {
@@ -27,11 +28,13 @@ func NewService(
 	repository Repository,
 	passwordHasher *security.PasswordHasher,
 	verificationCodeHasher *security.VerificationCodeHasher,
+	emailSender email.Sender,
 ) *Service {
 	return &Service{
 		repository:             repository,
 		passwordHasher:         passwordHasher,
 		verificationCodeHasher: verificationCodeHasher,
+		emailSender:            emailSender,
 	}
 }
 
@@ -167,12 +170,14 @@ func (s *Service) CreatePIN(
 		return CreatePINResult{}, err
 	}
 
-	// TODO: send verification PIN to user's email.
-	fmt.Printf(
-		"DEV password reset PIN for create %s: %s\n",
-		verificationID,
-		code,
-	)
+	message := newVerificationPINEmail(
+	verification.Email,
+	code,
+)
+
+	if err := s.emailSender.Send(ctx, message); err != nil {
+		return CreatePINResult{}, apperror.Internal(err)
+	}
 
 	return CreatePINResult{
 		VerificationID: verificationID,
@@ -240,12 +245,14 @@ func (s *Service) ResendVerification(
 		return ResendVerificationResult{}, err
 	}
 
-	// TODO: send verification PIN to user's email.
-	fmt.Printf(
-		"DEV password reset PIN for resend %s: %s\n",
-		verificationID,
+	message := newVerificationPINEmail(
+		verification.Email,
 		code,
 	)
+
+if err := s.emailSender.Send(ctx, message); err != nil {
+	return ResendVerificationResult{}, apperror.Internal(err)
+}
 
 	return ResendVerificationResult{
 		VerificationID: verificationID,
@@ -333,10 +340,6 @@ func (s *Service) VerifyPasswordReset(
 		return VerifyPasswordResetResult{}, err
 	}
 
-	fmt.Printf(
-		"DEV password reset continuation token: %s\n",
-		token,
-	)
 
 	return VerifyPasswordResetResult{
 		PasswordResetContinuationToken: token,

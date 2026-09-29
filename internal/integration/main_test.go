@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	testApp  *fiber.App
-	testPool *pgxpool.Pool
+	testApp         *fiber.App
+	testPool        *pgxpool.Pool
+	testEmailSender *testutil.FakeEmailSender
 )
 
 func TestMain(m *testing.M) {
@@ -31,7 +32,10 @@ func TestMain(m *testing.M) {
 		log.Printf("failed to create postgres pool: %v", err)
 
 		if terminateErr := testutil.TerminatePostgres(ctx, container); terminateErr != nil {
-			log.Printf("failed to terminate postgres container: %v", terminateErr)
+			log.Printf(
+				"failed to terminate postgres container: %v",
+				terminateErr,
+			)
 		}
 
 		os.Exit(1)
@@ -43,14 +47,17 @@ func TestMain(m *testing.M) {
 		pool.Close()
 
 		if terminateErr := testutil.TerminatePostgres(ctx, container); terminateErr != nil {
-			log.Printf("failed to terminate postgres container: %v", terminateErr)
+			log.Printf(
+				"failed to terminate postgres container: %v",
+				terminateErr,
+			)
 		}
 
 		os.Exit(1)
 	}
 
 	testPool = pool
-	testApp = testutil.NewApp(pool)
+	testApp, testEmailSender = testutil.NewApp(pool)
 
 	code := m.Run()
 

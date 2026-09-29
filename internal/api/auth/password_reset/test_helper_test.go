@@ -1,6 +1,7 @@
 package password_reset_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
 	passwordresetdb "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/generated"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/mocks"
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"go.uber.org/mock/gomock"
 )
@@ -16,6 +18,7 @@ import (
 type testService struct {
 	passwordResetService *passwordreset.Service
 	repository           *mocks.MockRepository
+	emailSender          *FakeEmailSender
 }
 
 func newTestService(t *testing.T) *testService {
@@ -23,14 +26,17 @@ func newTestService(t *testing.T) *testService {
 
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
+	emailSender := &FakeEmailSender{}
 
 	return &testService{
 		passwordResetService: passwordreset.NewService(
 			repository,
 			security.NewPasswordHasher(),
 			security.NewVerificationCodeHasher([]byte("test-secret")),
+			emailSender,
 		),
 		repository: repository,
+		emailSender: emailSender,
 	}
 }
 
@@ -74,4 +80,21 @@ func pendingVerification(
 			Valid: true,
 		},
 	}
+}
+
+type FakeEmailSender struct {
+	Messages []email.Message
+	Err      error
+}
+
+func (s *FakeEmailSender) Send(
+	ctx context.Context,
+	message email.Message,
+) error {
+	if s.Err != nil {
+		return s.Err
+	}
+
+	s.Messages = append(s.Messages, message)
+	return nil
 }

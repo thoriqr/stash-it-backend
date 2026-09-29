@@ -3,6 +3,7 @@ package auth
 import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
@@ -13,6 +14,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -20,6 +22,8 @@ func RegisterModule(
 	app *fiber.App,
 	pool *pgxpool.Pool,
 	cfg config.Config,
+	log *zap.Logger,
+	emailSender email.Sender,
 	googleTokenVerifier login.GoogleTokenVerifier,
 ) {
 	authRouter := app.Group("/auth")
@@ -125,6 +129,7 @@ func RegisterModule(
 		passwordResetRepository,
 		passwordHasher,
 		verificationCodeHasher,
+		emailSender,
 	)
 
 	passwordResetHandler := passwordreset.NewHandler(

@@ -22,6 +22,7 @@ func TestService_ResendVerification(t *testing.T) {
 		test := newTestService(t)
 
 		verificationID := uuid.New()
+		testEmail := "test@example.com"
 		startedAt := time.Now()
 
 		test.repository.
@@ -30,6 +31,7 @@ func TestService_ResendVerification(t *testing.T) {
 			Return(
 				passwordresetdb.GetVerificationRow{
 					ID:                 verificationID,
+					Email:              testEmail,
 					Status:             string(passwordreset.VerificationRequestPending),
 					PasswordResetStatus: string(passwordreset.PendingPasswordResetPending),
 					PasswordResetExpiresAt: pgtype.Timestamptz{
@@ -99,6 +101,34 @@ func TestService_ResendVerification(t *testing.T) {
 				verificationID,
 				result.VerificationID,
 			)
+		}
+
+		if len(test.emailSender.Messages) != 1 {
+			t.Fatalf(
+				"expected 1 email message, got %d",
+				len(test.emailSender.Messages),
+			)
+		}
+
+		message := test.emailSender.Messages[0]
+
+		if message.To.Email != testEmail {
+			t.Errorf(
+				"expected recipient %q, got %q",
+				testEmail,
+				message.To.Email,
+			)
+		}
+
+		if message.Subject != "Your password reset verification code" {
+			t.Errorf(
+				"unexpected subject: %q",
+				message.Subject,
+			)
+		}
+
+		if message.Text == "" {
+			t.Error("expected email text to be set")
 		}
 	})
 
@@ -223,4 +253,78 @@ func TestService_ResendVerification(t *testing.T) {
 			)
 		}
 	})
+}
+
+func TestService_ResendVerification_EmailSenderError(t *testing.T) {
+	test := newTestService(t)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+	testEmail := "test@example.com"
+	startedAt := time.Now()
+
+	test.repository.
+		EXPECT().
+		GetVerification(ctx, verificationID).
+		Return(
+			passwordresetdb.GetVerificationRow{
+				ID:                 verificationID,
+				Email:              testEmail,
+				Status:             string(passwordreset.VerificationRequestPending),
+				PasswordResetStatus: string(
+					passwordreset.PendingPasswordResetPending,
+				),
+				PasswordResetExpiresAt: pgtype.Timestamptz{
+					Time:  startedAt.Add(7 * 24 * time.Hour),
+					Valid: true,
+				},
+				LastSentAt: pgtype.Timestamptz{
+					Time:  startedAt.Add(-2 * time.Minute),
+					Valid: true,
+				},
+			},
+			nil,
+		)
+
+	test.repository.
+		EXPECT().
+		IssueVerificationCode(
+			ctx,
+			gomock.Any(),
+		).
+		Return(
+			passwordresetdb.VerificationRequest{
+				ID: verificationID,
+			},
+			nil,
+		)
+
+	emailErr := errors.New("email provider unavailable")
+	test.emailSender.Err = emailErr
+
+	_, err := test.passwordResetService.ResendVerification(
+		ctx,
+		verificationID,
+	)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, emailErr) {
+		t.Fatalf(
+			"expected email sender error, got %v",
+			err,
+		)
+	}
+
+	appErr := apperror.FromError(err)
+
+	if appErr.Code != apperror.CodeInternal {
+		t.Errorf(
+			"expected error code %q, got %q",
+			apperror.CodeInternal,
+			appErr.Code,
+		)
+	}
 }

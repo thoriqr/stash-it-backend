@@ -299,76 +299,86 @@ func TestGetPasswordResetContinuation_InvalidToken(t *testing.T) {
 }
 
 func TestPasswordReset_CreatePIN(t *testing.T) {
-    ctx := context.Background()
-    db := passwordresetdbtest.New(testPool)
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
 
-    require.NoError(t, db.TruncatePasswordResetData(ctx))
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
 
-    email := "create-pin@example.com"
+	// Reset captured emails from previous tests.
+	testEmailSender.Messages = nil
 
-    _, err := db.CreatePasswordResetUser(ctx, email)
-    require.NoError(t, err)
+	email := "create-pin@example.com"
 
-    // Request password reset.
-    request := httptest.NewRequest(
-        http.MethodPost,
-        "/auth/password-reset",
-        strings.NewReader(`{"email":"create-pin@example.com"}`),
-    )
-    request.Header.Set("Content-Type", "application/json")
+	_, err := db.CreatePasswordResetUser(ctx, email)
+	require.NoError(t, err)
 
-    response, err := testApp.Test(request)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusCreated, response.StatusCode)
+	// Request password reset.
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/password-reset",
+		strings.NewReader(`{"email":"create-pin@example.com"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
 
-    var requestBody struct {
-        Data struct {
-            VerificationID uuid.UUID `json:"verification_id"`
-        } `json:"data"`
-    }
+	response, err := testApp.Test(request)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, response.StatusCode)
 
-    require.NoError(
-        t,
-        json.NewDecoder(response.Body).Decode(&requestBody),
-    )
+	var requestBody struct {
+		Data struct {
+			VerificationID uuid.UUID `json:"verification_id"`
+		} `json:"data"`
+	}
 
-    verificationID := requestBody.Data.VerificationID
-    require.NotEqual(t, uuid.Nil, verificationID)
+	require.NoError(
+		t,
+		json.NewDecoder(response.Body).Decode(&requestBody),
+	)
 
-    // PIN has not been issued yet.
-    state, err := db.GetPasswordResetVerificationState(
-        ctx,
-        verificationID,
-    )
-    require.NoError(t, err)
+	verificationID := requestBody.Data.VerificationID
+	require.NotEqual(t, uuid.Nil, verificationID)
 
-    require.Equal(t, verificationID, state.VerificationID)
-    require.Equal(t, "pending", state.VerificationStatus)
-    require.Equal(t, int32(0), state.PinIssuedCount)
+	// PIN has not been issued yet.
+	state, err := db.GetPasswordResetVerificationState(
+		ctx,
+		verificationID,
+	)
+	require.NoError(t, err)
 
-    // Create verification PIN.
-    createPIN := httptest.NewRequest(
-        http.MethodPost,
-        "/auth/password-reset/verification/"+
-            verificationID.String()+
-            "/pin",
-        nil,
-    )
+	require.Equal(t, verificationID, state.VerificationID)
+	require.Equal(t, "pending", state.VerificationStatus)
+	require.Equal(t, int32(0), state.PinIssuedCount)
 
-    createPINResponse, err := testApp.Test(createPIN)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusCreated, createPINResponse.StatusCode)
+	// Create verification PIN.
+	createPIN := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/password-reset/verification/"+
+			verificationID.String()+
+			"/pin",
+		nil,
+	)
 
-    // PIN should now be issued.
-    state, err = db.GetPasswordResetVerificationState(
-        ctx,
-        verificationID,
-    )
-    require.NoError(t, err)
+	createPINResponse, err := testApp.Test(createPIN)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResponse.StatusCode)
 
-    require.Equal(t, verificationID, state.VerificationID)
-    require.Equal(t, "pending", state.VerificationStatus)
-    require.Equal(t, int32(1), state.PinIssuedCount)
+	// Email should have been sent.
+	require.Len(t, testEmailSender.Messages, 1)
+
+	message := testEmailSender.Messages[0]
+
+	require.Equal(t, email, message.To.Email)
+
+	// PIN should now be issued.
+	state, err = db.GetPasswordResetVerificationState(
+		ctx,
+		verificationID,
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, verificationID, state.VerificationID)
+	require.Equal(t, "pending", state.VerificationStatus)
+	require.Equal(t, int32(1), state.PinIssuedCount)
 }
 
 func TestPasswordReset_GetVerification(t *testing.T) {
@@ -488,9 +498,14 @@ func TestPasswordReset_ResendVerification_Cooldown(t *testing.T) {
 
 	require.NoError(t, db.TruncatePasswordResetData(ctx))
 
+	// Reset captured emails from previous tests.
+	testEmailSender.Messages = nil
+
+	email := "reset@example.com"
+
 	_, err := db.CreatePasswordResetUser(
 		ctx,
-		"reset@example.com",
+		email,
 	)
 	require.NoError(t, err)
 
@@ -546,7 +561,7 @@ func TestPasswordReset_ResendVerification_Cooldown(t *testing.T) {
 		verificationID.String() +
 		"/resend"
 
-	// First resend should succeed and start the cooldown.
+	// First resend should succeed and send another email.
 	firstResendReq := httptest.NewRequest(
 		http.MethodPost,
 		resendURL,
@@ -556,6 +571,16 @@ func TestPasswordReset_ResendVerification_Cooldown(t *testing.T) {
 	firstResendResp, err := testApp.Test(firstResendReq)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, firstResendResp.StatusCode)
+
+	// Two emails should have been sent:
+	// one for the initial PIN and one for the resend.
+	require.Len(t, testEmailSender.Messages, 2)
+
+	firstMessage := testEmailSender.Messages[0]
+	secondMessage := testEmailSender.Messages[1]
+
+	require.Equal(t, email, firstMessage.To.Email)
+	require.Equal(t, email, secondMessage.To.Email)
 
 	// Second resend should be rejected by the cooldown.
 	secondResendReq := httptest.NewRequest(
@@ -584,6 +609,9 @@ func TestPasswordReset_ResendVerification_Cooldown(t *testing.T) {
 		passwordreset.CodeVerificationResendCooldown,
 		body.Error.Code,
 	)
+
+	// The rejected resend should not send another email.
+	require.Len(t, testEmailSender.Messages, 2)
 }
 
 func TestPasswordReset_VerifyPIN_AttemptsExceeded(t *testing.T) {

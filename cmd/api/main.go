@@ -6,11 +6,13 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
@@ -31,7 +33,9 @@ func main() {
 		fmt.Println("Logger error:", err)
 		return
 	}
-	defer log.Sync()
+	defer func() {
+		_ = log.Sync()
+	}()
 
 	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -48,6 +52,7 @@ func main() {
 	})
 
 	app.Use(recoverer.New())
+	app.Use(requestid.New())
 
 	healthHandler := health.NewHandler()
 	health.Routes(app, healthHandler)
@@ -56,10 +61,20 @@ func main() {
     cfg.GoogleClientID,
 	)
 
+	var emailSender email.Sender
+
+	if cfg.AppEnv == "development" {
+		emailSender = email.NewDevSender(log)
+	} else {
+		emailSender = email.NewUnconfiguredSender()
+	}
+
 	auth.RegisterModule(
     app,
     pool,
     cfg,
+		log,
+		emailSender,
     googleTokenVerifier,
 	)
 

@@ -117,6 +117,7 @@ SELECT
     vr.last_sent_at,
     vr.created_at,
 
+    ppr.email,
     ppr.status AS password_reset_status,
     ppr.expires_at AS password_reset_expires_at
 FROM verification_requests vr
