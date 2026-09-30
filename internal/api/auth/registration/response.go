@@ -3,47 +3,47 @@ package registration
 import "github.com/google/uuid"
 
 type RegisterResponse struct {
-	VerificationID uuid.UUID `json:"verification_id"`
+    VerificationID uuid.UUID `json:"verification_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 }
 
 type CreatePINResponse struct {
-	VerificationID string `json:"verification_id"`
+    VerificationID string `json:"verification_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 }
 
 type GetVerificationResponse struct {
-    VerificationID  string `json:"verification_id"`
-    Status          string `json:"status"`
-    PINIssued       bool   `json:"pin_issued"`
-    ResendInSeconds  int    `json:"resend_in_seconds"`
+    VerificationID string `json:"verification_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+    Status         string `json:"status" example:"pending"`
+    PINIssued      bool   `json:"pin_issued" example:"true"`
+    ResendInSeconds int   `json:"resend_in_seconds" example:"42"`
 }
 
 type ResendVerificationResponse struct {
-	VerificationID string `json:"verification_id"`
+    VerificationID string `json:"verification_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 }
 
 type VerifyRegistrationResponse struct {
-	RegistrationContinuationToken string `json:"registration_continuation_token"`
+    RegistrationContinuationToken string `json:"registration_continuation_token" example:"eyJhbGciOiJIUzI1NiJ9..."`
 }
 
 type GetRegistrationContinuationResponse struct {
-	Email            string `json:"email"`
-	RegistrationType string `json:"registration_type"`
-	RequiresPassword bool   `json:"requires_password"`
+    Email            string `json:"email" example:"user@example.com"`
+    RegistrationType string `json:"registration_type" example:"manual"`
+    RequiresPassword bool   `json:"requires_password" example:"true"`
 }
 
 type FinalizeManualRegistrationResponse struct {
-    Email       string `json:"email"`
-    DisplayName string `json:"display_name"`
+    Email       string `json:"email" example:"user@example.com"`
+    DisplayName string `json:"display_name" example:"John Doe"`
 }
 
 type FinalizeSocialRegistrationUser struct {
-	ID          string `json:"id"`
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name"`
+    ID          string `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+    Email       string `json:"email" example:"user@example.com"`
+    DisplayName string `json:"display_name" example:"John Doe"`
 }
 
 type FinalizeSocialRegistrationResponse struct {
-	AccessToken  string                          `json:"access_token"`
-	RefreshToken string                          `json:"refresh_token"`
-	User         FinalizeSocialRegistrationUser `json:"user"`
+    AccessToken  string                          `json:"access_token" example:"eyJhbGciOiJIUzI1NiJ9..."`
+    RefreshToken string                          `json:"refresh_token" example:"v1.refresh-token-example"`
+    User         FinalizeSocialRegistrationUser `json:"user"`
 }

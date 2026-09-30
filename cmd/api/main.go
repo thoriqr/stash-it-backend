@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	swaggo "github.com/gofiber/contrib/v3/swaggo"
 	"github.com/gofiber/fiber/v3"
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
+
+	_ "github.com/thoriqr/stash-it-backend/docs"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
@@ -19,6 +22,10 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
+// @title Stash It API
+// @version 1.0
+// @description REST API for Stash It.
+// @BasePath /
 func main() {
 	ctx := context.Background()
 
@@ -53,6 +60,10 @@ func main() {
 
 	app.Use(recoverer.New())
 	app.Use(requestid.New())
+
+	app.Get("/docs/*", swaggo.New(swaggo.Config{
+		DefaultModelsExpandDepth: -1,
+	}))
 
 	healthHandler := health.NewHandler()
 	health.Routes(app, healthHandler)

@@ -1,0 +1,609 @@
+basePath: /
+definitions:
+  registration.CreatePINAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.CreatePINResponse'
+      message:
+        example: verification PIN created
+        type: string
+    type: object
+  registration.CreatePINResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  registration.FinalizeManualRegistrationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.FinalizeManualRegistrationResponse'
+      message:
+        example: registration completed successfully
+        type: string
+    type: object
+  registration.FinalizeManualRegistrationRequest:
+    properties:
+      display_name:
+        example: John Doe
+        maxLength: 100
+        minLength: 2
+        type: string
+      password:
+        example: password123
+        minLength: 8
+        type: string
+    required:
+    - display_name
+    - password
+    type: object
+  registration.FinalizeManualRegistrationResponse:
+    properties:
+      display_name:
+        example: John Doe
+        type: string
+      email:
+        example: user@example.com
+        type: string
+    type: object
+  registration.FinalizeSocialRegistrationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.FinalizeSocialRegistrationResponse'
+      message:
+        example: registration completed successfully
+        type: string
+    type: object
+  registration.FinalizeSocialRegistrationRequest:
+    properties:
+      display_name:
+        example: John Doe
+        maxLength: 100
+        minLength: 2
+        type: string
+    required:
+    - display_name
+    type: object
+  registration.FinalizeSocialRegistrationResponse:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiJ9...
+        type: string
+      refresh_token:
+        example: v1.refresh-token-example
+        type: string
+      user:
+        $ref: '#/definitions/registration.FinalizeSocialRegistrationUser'
+    type: object
+  registration.FinalizeSocialRegistrationUser:
+    properties:
+      display_name:
+        example: John Doe
+        type: string
+      email:
+        example: user@example.com
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  registration.GetRegistrationContinuationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.GetRegistrationContinuationResponse'
+      message:
+        example: registration continuation is valid
+        type: string
+    type: object
+  registration.GetRegistrationContinuationResponse:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      registration_type:
+        example: manual
+        type: string
+      requires_password:
+        example: true
+        type: boolean
+    type: object
+  registration.GetVerificationResponse:
+    properties:
+      pin_issued:
+        example: true
+        type: boolean
+      resend_in_seconds:
+        example: 42
+        type: integer
+      status:
+        example: pending
+        type: string
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  registration.RegisterAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.RegisterResponse'
+      message:
+        example: verification code sent
+        type: string
+    type: object
+  registration.RegisterRequest:
+    properties:
+      email:
+        example: user@example.com
+        maxLength: 255
+        type: string
+    required:
+    - email
+    type: object
+  registration.RegisterResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  registration.ResendVerificationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.ResendVerificationResponse'
+      message:
+        example: verification code resent
+        type: string
+    type: object
+  registration.ResendVerificationResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  registration.VerifyRegistrationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/registration.VerifyRegistrationResponse'
+      message:
+        example: registration verified
+        type: string
+    type: object
+  registration.VerifyRegistrationRequest:
+    properties:
+      pin:
+        example: "123456"
+        type: string
+    required:
+    - pin
+    type: object
+  registration.VerifyRegistrationResponse:
+    properties:
+      registration_continuation_token:
+        example: eyJhbGciOiJIUzI1NiJ9...
+        type: string
+    type: object
+  swagger.APIError:
+    properties:
+      code:
+        example: ERROR_CODE
+        type: string
+      message:
+        example: request failed
+        type: string
+    type: object
+  swagger.APIErrorField:
+    properties:
+      field:
+        example: email
+        type: string
+      message:
+        example: invalid email
+        type: string
+    type: object
+  swagger.APIErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/swagger.APIError'
+    type: object
+  swagger.ValidationError:
+    properties:
+      code:
+        example: VALIDATION_ERROR
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/swagger.APIErrorField'
+        type: array
+      message:
+        example: validation failed
+        type: string
+    type: object
+  swagger.ValidationErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/swagger.ValidationError'
+    type: object
+info:
+  contact: {}
+  description: REST API for Stash It.
+  title: Stash It API
+  version: "1.0"
+paths:
+  /auth/register/continuation:
+    get:
+      description: |-
+        Validate and retrieve the registration continuation associated with the continuation token.
+        Possible error codes:
+        - REGISTRATION_CONTINUATION_REQUIRED
+        - REGISTRATION_CONTINUATION_CONSUMED
+        - REGISTRATION_CONTINUATION_EXPIRED
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Registration continuation token
+        in: header
+        name: X-Registration-Continuation
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/registration.GetRegistrationContinuationAPIResponse'
+        "401":
+          description: Registration continuation token is required
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Registration continuation is invalid or expired
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Get registration continuation
+      tags:
+      - Authentication
+  /auth/register/finalize/manual:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Complete a manual registration using a valid registration continuation token.
+        Possible error codes:
+        - REGISTRATION_CONTINUATION_CONSUMED
+        - REGISTRATION_CONTINUATION_EXPIRED
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - INVALID_REGISTRATION_TYPE
+        - USER_ALREADY_EXISTS
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Registration continuation token
+        in: header
+        name: X-Registration-Continuation
+        required: true
+        type: string
+      - description: Finalize registration request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/registration.FinalizeManualRegistrationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/registration.FinalizeManualRegistrationAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Registration continuation token is required
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Registration cannot be finalized
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Finalize manual registration
+      tags:
+      - Authentication
+  /auth/register/finalize/social:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Complete a social registration using a valid registration continuation token and create an authenticated session.
+        Possible error codes:
+        - REGISTRATION_CONTINUATION_CONSUMED
+        - REGISTRATION_CONTINUATION_EXPIRED
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - INVALID_REGISTRATION_TYPE
+        - USER_ALREADY_EXISTS
+        - AUTH_IDENTITY_ALREADY_EXISTS
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Registration continuation token
+        in: header
+        name: X-Registration-Continuation
+        required: true
+        type: string
+      - description: Client platform
+        in: header
+        name: X-Platform
+        type: string
+      - description: Client installation ID (UUID)
+        in: header
+        name: X-Installation-ID
+        type: string
+      - description: Client device name
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: Client user agent
+        in: header
+        name: User-Agent
+        type: string
+      - description: Finalize social registration request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/registration.FinalizeSocialRegistrationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/registration.FinalizeSocialRegistrationAPIResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Registration continuation token is required
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Registration cannot be finalized
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Finalize social registration
+      tags:
+      - Authentication
+  /auth/register/manual:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Start a manual registration flow using an email address.
+        Possible error codes:
+        - VALIDATION_ERROR
+        - REGISTRATION_ALREADY_COMPLETED
+        - REGISTRATION_ALREADY_EXISTS
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Registration request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/registration.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/registration.RegisterAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "409":
+          description: Registration conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Register with email
+      tags:
+      - Authentication
+  /auth/register/verification/{verification_id}:
+    get:
+      description: |-
+        Get the current status of a registration verification request.
+        Possible error codes:
+        - BAD_REQUEST
+        - RESOURCE_NOT_FOUND
+        - CONFLICT
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/registration.GetVerificationResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification is no longer pending
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Get registration verification
+      tags:
+      - Authentication
+  /auth/register/verification/{verification_id}/pin:
+    post:
+      description: |-
+        Generate and send a verification PIN for a pending registration.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/registration.CreatePINAPIResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification or registration conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Create verification PIN
+      tags:
+      - Authentication
+  /auth/register/verification/{verification_id}/resend:
+    post:
+      description: |-
+        Generate and send a new verification PIN for a pending registration.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - VERIFICATION_RESEND_COOLDOWN
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/registration.ResendVerificationAPIResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification or registration conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Resend verification PIN
+      tags:
+      - Authentication
+  /auth/register/verification/{verification_id}/verify:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Verify a registration using the verification PIN.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - REGISTRATION_NOT_PENDING
+        - REGISTRATION_EXPIRED
+        - VERIFICATION_CODE_ATTEMPTS_EXCEEDED
+        - INVALID_VERIFICATION_CODE
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      - description: Verification request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/registration.VerifyRegistrationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/registration.VerifyRegistrationAPIResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Verify registration
+      tags:
+      - Authentication
+swagger: "2.0"

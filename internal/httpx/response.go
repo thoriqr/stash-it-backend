@@ -3,9 +3,9 @@ package httpx
 import "github.com/gofiber/fiber/v3"
 
 type Response[T any] struct {
-	Data    *T   `json:"data"`
+	Data    *T    `json:"data"`
 	Message string `json:"message"`
-	Meta    Meta `json:"meta"`
+	Meta    *Meta `json:"meta,omitempty"`
 }
 
 type Meta struct {
@@ -23,7 +23,6 @@ func Success[T any](message string, data *T) Response[T] {
 	return Response[T]{
 		Data:    data,
 		Message: message,
-		Meta:    Meta{},
 	}
 }
 
@@ -43,7 +42,7 @@ func OKWithMeta[T any](
 		Response[T]{
 			Data:    data,
 			Message: message,
-			Meta:    meta,
+			Meta:    &meta,
 		},
 	)
 }
@@ -59,7 +58,6 @@ func OKMessage(c fiber.Ctx, message string) error {
 		Response[any]{
 			Data:    nil,
 			Message: message,
-			Meta:    Meta{},
 		},
 	)
 }
