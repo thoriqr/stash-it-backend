@@ -46,8 +46,8 @@ type LoginGoogleSuccessAPIResponse struct {
 
 type LoginGoogleSuccessData struct {
 	Outcome      string    `json:"outcome" example:"authenticated"`
-	AccessToken  string    `json:"access_token" example:"eyJhbGciOiJIUzI1NiJ9.example-access-token"`
-	RefreshToken string    `json:"refresh_token" example:"eyJhbGciOiJIUzI1NiJ9.example-refresh-token"`
+	AccessToken  string    `json:"access_token" example:"eyJhbGciOiJIUzI1NiJ9..."`
+	RefreshToken string    `json:"refresh_token" example:"v1.refresh-token-example"`
 	User         LoginUser `json:"user"`
 }
 

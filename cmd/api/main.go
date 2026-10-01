@@ -26,6 +26,10 @@ import (
 // @version 1.0
 // @description REST API for Stash It.
 // @BasePath /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter your access token using the Bearer scheme. Example: "Bearer {token}"
 func main() {
 	ctx := context.Background()
 

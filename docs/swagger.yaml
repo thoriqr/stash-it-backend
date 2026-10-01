@@ -48,13 +48,13 @@ definitions:
   login.LoginGoogleSuccessData:
     properties:
       access_token:
-        example: eyJhbGciOiJIUzI1NiJ9.example-access-token
+        example: eyJhbGciOiJIUzI1NiJ9...
         type: string
       outcome:
         example: authenticated
         type: string
       refresh_token:
-        example: eyJhbGciOiJIUzI1NiJ9.example-refresh-token
+        example: v1.refresh-token-example
         type: string
       user:
         $ref: '#/definitions/login.LoginUser'
@@ -416,6 +416,115 @@ definitions:
         example: eyJhbGciOiJIUzI1NiJ9...
         type: string
     type: object
+  session.ListSessionsAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/session.ListSessionsResponse'
+      message:
+        example: sessions retrieved successfully
+        type: string
+      meta:
+        $ref: '#/definitions/session.ListSessionsMeta'
+    type: object
+  session.ListSessionsMeta:
+    properties:
+      pagination:
+        $ref: '#/definitions/session.ListSessionsPagination'
+    type: object
+  session.ListSessionsPagination:
+    properties:
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      total:
+        example: 42
+        type: integer
+      total_pages:
+        example: 3
+        type: integer
+    type: object
+  session.ListSessionsResponse:
+    properties:
+      sessions:
+        items:
+          $ref: '#/definitions/session.SessionResponse'
+        type: array
+    type: object
+  session.LogoutAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: logout successful
+        type: string
+    type: object
+  session.RefreshTokenAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/session.RefreshTokenResponse'
+      message:
+        example: token refreshed successfully
+        type: string
+    type: object
+  session.RefreshTokenRequest:
+    properties:
+      refresh_token:
+        example: v1.refresh-token-example
+        maxLength: 512
+        type: string
+    required:
+    - refresh_token
+    type: object
+  session.RefreshTokenResponse:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiJ9...
+        type: string
+      refresh_token:
+        example: v1.refresh-token-example
+        type: string
+    type: object
+  session.RevokeSessionAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: session revoked successfully
+        type: string
+    type: object
+  session.SessionResponse:
+    properties:
+      absolute_expires_at:
+        example: "2026-10-08T10:30:00Z"
+        type: string
+      created_at:
+        example: "2026-10-01T10:30:00Z"
+        type: string
+      device_name:
+        example: Chrome on Windows
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      installation_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      is_current:
+        example: true
+        type: boolean
+      last_activity_at:
+        example: "2026-10-02T00:15:00Z"
+        type: string
+      platform:
+        example: web
+        type: string
+      user_agent:
+        example: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        type: string
+    type: object
   swagger.APIError:
     properties:
       code:
@@ -667,6 +776,34 @@ paths:
       summary: Confirm Google account link
       tags:
       - Login
+  /auth/logout:
+    post:
+      description: |-
+        Log out the current session using a valid access token.
+        Possible error codes:
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.LogoutAPIResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Logout
+      tags:
+      - Session
   /auth/password-reset:
     post:
       consumes:
@@ -974,6 +1111,46 @@ paths:
       summary: Verify password reset
       tags:
       - Password Reset
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Refresh an access token using a valid refresh token.
+        Possible error codes:
+        - REFRESH_TOKEN_INVALID
+        - SESSION_REVOKED
+        - SESSION_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Refresh token request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.RefreshTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.RefreshTokenAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Refresh token or session is invalid
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Refresh access token
+      tags:
+      - Session
   /auth/register/continuation:
     get:
       description: |-
@@ -1352,4 +1529,99 @@ paths:
       summary: Verify registration
       tags:
       - Registration
+  /auth/sessions:
+    get:
+      description: |-
+        Get the current user's sessions.
+        Possible error codes:
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - default: 1
+        description: Page number
+        example: 1
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Number of sessions per page
+        example: 20
+        in: query
+        maximum: 50
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.ListSessionsAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List sessions
+      tags:
+      - Session
+  /auth/sessions/{session_id}:
+    delete:
+      description: |-
+        Revoke a session belonging to the current user.
+        Possible error codes:
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Session ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.RevokeSessionAPIResponse'
+        "400":
+          description: Invalid session ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke session
+      tags:
+      - Session
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter your access token using the Bearer scheme. Example: "Bearer
+      {token}"'
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

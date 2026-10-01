@@ -20,6 +20,23 @@ func NewHandler(service SessionService) *Handler {
 	}
 }
 
+// RefreshToken godoc
+// @Summary Refresh access token
+// @Description Refresh an access token using a valid refresh token.
+// @Description Possible error codes:
+// @Description - REFRESH_TOKEN_INVALID
+// @Description - SESSION_REVOKED
+// @Description - SESSION_EXPIRED
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Session
+// @Accept json
+// @Produce json
+// @Param request body RefreshTokenRequest true "Refresh token request"
+// @Success 200 {object} RefreshTokenAPIResponse
+// @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
+// @Failure 401 {object} swagger.APIErrorResponse "Refresh token or session is invalid"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /auth/refresh [post]
 func (h *Handler) RefreshToken(c fiber.Ctx) error {
 	var req RefreshTokenRequest
 
@@ -47,6 +64,20 @@ func (h *Handler) RefreshToken(c fiber.Ctx) error {
 	)
 }
 
+// Logout godoc
+// @Summary Logout
+// @Description Log out the current session using a valid access token.
+// @Description Possible error codes:
+// @Description - INVALID_AUTHORIZATION_HEADER
+// @Description - INVALID_ACCESS_TOKEN
+// @Description - ACCESS_TOKEN_EXPIRED
+// @Tags Session
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} LogoutAPIResponse
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /auth/logout [post]
 func (h *Handler) Logout(c fiber.Ctx) error {
 	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
 
@@ -63,6 +94,21 @@ func (h *Handler) Logout(c fiber.Ctx) error {
 	)
 }
 
+// ListSessions godoc
+// @Summary List sessions
+// @Description Get the current user's sessions.
+// @Description Possible error codes:
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Session
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number" minimum(1) default(1) example(1)
+// @Param limit query int false "Number of sessions per page" minimum(1) maximum(50) default(20) example(20)
+// @Success 200 {object} ListSessionsAPIResponse
+// @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /auth/sessions [get]
 func (h *Handler) ListSessions(c fiber.Ctx) error {
 	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
 
@@ -139,6 +185,22 @@ func (h *Handler) ListSessions(c fiber.Ctx) error {
 	)
 }
 
+// RevokeSession godoc
+// @Summary Revoke session
+// @Description Revoke a session belonging to the current user.
+// @Description Possible error codes:
+// @Description - RESOURCE_NOT_FOUND
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Session
+// @Produce json
+// @Security BearerAuth
+// @Param session_id path string true "Session ID" example(01a0f359-093b-737a-963a-80f7ca6768ed)
+// @Success 200 {object} RevokeSessionAPIResponse
+// @Failure 400 {object} swagger.APIErrorResponse "Invalid session ID"
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 404 {object} swagger.APIErrorResponse "Session not found"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /auth/sessions/{session_id} [delete]
 func (h *Handler) RevokeSession(c fiber.Ctx) error {
 	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
 

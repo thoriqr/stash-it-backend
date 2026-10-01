@@ -285,6 +285,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Log out the current session using a valid access token.\nPossible error codes:\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Session"
+                ],
+                "summary": "Logout",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.LogoutAPIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/password-reset": {
             "post": {
                 "description": "Start a password reset flow using an email address.\nPossible error codes:\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
@@ -660,6 +697,58 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Verification conflict",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Refresh an access token using a valid refresh token.\nPossible error codes:\n- REFRESH_TOKEN_INVALID\n- SESSION_REVOKED\n- SESSION_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Session"
+                ],
+                "summary": "Refresh access token",
+                "parameters": [
+                    {
+                        "description": "Refresh token request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/session.RefreshTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.RefreshTokenAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Refresh token or session is invalid",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -1149,6 +1238,129 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/auth/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the current user's sessions.\nPossible error codes:\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Session"
+                ],
+                "summary": "List sessions",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "example": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 50,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "example": 20,
+                        "description": "Number of sessions per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.ListSessionsAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/sessions/{session_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revoke a session belonging to the current user.\nPossible error codes:\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Session"
+                ],
+                "summary": "Revoke session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.RevokeSessionAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid session ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1222,7 +1434,7 @@ const docTemplate = `{
             "properties": {
                 "access_token": {
                     "type": "string",
-                    "example": "eyJhbGciOiJIUzI1NiJ9.example-access-token"
+                    "example": "eyJhbGciOiJIUzI1NiJ9..."
                 },
                 "outcome": {
                     "type": "string",
@@ -1230,7 +1442,7 @@ const docTemplate = `{
                 },
                 "refresh_token": {
                     "type": "string",
-                    "example": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token"
+                    "example": "v1.refresh-token-example"
                 },
                 "user": {
                     "$ref": "#/definitions/login.LoginUser"
@@ -1757,6 +1969,164 @@ const docTemplate = `{
                 }
             }
         },
+        "session.ListSessionsAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/session.ListSessionsResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "sessions retrieved successfully"
+                },
+                "meta": {
+                    "$ref": "#/definitions/session.ListSessionsMeta"
+                }
+            }
+        },
+        "session.ListSessionsMeta": {
+            "type": "object",
+            "properties": {
+                "pagination": {
+                    "$ref": "#/definitions/session.ListSessionsPagination"
+                }
+            }
+        },
+        "session.ListSessionsPagination": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "total_pages": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "session.ListSessionsResponse": {
+            "type": "object",
+            "properties": {
+                "sessions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/session.SessionResponse"
+                    }
+                }
+            }
+        },
+        "session.LogoutAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "logout successful"
+                }
+            }
+        },
+        "session.RefreshTokenAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/session.RefreshTokenResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "token refreshed successfully"
+                }
+            }
+        },
+        "session.RefreshTokenRequest": {
+            "type": "object",
+            "required": [
+                "refresh_token"
+            ],
+            "properties": {
+                "refresh_token": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "example": "v1.refresh-token-example"
+                }
+            }
+        },
+        "session.RefreshTokenResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9..."
+                },
+                "refresh_token": {
+                    "type": "string",
+                    "example": "v1.refresh-token-example"
+                }
+            }
+        },
+        "session.RevokeSessionAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "session revoked successfully"
+                }
+            }
+        },
+        "session.SessionResponse": {
+            "type": "object",
+            "properties": {
+                "absolute_expires_at": {
+                    "type": "string",
+                    "example": "2026-10-08T10:30:00Z"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-01T10:30:00Z"
+                },
+                "device_name": {
+                    "type": "string",
+                    "example": "Chrome on Windows"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "installation_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "is_current": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "last_activity_at": {
+                    "type": "string",
+                    "example": "2026-10-02T00:15:00Z"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "web"
+                },
+                "user_agent": {
+                    "type": "string",
+                    "example": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+            }
+        },
         "swagger.APIError": {
             "type": "object",
             "properties": {
@@ -1817,6 +2187,14 @@ const docTemplate = `{
                     "$ref": "#/definitions/swagger.ValidationError"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Enter your access token using the Bearer scheme. Example: \"Bearer {token}\"",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }`
