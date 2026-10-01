@@ -1,11 +1,116 @@
 basePath: /
 definitions:
+  login.GetAccountLinkConfirmationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/login.GetAccountLinkConfirmationResponse'
+      message:
+        example: account link confirmation retrieved successfully
+        type: string
+    type: object
+  login.GetAccountLinkConfirmationResponse:
+    properties:
+      display_name_snapshot:
+        example: John Doe
+        type: string
+      email_snapshot:
+        example: user@gmail.com
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      provider:
+        example: google
+        type: string
+      user_display_name:
+        example: John Doe
+        type: string
+      user_email:
+        example: user@example.com
+        type: string
+    type: object
+  login.LoginGoogleRequest:
+    properties:
+      id_token:
+        example: eyJhbGciOiJSUzI1NiIsImtpZCI6ImV4YW1wbGUifQ...
+        type: string
+    required:
+    - id_token
+    type: object
+  login.LoginGoogleSuccessAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/login.LoginGoogleSuccessData'
+      message:
+        example: login successful
+        type: string
+    type: object
+  login.LoginGoogleSuccessData:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiJ9.example-access-token
+        type: string
+      outcome:
+        example: authenticated
+        type: string
+      refresh_token:
+        example: eyJhbGciOiJIUzI1NiJ9.example-refresh-token
+        type: string
+      user:
+        $ref: '#/definitions/login.LoginUser'
+    type: object
+  login.LoginManualAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/login.LoginManualResponse'
+      message:
+        example: login successful
+        type: string
+    type: object
+  login.LoginManualRequest:
+    properties:
+      email:
+        example: user@example.com
+        maxLength: 254
+        type: string
+      password:
+        example: password123
+        maxLength: 128
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  login.LoginManualResponse:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiJ9.example-access-token
+        type: string
+      refresh_token:
+        example: eyJhbGciOiJIUzI1NiJ9.example-refresh-token
+        type: string
+      user:
+        $ref: '#/definitions/login.LoginUser'
+    type: object
+  login.LoginUser:
+    properties:
+      display_name:
+        example: John Doe
+        type: string
+      email:
+        example: user@example.com
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
   registration.CreatePINAPIResponse:
     properties:
       data:
         $ref: '#/definitions/registration.CreatePINResponse'
       message:
-        example: verification PIN created
+        example: verification code created
         type: string
     type: object
   registration.CreatePINResponse:
@@ -193,10 +298,10 @@ definitions:
   swagger.APIErrorField:
     properties:
       field:
-        example: email
+        example: field_name
         type: string
       message:
-        example: invalid email
+        example: invalid value
         type: string
     type: object
   swagger.APIErrorResponse:
@@ -228,6 +333,210 @@ info:
   title: Stash It API
   version: "1.0"
 paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Authenticate a user using email and password and create a new session.
+        Possible error codes:
+        - VALIDATION_ERROR
+        - INVALID_CREDENTIALS
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Login request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/login.LoginManualRequest'
+      - description: Client platform
+        in: header
+        name: X-Platform
+        type: string
+      - description: Client installation ID (UUID)
+        in: header
+        name: X-Installation-ID
+        type: string
+      - description: Client device name
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: Client user agent
+        in: header
+        name: User-Agent
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/login.LoginManualAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid email or password
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Login with email and password
+      tags:
+      - Login
+  /auth/login/google:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Authenticate a user using a Google ID token.
+        The response contains one of three outcomes:
+        - authenticated: the user is authenticated and access/refresh tokens are returned.
+        - account_link_required: the user must confirm linking the Google account.
+        - registration_required: the user must continue the registration flow.
+        Possible error codes:
+        - VALIDATION_ERROR
+        - INVALID_GOOGLE_TOKEN
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Google login request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/login.LoginGoogleRequest'
+      - description: Client platform
+        in: header
+        name: X-Platform
+        type: string
+      - description: Client installation ID (UUID)
+        in: header
+        name: X-Installation-ID
+        type: string
+      - description: Client device name
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: Client user agent
+        in: header
+        name: User-Agent
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/login.LoginGoogleSuccessAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationError'
+        "401":
+          description: Invalid Google ID token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Login with Google
+      tags:
+      - Login
+  /auth/login/google/account-link/{confirmation_id}:
+    get:
+      description: |-
+        Retrieve an active Google account link confirmation.
+        Possible error codes:
+        - BAD_REQUEST
+        - ACCOUNT_LINK_CONFIRMATION_INVALID
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Account link confirmation ID
+        in: path
+        name: confirmation_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/login.GetAccountLinkConfirmationAPIResponse'
+        "400":
+          description: Invalid confirmation ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Account link confirmation is invalid
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Get account link confirmation
+      tags:
+      - Login
+  /auth/login/google/account-link/{confirmation_id}/confirm:
+    post:
+      description: |-
+        Confirm a Google account link and create an authenticated session.
+        Possible error codes:
+        - BAD_REQUEST
+        - ACCOUNT_LINK_CONFIRMATION_INVALID
+        - AUTH_IDENTITY_ALREADY_EXISTS
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Account link confirmation ID
+        in: path
+        name: confirmation_id
+        required: true
+        type: string
+      - description: Client platform
+        in: header
+        name: X-Platform
+        type: string
+      - description: Client installation ID (UUID)
+        in: header
+        name: X-Installation-ID
+        type: string
+      - description: Client device name
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: Client user agent
+        in: header
+        name: User-Agent
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/login.LoginGoogleSuccessAPIResponse'
+        "400":
+          description: Invalid confirmation ID or session metadata
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Account link confirmation is invalid or auth identity already
+            exists
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Confirm Google account link
+      tags:
+      - Login
   /auth/register/continuation:
     get:
       description: |-
@@ -266,7 +575,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Get registration continuation
       tags:
-      - Authentication
+      - Registration
   /auth/register/finalize/manual:
     post:
       consumes:
@@ -318,7 +627,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Finalize manual registration
       tags:
-      - Authentication
+      - Registration
   /auth/register/finalize/social:
     post:
       consumes:
@@ -387,7 +696,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Finalize social registration
       tags:
-      - Authentication
+      - Registration
   /auth/register/manual:
     post:
       consumes:
@@ -427,7 +736,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Register with email
       tags:
-      - Authentication
+      - Registration
   /auth/register/verification/{verification_id}:
     get:
       description: |-
@@ -468,7 +777,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Get registration verification
       tags:
-      - Authentication
+      - Registration
   /auth/register/verification/{verification_id}/pin:
     post:
       description: |-
@@ -510,7 +819,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Create verification PIN
       tags:
-      - Authentication
+      - Registration
   /auth/register/verification/{verification_id}/resend:
     post:
       description: |-
@@ -553,7 +862,7 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Resend verification PIN
       tags:
-      - Authentication
+      - Registration
   /auth/register/verification/{verification_id}/verify:
     post:
       consumes:
@@ -605,5 +914,5 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Verify registration
       tags:
-      - Authentication
+      - Registration
 swagger: "2.0"

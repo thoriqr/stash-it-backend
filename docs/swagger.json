@@ -8,6 +8,276 @@
     },
     "basePath": "/",
     "paths": {
+        "/auth/login": {
+            "post": {
+                "description": "Authenticate a user using email and password and create a new session.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_CREDENTIALS\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Login with email and password",
+                "parameters": [
+                    {
+                        "description": "Login request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/login.LoginManualRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client platform",
+                        "name": "X-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client installation ID (UUID)",
+                        "name": "X-Installation-ID",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client device name",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client user agent",
+                        "name": "User-Agent",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/login.LoginManualAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid email or password",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login/google": {
+            "post": {
+                "description": "Authenticate a user using a Google ID token.\nThe response contains one of three outcomes:\n- authenticated: the user is authenticated and access/refresh tokens are returned.\n- account_link_required: the user must confirm linking the Google account.\n- registration_required: the user must continue the registration flow.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_GOOGLE_TOKEN\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Login with Google",
+                "parameters": [
+                    {
+                        "description": "Google login request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/login.LoginGoogleRequest"
+                        }
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client platform",
+                        "name": "X-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client installation ID (UUID)",
+                        "name": "X-Installation-ID",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client device name",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client user agent",
+                        "name": "User-Agent",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/login.LoginGoogleSuccessAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationError"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid Google ID token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login/google/account-link/{confirmation_id}": {
+            "get": {
+                "description": "Retrieve an active Google account link confirmation.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Get account link confirmation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Account link confirmation ID",
+                        "name": "confirmation_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/login.GetAccountLinkConfirmationAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid confirmation ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Account link confirmation is invalid",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login/google/account-link/{confirmation_id}/confirm": {
+            "post": {
+                "description": "Confirm a Google account link and create an authenticated session.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- AUTH_IDENTITY_ALREADY_EXISTS\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Confirm Google account link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Account link confirmation ID",
+                        "name": "confirmation_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client platform",
+                        "name": "X-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client installation ID (UUID)",
+                        "name": "X-Installation-ID",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client device name",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client user agent",
+                        "name": "User-Agent",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/login.LoginGoogleSuccessAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid confirmation ID or session metadata",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Account link confirmation is invalid or auth identity already exists",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/register/continuation": {
             "get": {
                 "description": "Validate and retrieve the registration continuation associated with the continuation token.\nPossible error codes:\n- REGISTRATION_CONTINUATION_REQUIRED\n- REGISTRATION_CONTINUATION_CONSUMED\n- REGISTRATION_CONTINUATION_EXPIRED\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- INTERNAL_SERVER_ERROR",
@@ -15,7 +285,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Get registration continuation",
                 "parameters": [
@@ -65,7 +335,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Finalize manual registration",
                 "parameters": [
@@ -130,7 +400,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Finalize social registration",
                 "parameters": [
@@ -219,7 +489,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Register with email",
                 "parameters": [
@@ -268,7 +538,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Get registration verification",
                 "parameters": [
@@ -321,7 +591,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Create verification PIN",
                 "parameters": [
@@ -374,7 +644,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Resend verification PIN",
                 "parameters": [
@@ -430,7 +700,7 @@
                     "application/json"
                 ],
                 "tags": [
-                    "Authentication"
+                    "Registration"
                 ],
                 "summary": "Verify registration",
                 "parameters": [
@@ -487,6 +757,156 @@
         }
     },
     "definitions": {
+        "login.GetAccountLinkConfirmationAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/login.GetAccountLinkConfirmationResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "account link confirmation retrieved successfully"
+                }
+            }
+        },
+        "login.GetAccountLinkConfirmationResponse": {
+            "type": "object",
+            "properties": {
+                "display_name_snapshot": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "email_snapshot": {
+                    "type": "string",
+                    "example": "user@gmail.com"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "google"
+                },
+                "user_display_name": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "user_email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                }
+            }
+        },
+        "login.LoginGoogleRequest": {
+            "type": "object",
+            "required": [
+                "id_token"
+            ],
+            "properties": {
+                "id_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImV4YW1wbGUifQ..."
+                }
+            }
+        },
+        "login.LoginGoogleSuccessAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/login.LoginGoogleSuccessData"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "login successful"
+                }
+            }
+        },
+        "login.LoginGoogleSuccessData": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9.example-access-token"
+                },
+                "outcome": {
+                    "type": "string",
+                    "example": "authenticated"
+                },
+                "refresh_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token"
+                },
+                "user": {
+                    "$ref": "#/definitions/login.LoginUser"
+                }
+            }
+        },
+        "login.LoginManualAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/login.LoginManualResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "login successful"
+                }
+            }
+        },
+        "login.LoginManualRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "user@example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8,
+                    "example": "password123"
+                }
+            }
+        },
+        "login.LoginManualResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9.example-access-token"
+                },
+                "refresh_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token"
+                },
+                "user": {
+                    "$ref": "#/definitions/login.LoginUser"
+                }
+            }
+        },
+        "login.LoginUser": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
         "registration.CreatePINAPIResponse": {
             "type": "object",
             "properties": {
@@ -495,7 +915,7 @@
                 },
                 "message": {
                     "type": "string",
-                    "example": "verification PIN created"
+                    "example": "verification code created"
                 }
             }
         },
@@ -768,11 +1188,11 @@
             "properties": {
                 "field": {
                     "type": "string",
-                    "example": "email"
+                    "example": "field_name"
                 },
                 "message": {
                     "type": "string",
-                    "example": "invalid email"
+                    "example": "invalid value"
                 }
             }
         },

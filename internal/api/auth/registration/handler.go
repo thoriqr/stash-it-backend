@@ -27,7 +27,7 @@ func NewHandler(service RegistrationService) *Handler  {
 // @Description - REGISTRATION_ALREADY_COMPLETED
 // @Description - REGISTRATION_ALREADY_EXISTS
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Accept json
 // @Produce json
 // @Param request body RegisterRequest true "Registration request"
@@ -76,7 +76,7 @@ func (h *Handler) RegisterManual(c fiber.Ctx) error {
 // @Description - RESOURCE_NOT_FOUND
 // @Description - CONFLICT
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Produce json
 // @Param verification_id path string true "Verification ID"
 // @Success 200 {object} GetVerificationResponse
@@ -121,7 +121,7 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 // @Description - REGISTRATION_EXPIRED
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Produce json
 // @Param verification_id path string true "Verification ID"
 // @Success 201 {object} CreatePINAPIResponse
@@ -154,7 +154,7 @@ func (h *Handler) CreatePIN(c fiber.Ctx) error {
 
 	return httpx.Created(
 		c,
-		"verification PIN created",
+		"verification code created",
 		&response,
 	)
 }
@@ -169,7 +169,7 @@ func (h *Handler) CreatePIN(c fiber.Ctx) error {
 // @Description - VERIFICATION_RESEND_COOLDOWN
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Produce json
 // @Param verification_id path string true "Verification ID"
 // @Success 200 {object} ResendVerificationAPIResponse
@@ -218,7 +218,7 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // @Description - INVALID_VERIFICATION_CODE
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Accept json
 // @Produce json
 // @Param verification_id path string true "Verification ID"
@@ -275,7 +275,7 @@ func (h *Handler) VerifyRegistration(c fiber.Ctx) error {
 // @Description - REGISTRATION_NOT_PENDING
 // @Description - REGISTRATION_EXPIRED
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Produce json
 // @Param X-Registration-Continuation header string true "Registration continuation token"
 // @Success 200 {object} GetRegistrationContinuationAPIResponse
@@ -321,7 +321,7 @@ func (h *Handler) GetRegistrationContinuation(c fiber.Ctx) error {
 // @Description - INVALID_REGISTRATION_TYPE
 // @Description - USER_ALREADY_EXISTS
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Accept json
 // @Produce json
 // @Param X-Registration-Continuation header string true "Registration continuation token"
@@ -380,7 +380,7 @@ func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
 // @Description - USER_ALREADY_EXISTS
 // @Description - AUTH_IDENTITY_ALREADY_EXISTS
 // @Description - INTERNAL_SERVER_ERROR
-// @Tags Authentication
+// @Tags Registration
 // @Accept json
 // @Produce json
 // @Param X-Registration-Continuation header string true "Registration continuation token"
