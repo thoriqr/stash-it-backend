@@ -105,6 +105,136 @@ definitions:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
     type: object
+  password_reset.CreatePINAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.CreatePINResponse'
+      message:
+        example: verification code created
+        type: string
+    type: object
+  password_reset.CreatePINResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  password_reset.FinalizePasswordResetAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: password reset completed successfully
+        type: string
+    type: object
+  password_reset.FinalizePasswordResetRequest:
+    properties:
+      password:
+        example: password123
+        minLength: 8
+        type: string
+    required:
+    - password
+    type: object
+  password_reset.GetPasswordResetContinuationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.GetPasswordResetContinuationResponse'
+      message:
+        example: password reset continuation is valid
+        type: string
+    type: object
+  password_reset.GetPasswordResetContinuationResponse:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      has_password_credential:
+        example: true
+        type: boolean
+    type: object
+  password_reset.GetVerificationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.GetVerificationResponse'
+      message:
+        example: verification retrieved
+        type: string
+    type: object
+  password_reset.GetVerificationResponse:
+    properties:
+      pin_issued:
+        example: true
+        type: boolean
+      resend_in_seconds:
+        example: 42
+        type: integer
+      status:
+        example: pending
+        type: string
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  password_reset.RequestPasswordResetAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.RequestPasswordResetResponse'
+      message:
+        example: password reset requested
+        type: string
+    type: object
+  password_reset.RequestPasswordResetRequest:
+    properties:
+      email:
+        example: user@example.com
+        maxLength: 255
+        type: string
+    required:
+    - email
+    type: object
+  password_reset.RequestPasswordResetResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  password_reset.ResendVerificationAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.ResendVerificationResponse'
+      message:
+        example: verification code resent
+        type: string
+    type: object
+  password_reset.ResendVerificationResponse:
+    properties:
+      verification_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
+  password_reset.VerifyPasswordResetAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/password_reset.VerifyPasswordResetResponse'
+      message:
+        example: password reset verified
+        type: string
+    type: object
+  password_reset.VerifyPasswordResetRequest:
+    properties:
+      pin:
+        example: "123456"
+        type: string
+    required:
+    - pin
+    type: object
+  password_reset.VerifyPasswordResetResponse:
+    properties:
+      password_reset_continuation_token:
+        example: eyJhbGciOiJIUzI1NiJ9...
+        type: string
+    type: object
   registration.CreatePINAPIResponse:
     properties:
       data:
@@ -232,7 +362,7 @@ definitions:
       data:
         $ref: '#/definitions/registration.RegisterResponse'
       message:
-        example: verification code sent
+        example: registration requested
         type: string
     type: object
   registration.RegisterRequest:
@@ -537,6 +667,313 @@ paths:
       summary: Confirm Google account link
       tags:
       - Login
+  /auth/password-reset:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Start a password reset flow using an email address.
+        Possible error codes:
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Password reset request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/password_reset.RequestPasswordResetRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/password_reset.RequestPasswordResetAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "404":
+          description: User not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Request password reset
+      tags:
+      - Password Reset
+  /auth/password-reset/continuation:
+    get:
+      description: |-
+        Validate and retrieve the password reset continuation associated with the continuation token.
+        Possible error codes:
+        - PASSWORD_RESET_CONTINUATION_REQUIRED
+        - PASSWORD_RESET_CONTINUATION_CONSUMED
+        - PASSWORD_RESET_CONTINUATION_EXPIRED
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Password reset continuation token
+        in: header
+        name: X-Password-Reset-Continuation
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/password_reset.GetPasswordResetContinuationAPIResponse'
+        "401":
+          description: Password reset continuation token is required
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Password reset continuation is invalid or expired
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Get password reset continuation
+      tags:
+      - Password Reset
+  /auth/password-reset/finalize:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Complete a password reset using a valid password reset continuation token.
+        Possible error codes:
+        - PASSWORD_RESET_CONTINUATION_REQUIRED
+        - PASSWORD_RESET_CONTINUATION_CONSUMED
+        - PASSWORD_RESET_CONTINUATION_EXPIRED
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Password reset continuation token
+        in: header
+        name: X-Password-Reset-Continuation
+        required: true
+        type: string
+      - description: Password reset request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/password_reset.FinalizePasswordResetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/password_reset.FinalizePasswordResetAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Password reset continuation token is required
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Password reset continuation is invalid or expired
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Finalize password reset
+      tags:
+      - Password Reset
+  /auth/password-reset/verification/{verification_id}:
+    get:
+      description: |-
+        Get the current status of a password reset verification request.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/password_reset.GetVerificationAPIResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification or password reset conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Get password reset verification
+      tags:
+      - Password Reset
+  /auth/password-reset/verification/{verification_id}/pin:
+    post:
+      description: |-
+        Generate and send a verification PIN for a pending password reset.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/password_reset.CreatePINAPIResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification or password reset conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Create verification PIN
+      tags:
+      - Password Reset
+  /auth/password-reset/verification/{verification_id}/resend:
+    post:
+      description: |-
+        Generate and send a new verification PIN for a pending password reset.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - VERIFICATION_RESEND_COOLDOWN
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/password_reset.ResendVerificationAPIResponse'
+        "400":
+          description: Invalid verification ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification or password reset conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Resend password reset verification PIN
+      tags:
+      - Password Reset
+  /auth/password-reset/verification/{verification_id}/verify:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Verify a password reset using the verification PIN.
+        Possible error codes:
+        - VERIFICATION_NOT_PENDING
+        - PASSWORD_RESET_NOT_PENDING
+        - PASSWORD_RESET_EXPIRED
+        - INVALID_VERIFICATION_CODE
+        - VERIFICATION_CODE_ATTEMPTS_EXCEEDED
+        - RESOURCE_NOT_FOUND
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Verification ID
+        in: path
+        name: verification_id
+        required: true
+        type: string
+      - description: Password reset verification request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/password_reset.VerifyPasswordResetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/password_reset.VerifyPasswordResetAPIResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Verification not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Verification conflict
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Verify password reset
+      tags:
+      - Password Reset
   /auth/register/continuation:
     get:
       description: |-

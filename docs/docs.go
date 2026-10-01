@@ -285,6 +285,394 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/password-reset": {
+            "post": {
+                "description": "Start a password reset flow using an email address.\nPossible error codes:\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Request password reset",
+                "parameters": [
+                    {
+                        "description": "Password reset request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.RequestPasswordResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.RequestPasswordResetAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/continuation": {
+            "get": {
+                "description": "Validate and retrieve the password reset continuation associated with the continuation token.\nPossible error codes:\n- PASSWORD_RESET_CONTINUATION_REQUIRED\n- PASSWORD_RESET_CONTINUATION_CONSUMED\n- PASSWORD_RESET_CONTINUATION_EXPIRED\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Get password reset continuation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Password reset continuation token",
+                        "name": "X-Password-Reset-Continuation",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.GetPasswordResetContinuationAPIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Password reset continuation token is required",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Password reset continuation is invalid or expired",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/finalize": {
+            "post": {
+                "description": "Complete a password reset using a valid password reset continuation token.\nPossible error codes:\n- PASSWORD_RESET_CONTINUATION_REQUIRED\n- PASSWORD_RESET_CONTINUATION_CONSUMED\n- PASSWORD_RESET_CONTINUATION_EXPIRED\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Finalize password reset",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Password reset continuation token",
+                        "name": "X-Password-Reset-Continuation",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Password reset request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.FinalizePasswordResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.FinalizePasswordResetAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Password reset continuation token is required",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Password reset continuation is invalid or expired",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/verification/{verification_id}": {
+            "get": {
+                "description": "Get the current status of a password reset verification request.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Get password reset verification",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Verification ID",
+                        "name": "verification_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.GetVerificationAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid verification ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Verification not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Verification or password reset conflict",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/verification/{verification_id}/pin": {
+            "post": {
+                "description": "Generate and send a verification PIN for a pending password reset.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Create verification PIN",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Verification ID",
+                        "name": "verification_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.CreatePINAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid verification ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Verification not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Verification or password reset conflict",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/verification/{verification_id}/resend": {
+            "post": {
+                "description": "Generate and send a new verification PIN for a pending password reset.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- VERIFICATION_RESEND_COOLDOWN\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Resend password reset verification PIN",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Verification ID",
+                        "name": "verification_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.ResendVerificationAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid verification ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Verification not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Verification or password reset conflict",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password-reset/verification/{verification_id}/verify": {
+            "post": {
+                "description": "Verify a password reset using the verification PIN.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INVALID_VERIFICATION_CODE\n- VERIFICATION_CODE_ATTEMPTS_EXCEEDED\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Password Reset"
+                ],
+                "summary": "Verify password reset",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Verification ID",
+                        "name": "verification_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Password reset verification request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.VerifyPasswordResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/password_reset.VerifyPasswordResetAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Verification not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Verification conflict",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/register/continuation": {
             "get": {
                 "description": "Validate and retrieve the registration continuation associated with the continuation token.\nPossible error codes:\n- REGISTRATION_CONTINUATION_REQUIRED\n- REGISTRATION_CONTINUATION_CONSUMED\n- REGISTRATION_CONTINUATION_EXPIRED\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- INTERNAL_SERVER_ERROR",
@@ -914,6 +1302,198 @@ const docTemplate = `{
                 }
             }
         },
+        "password_reset.CreatePINAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.CreatePINResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "verification code created"
+                }
+            }
+        },
+        "password_reset.CreatePINResponse": {
+            "type": "object",
+            "properties": {
+                "verification_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
+        "password_reset.FinalizePasswordResetAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "password reset completed successfully"
+                }
+            }
+        },
+        "password_reset.FinalizePasswordResetRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "example": "password123"
+                }
+            }
+        },
+        "password_reset.GetPasswordResetContinuationAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.GetPasswordResetContinuationResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "password reset continuation is valid"
+                }
+            }
+        },
+        "password_reset.GetPasswordResetContinuationResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "has_password_credential": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "password_reset.GetVerificationAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.GetVerificationResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "verification retrieved"
+                }
+            }
+        },
+        "password_reset.GetVerificationResponse": {
+            "type": "object",
+            "properties": {
+                "pin_issued": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "resend_in_seconds": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "verification_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
+        "password_reset.RequestPasswordResetAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.RequestPasswordResetResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "password reset requested"
+                }
+            }
+        },
+        "password_reset.RequestPasswordResetRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "example": "user@example.com"
+                }
+            }
+        },
+        "password_reset.RequestPasswordResetResponse": {
+            "type": "object",
+            "properties": {
+                "verification_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
+        "password_reset.ResendVerificationAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.ResendVerificationResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "verification code resent"
+                }
+            }
+        },
+        "password_reset.ResendVerificationResponse": {
+            "type": "object",
+            "properties": {
+                "verification_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
+        "password_reset.VerifyPasswordResetAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/password_reset.VerifyPasswordResetResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "password reset verified"
+                }
+            }
+        },
+        "password_reset.VerifyPasswordResetRequest": {
+            "type": "object",
+            "required": [
+                "pin"
+            ],
+            "properties": {
+                "pin": {
+                    "type": "string",
+                    "example": "123456"
+                }
+            }
+        },
+        "password_reset.VerifyPasswordResetResponse": {
+            "type": "object",
+            "properties": {
+                "password_reset_continuation_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiJ9..."
+                }
+            }
+        },
         "registration.CreatePINAPIResponse": {
             "type": "object",
             "properties": {
@@ -1097,7 +1677,7 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string",
-                    "example": "verification code sent"
+                    "example": "registration requested"
                 }
             }
         },

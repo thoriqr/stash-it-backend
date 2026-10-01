@@ -51,19 +51,13 @@ func (h *Handler) RegisterManual(c fiber.Ctx) error {
 		return err
 	}
 
-	message := "verification code sent"
-
-	if result.AlreadyPending {
-    message = "registration already in progress"
-}
-
 	response := RegisterResponse{
 		VerificationID: result.VerificationID,
 	}
 
 	return httpx.Created(
 		c,
-		message,
+		"registration requested",
 		&response,
 	)
 }

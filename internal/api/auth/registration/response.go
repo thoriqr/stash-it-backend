@@ -51,7 +51,7 @@ type FinalizeSocialRegistrationResponse struct {
 
 type RegisterAPIResponse struct {
 	Data    *RegisterResponse `json:"data"`
-	Message string            `json:"message" example:"verification code sent"`
+	Message string            `json:"message" example:"registration requested"`
 }
 
 type GetVerificationAPIResponse struct {
