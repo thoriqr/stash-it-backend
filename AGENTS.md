@@ -102,27 +102,86 @@ adding an allowed value, do it in a migration.
 
 Two schemas with different roles. **They can drift.**
 
-- `migrations/` — production schema and source of truth, as
-  `NNNNNN_name.up.sql` / `.down.sql` pairs. Never edit existing migrations, never
-  create one unless asked, and **never run or apply migrations unless explicitly
-  instructed** (no runner is wired into the app).
+- `migrations/` — production database schema and **source of truth**, as
+  `NNNNNN_name.up.sql` / `.down.sql` pairs. **Never edit an existing migration**
+  once created — add a new one instead.
+- When a schema change is required, create a new migration with the project's
+  migration CLI, following the existing convention:
+
+  ```sh
+  migrate create -ext sql -dir migrations -seq <migration_name>
+  # e.g. migrate create -ext sql -dir migrations -seq remove_pending_social_display_name
+  ```
+
+- **Creating a migration and applying a migration are two separate operations.**
+  Creating the files may be part of a task; applying them is not.
+- **Never apply a migration to any database unless the user explicitly instructs
+  it.** Don't run `migrate -path migrations -database "<database-url>" up` or any
+  equivalent. No migration runner is wired into the app either.
+- **Don't invent database URLs, environments, or migration targets** — applying is
+  a user-controlled step on their environment.
+- If a task requires a schema change, stop after creating the migration and report
+  the files with their SQL/diff for review, unless the user asked for application as
+  part of the task. The user reviews the migration SQL before it is applied:
+
+  ```
+  schema change request
+      ↓
+  create new migration
+      ↓
+  agent shows/reports migration SQL
+      ↓
+  user reviews migration
+      ↓
+  user explicitly instructs migration to be applied
+      ↓
+  migration is applied
+  ```
+
 - `internal/database/baseline/schema.sql` — manually maintained snapshot,
   embedded via `//go:embed`, used as the `schema:` input for the **test-only**
   sqlc targets in `internal/testutil/db/*` and applied to throwaway Postgres
   containers. Not used at runtime.
-- Adding a migration does **not** update the baseline. Update it only when asked,
+- Creating a migration does **not** update the baseline. Update it only when asked,
   and don't assume the two are in sync. Preserve its existing formatting and
   organization.
 
-## Generated code — never hand-edit
+## Code generation
 
-- `internal/api/**/generated/` and `internal/testutil/db/**/generated/` (sqlc)
-- `internal/**/mocks/` (gomock)
-- `docs/` (`docs.go`, `swagger.json`, `swagger.yaml`)
+Generated code is **output**. Never hand-edit it. Always change the source, then
+regenerate. There is no Makefile or task runner, so every step here is manual.
 
-There is no Makefile or task runner, so regeneration is manual: `sqlc generate`,
-and `swag init -g cmd/api/main.go -o docs`. Edit `queries.sql` and the swag
-annotations — never the output.
+Output paths: `internal/**/mocks/` (mockgen), `internal/api/**/generated/` (sqlc),
+`internal/testutil/db/**/generated/` (sqlc, test-only), and `docs/` —
+`docs.go`, `swagger.json`, `swagger.yaml` (swag).
+
+- **mockgen** — mocks are generated from the Go interfaces a package consumes
+  (see `types.go` / `service.go` in the feature). Source and destination depend on
+  which module or interface is involved, so there is **no single fixed mockgen
+  command or output directory**;
+  `mockgen -typed -source <interface-source> -destination <mock-output> -package mocks`
+  shows the shape, not a project-wide fixed path. If an interface changes, modify
+  the source interface first, then regenerate the affected mock.
+
+- **sqlc** — features that use sqlc own a `queries.sql`; those SQL files are the source.
+  `sqlc.yaml` holds the query sources, generated package names, output
+  directories, and the `pgx/v5` database configuration. If a query changes,
+  modify the relevant `queries.sql` first, then run `sqlc generate`. If the
+  configuration itself is wrong, change `sqlc.yaml` deliberately — never edit the
+  output, and don't modify `sqlc.yaml` merely to make a generated file change
+  unless the configuration actually needs to change. Integration-test queries at
+  `internal/testutil/db/<feature>/queries.sql` generate into the sibling
+  `generated/` directory via the same config, and are output too.
+
+- **swag** — edit the handler annotation comments, then regenerate Swagger
+  documentation with:
+  `swag init -g cmd/api/main.go -parseInternal`.
+
+Features are directories under `internal/api/` — currently `auth/registration`,
+`auth/login`, `auth/session`, `auth/password_reset`, and `user`; new features may
+be added there following the same structure. Don't treat `auth` as the only
+feature area, and for sqlc follow the existing `sqlc.yaml` mapping for the
+specific module instead of inventing a new output location.
 
 ## API documentation
 
@@ -153,11 +212,6 @@ go build ./...
 go vet ./...
 go test ./...
 ```
-
-CI runs `go test ./... -v` on push and PR without provisioning Docker, so the
-integration suite needs a Docker-enabled runner or a local run. Report which
-commands you ran and what they printed. Never claim tests pass without having run
-them; say so plainly if Docker is unavailable.
 
 ## Rules
 
