@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package sessiondbtest
+package saveditemdbtest
 
 import (
 	"github.com/google/uuid"

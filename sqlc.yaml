@@ -62,6 +62,18 @@ sql:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
 
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/api/saved_item/queries.sql"
+    gen:
+      go:
+        package: "saveditemdb"
+        out: "internal/api/saved_item/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
   # Integration test queries for registration
   - engine: "postgresql"
     schema: "internal/database/baseline/schema.sql"
@@ -109,6 +121,19 @@ sql:
       go:
         package: "sessiondbtest"
         out: "internal/testutil/db/session/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for saved item
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/saved_item/queries.sql"
+    gen:
+      go:
+        package: "saveditemdbtest"
+        out: "internal/testutil/db/saved_item/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"

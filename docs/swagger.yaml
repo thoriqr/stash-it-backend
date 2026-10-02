@@ -416,6 +416,110 @@ definitions:
         example: eyJhbGciOiJIUzI1NiJ9...
         type: string
     type: object
+  saved_item.CreateSavedItemAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/saved_item.CreateSavedItemResponse'
+      message:
+        example: saved item created successfully
+        type: string
+    type: object
+  saved_item.CreateSavedItemRequest:
+    properties:
+      url:
+        example: https://example.com/articles/1
+        maxLength: 2048
+        type: string
+    required:
+    - url
+    type: object
+  saved_item.CreateSavedItemResponse:
+    properties:
+      saved_item:
+        $ref: '#/definitions/saved_item.SavedItemResponse'
+    type: object
+  saved_item.DeleteSavedItemAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: saved item deleted successfully
+        type: string
+    type: object
+  saved_item.GetSavedItemAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/saved_item.GetSavedItemResponse'
+      message:
+        example: saved item retrieved successfully
+        type: string
+    type: object
+  saved_item.GetSavedItemResponse:
+    properties:
+      saved_item:
+        $ref: '#/definitions/saved_item.SavedItemResponse'
+    type: object
+  saved_item.ListSavedItemsAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/saved_item.ListSavedItemsResponse'
+      message:
+        example: saved items retrieved successfully
+        type: string
+      meta:
+        $ref: '#/definitions/saved_item.ListSavedItemsMeta'
+    type: object
+  saved_item.ListSavedItemsMeta:
+    properties:
+      pagination:
+        $ref: '#/definitions/saved_item.ListSavedItemsPagination'
+    type: object
+  saved_item.ListSavedItemsPagination:
+    properties:
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      total:
+        example: 42
+        type: integer
+      total_pages:
+        example: 3
+        type: integer
+    type: object
+  saved_item.ListSavedItemsResponse:
+    properties:
+      saved_items:
+        items:
+          $ref: '#/definitions/saved_item.SavedItemResponse'
+        type: array
+    type: object
+  saved_item.SavedItemResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      domain:
+        example: example.com
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      platform:
+        example: web
+        type: string
+      title:
+        example: An interesting article
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      url:
+        example: https://example.com/articles/1
+        type: string
+    type: object
   session.ListSessionsAPIResponse:
     properties:
       data:
@@ -1617,6 +1721,190 @@ paths:
       summary: Revoke session
       tags:
       - Session
+  /saved-items:
+    get:
+      description: |-
+        Get the current user's saved items, newest first.
+        Possible error codes:
+        - VALIDATION_ERROR
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - default: 1
+        description: Page number
+        example: 1
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Number of saved items per page
+        example: 20
+        in: query
+        maximum: 50
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/saved_item.ListSavedItemsAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List saved items
+      tags:
+      - SavedItem
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Save a URL to the current user's inbox. The domain is derived
+        Possible error codes:
+        - VALIDATION_ERROR
+        - INVALID_URL
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Save URL request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/saved_item.CreateSavedItemRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/saved_item.CreateSavedItemAPIResponse'
+        "400":
+          description: Validation error or invalid URL
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save a URL
+      tags:
+      - SavedItem
+  /saved-items/{id}:
+    delete:
+      description: |-
+        Delete one of the current user's saved items by ID. A saved item
+        Possible error codes:
+        - BAD_REQUEST
+        - RESOURCE_NOT_FOUND
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/saved_item.DeleteSavedItemAPIResponse'
+        "400":
+          description: Invalid saved item ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a saved item
+      tags:
+      - SavedItem
+    get:
+      description: |-
+        Get one of the current user's saved items by ID. A saved item
+        Possible error codes:
+        - BAD_REQUEST
+        - RESOURCE_NOT_FOUND
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/saved_item.GetSavedItemAPIResponse'
+        "400":
+          description: Invalid saved item ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a saved item
+      tags:
+      - SavedItem
 securityDefinitions:
   BearerAuth:
     description: 'Enter your access token using the Bearer scheme. Example: "Bearer

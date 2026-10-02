@@ -1354,6 +1354,241 @@
                     }
                 }
             }
+        },
+        "/saved-items": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the current user's saved items, newest first.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "List saved items",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "example": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 50,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "example": 20,
+                        "description": "Number of saved items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.ListSavedItemsAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Save a URL to the current user's inbox. The domain is derived\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Save a URL",
+                "parameters": [
+                    {
+                        "description": "Save URL request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.CreateSavedItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.CreateSavedItemAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error or invalid URL",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/saved-items/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get one of the current user's saved items by ID. A saved item\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Get a saved item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.GetSavedItemAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid saved item ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Delete one of the current user's saved items by ID. A saved item\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Delete a saved item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.DeleteSavedItemAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid saved item ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1959,6 +2194,159 @@
                 "registration_continuation_token": {
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiJ9..."
+                }
+            }
+        },
+        "saved_item.CreateSavedItemAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/saved_item.CreateSavedItemResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item created successfully"
+                }
+            }
+        },
+        "saved_item.CreateSavedItemRequest": {
+            "type": "object",
+            "required": [
+                "url"
+            ],
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "saved_item.CreateSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "saved_item": {
+                    "$ref": "#/definitions/saved_item.SavedItemResponse"
+                }
+            }
+        },
+        "saved_item.DeleteSavedItemAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item deleted successfully"
+                }
+            }
+        },
+        "saved_item.GetSavedItemAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/saved_item.GetSavedItemResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item retrieved successfully"
+                }
+            }
+        },
+        "saved_item.GetSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "saved_item": {
+                    "$ref": "#/definitions/saved_item.SavedItemResponse"
+                }
+            }
+        },
+        "saved_item.ListSavedItemsAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/saved_item.ListSavedItemsResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved items retrieved successfully"
+                },
+                "meta": {
+                    "$ref": "#/definitions/saved_item.ListSavedItemsMeta"
+                }
+            }
+        },
+        "saved_item.ListSavedItemsMeta": {
+            "type": "object",
+            "properties": {
+                "pagination": {
+                    "$ref": "#/definitions/saved_item.ListSavedItemsPagination"
+                }
+            }
+        },
+        "saved_item.ListSavedItemsPagination": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "total_pages": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "saved_item.ListSavedItemsResponse": {
+            "type": "object",
+            "properties": {
+                "saved_items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/saved_item.SavedItemResponse"
+                    }
+                }
+            }
+        },
+        "saved_item.SavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "domain": {
+                    "type": "string",
+                    "example": "example.com"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "web"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "An interesting article"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com/articles/1"
                 }
             }
         },

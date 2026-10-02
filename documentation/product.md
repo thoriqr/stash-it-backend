@@ -52,37 +52,70 @@ does not own or guarantee the availability of those external images.
 
 The initial Saved Item is deliberately minimal:
 
-| Field           | Notes           |
-| --------------- | --------------- |
-| `id`            |                 |
-| `user_id`       | owner           |
-| `url`           | the thing saved |
-| `domain`        |                 |
-| `platform`      |                 |
-| `title`         | optional        |
-| `created_at`    |                 |
-| `updated_at`    |                 |
-| `collection_id` | optional        |
+| Field           | Notes                                                     |
+| --------------- | --------------------------------------------------------- |
+| `id`            |                                                           |
+| `user_id`       | owner, always from authentication, never from the client   |
+| `url`           | the thing saved, supplied by the client                    |
+| `domain`        | derived from the URL, never fetched from the remote source |
+| `platform`      | content/source platform, null until enrichment runs        |
+| `title`         | null until enrichment runs                                 |
+| `created_at`    |                                                           |
+| `updated_at`    |                                                           |
+| `collection_id` | optional, not part of Phase A                              |
+
+### Current Saved Item behavior
+
+- `user_id` comes from authentication, never from the request.
+- `url` comes from the client.
+- `domain` is derived server-side from the submitted URL. Normalization
+  lowercases the hostname and removes one leading `www.` prefix. Other subdomains
+  are preserved, and no public suffix or registrable-domain detection is
+  performed.
+- `platform` stays null in Phase A. It is the **content/source** platform
+  (youtube, tiktok, instagram, pinterest, ...) and is never derived from the
+  client's platform header.
+- `title` stays null in Phase A.
+
+`X-Platform` describes the client or device platform (web/android/ios). It is a
+session concern and must never be used for `saved_items.platform`. The two fields
+mean different things and are not interchangeable.
+
+Saving never contacts the remote source. Domain derivation is purely local, so
+saving stays fast and free.
+
+Enrichment of `platform` and `title` is a later background process that runs
+after a save and never blocks it.
 
 ## Current phase: Phase A — core capture
 
-This is what is being built now.
-
-- Share a URL into the app
-- Save the URL
-- Inbox
-- Authentication
-
 The goal is a complete, reliable path from _I saw something_ to _it is saved and
 waiting in my Inbox_.
+
+Implemented:
+
+- Authentication
+- Save a URL
+- Inbox
+
+Not part of this phase, by decision:
+
+- Editing a saved item is intentionally not implemented. Nothing in the core
+  loop requires it, so it is not scheduled ahead of the work below.
+- Opening the original URL is a client-side behavior, outside the current backend
+  scope.
 
 ## Next phase: Phase B — basic organization and return
 
 - Collections
 - Basic search
-- Saved item detail
-- Open the original URL
-- Delete a saved item
+- Saved item detail *(already available; listed here as part of the Phase B
+  grouping, not as outstanding work)*
+- Delete a saved item *(already available)*
+
+Saved item detail and delete were built during Phase A because they are needed to
+complete the core loop. What genuinely remains for Phase B is **Collections** and
+**basic search**.
 
 This phase is what turns a storage bucket into something a user returns to.
 
@@ -117,7 +150,8 @@ for the core loop.
 - **The value is the short path**: share → save → Inbox → search or collection →
   return later. If a change does not serve that path, it needs justification.
 - **Saving must be fast.** Metadata extraction must never block the initial save.
-  Anything slow happens afterwards, if at all.
+  Anything slow happens afterwards, if at all. Deriving the domain locally from
+  the URL keeps saving free of network calls entirely.
 - **Organization is optional, not mandatory.** An inbox with unsorted items is a
   valid, successful state.
 - **AI is an enhancement, not a foundation.** The product must be complete and
@@ -133,8 +167,8 @@ for the core loop.
 
 ## Development order
 
-1. Share → Save → Inbox
-2. Collections + Search
+1. Share → Save → Inbox *(done)*
+2. Collections + Search *(next)*
 3. Background metadata extraction
 4. Reminder / return loop
 5. Product metadata enrichment

@@ -91,6 +91,17 @@ type RegistrationContinuation struct {
 	CreatedAt             pgtype.Timestamptz
 }
 
+type SavedItem struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                uuid.UUID
 	UserID            uuid.UUID

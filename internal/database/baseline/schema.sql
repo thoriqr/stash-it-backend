@@ -64,6 +64,23 @@ CREATE TABLE password_credentials (
 );
 
 
+CREATE TABLE saved_items (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+
+    user_id UUID NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    url TEXT NOT NULL,
+
+    domain TEXT,
+    platform TEXT,
+    title TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
 
@@ -320,6 +337,10 @@ CREATE UNIQUE INDEX pending_registrations_email_idx
     WHERE status IN ('pending', 'completed');
 
 
+CREATE INDEX saved_items_user_created_at_idx
+    ON saved_items (user_id, created_at DESC);
+
+
 -- ============================================================
 -- Triggers
 -- ============================================================
@@ -332,5 +353,11 @@ EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER password_credentials_set_updated_at
 BEFORE UPDATE ON password_credentials
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+CREATE TRIGGER saved_items_set_updated_at
+BEFORE UPDATE ON saved_items
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();

@@ -10,6 +10,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
@@ -18,6 +19,10 @@ import (
 )
 
 const testVerificationCodeSecret = "integration-test-verification-secret"
+
+// TestAccessTokenSecret is the access token secret used by the integration test
+// app. It is exported so tests can mint access tokens that the app accepts.
+const TestAccessTokenSecret = "integration-test-access-token-secret"
 
 type fakeGoogleTokenVerifier struct {
 	identity login.GoogleIdentity
@@ -62,6 +67,7 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 	cfg := config.Config{
 		AppEnv:                 "development",
 		VerificationCodeSecret: testVerificationCodeSecret,
+		AccessTokenSecret:      TestAccessTokenSecret,
 	}
 
 	emailSender := &FakeEmailSender{}
@@ -82,6 +88,12 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 		log,
 		emailSender,
 		googleTokenVerifier,
+	)
+
+	saveditem.RegisterModule(
+		app,
+		pool,
+		cfg,
 	)
 
 	return app, emailSender

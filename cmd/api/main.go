@@ -13,6 +13,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/email"
@@ -91,6 +92,12 @@ func main() {
 		log,
 		emailSender,
     googleTokenVerifier,
+	)
+
+	saveditem.RegisterModule(
+		app,
+		pool,
+		cfg,
 	)
 
 	fmt.Println("Database connected")
