@@ -1,5 +1,6 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-019.
+-- Represents the final database state after migrations 001-020.
+-- Source of truth: the cumulative effect of migrations/000001..000020 (up only).
 
 -- ============================================================
 -- Functions
