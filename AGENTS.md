@@ -213,11 +213,17 @@ go vet ./...
 go test ./...
 ```
 
+Report which verification commands you ran and whether they passed or failed.
+**Never claim tests pass unless they were actually run.** If Docker is
+unavailable, state that plainly when the integration tests cannot run.
+
 ## Rules
 
 - Inspect the code rather than guessing; prefer existing patterns over new ones.
 - Don't change architecture, add dependencies, or alter API contracts and
   auth/session behavior without explicit instruction.
-- Don't modify migration files or `internal/database/baseline/schema.sql` unless
-  explicitly instructed, and don't apply migrations unless explicitly instructed.
+- Never edit an existing migration file, even if explicitly asked — introduce
+  schema changes in a new migration instead. Creating one when the task requires
+  a schema change is fine, but applying it always needs explicit user
+  instruction. Don't touch `internal/database/baseline/schema.sql` unless asked.
 - Don't hand-edit generated code.
