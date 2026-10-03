@@ -10,8 +10,13 @@ This is a handoff, not a diary. Keep it accurate and short.
 ### Saved Items — Phase A backend is complete
 
 All four endpoints are implemented, wired into `main.go` via
-`saved_item.RegisterModule`, and covered by tests. This work is **committed** as
-`0fd199f feat: complete saved items core flow`, so the working tree is clean.
+`saved_item.RegisterModule`, and covered by tests.
+
+Committed work so far:
+
+- `0fd199f feat: complete saved items core flow`
+- `fix: restore saved item creation after collections schema`
+- `feat: initialize unsorted collection on registration`
 
 | Endpoint          | Status  | Notes                                        |
 | ----------------- | ------- | -------------------------------------------- |
@@ -57,33 +62,49 @@ background enrichment process that does not exist yet.
 `platform` is the **content/source** platform (youtube, tiktok, instagram,
 pinterest, ...). It is NOT the client platform. `X-Platform` is session-only.
 
+### Unsorted user invariant
+
+Every permanent user owns exactly one `Unsorted` system collection, and it is
+the default destination for that user's saved items.
+
+- A **pending registration** has no user and no Unsorted collection.
+- A **finalized permanent user** receives Unsorted in the same transaction that
+  creates the user, so a user can never exist without one.
+- A **newly saved item** belongs to that user's Unsorted collection.
+
+Both finalize paths do this. `FinalizeManualRegistration` and
+`FinalizeSocialRegistration` each insert the collection between `CreateUser` and
+the credential/identity plus continuation finalization, inside the existing
+registration repository transaction. No new transaction was added, and no
+Collections service was involved.
+
+`POST /saved-items` resolves Unsorted by `user_id` plus `system_key = 'unsorted'`
+— never by display name — and stores the resulting `collection_id`. The
+`collections_system_key_unique` constraint prevents a second system collection
+with the same key for one user.
+
+Committed as `feat: initialize unsorted collection on registration`.
+
+**There is still no Collections feature.** No Collections repository, service,
+handler, CRUD API, move-item behavior, basic search, or enrichment worker
+exists. The only collection-related production SQL is the registration-scoped
+`CreateUnsortedCollection`, which lives in registration because it must
+participate in the existing finalize transaction.
+
 ### Testing and verification status
 
-As of the last completed work (DELETE endpoint):
+As of the completed Unsorted registration work:
 
 - `go build ./...` — pass
 - `go vet ./...` — pass
-- `go test ./...` — **failing**: saved item integration tests broke once the
-  baseline was synced to migration 000022. See "Known breakage" below.
-- Saved item unit tests: 28 subtests pass
-- Saved item integration tests: **currently failing**, real Postgres
-  testcontainer
+- `go test -count=1 ./...` — pass, all 8 packages ok
+- Saved item unit and integration tests pass
+- Registration unit and integration tests pass
 - `sqlc generate`, `mockgen`, `swag init -g cmd/api/main.go -parseInternal` all
   clean
 
-Integration tests need Docker. They were run and passing locally. Re-run them
-before relying on any claim.
-
-### Known breakage: saved item test fixture lacks collection_id
-
-`internal/testutil/db/saved_item/queries.sql` still seeds `saved_items` without
-`collection_id`, which has been `NOT NULL` since migration 000022. Every
-`CreateTestSavedItem` seed therefore fails with SQLSTATE 23502, and 15 saved
-item integration subtests fail, across all four saved item test functions. The
-fixture needs to create the user's Unsorted collection, pass its id, and then
-regenerate the test-only sqlc target. Not done yet — it belongs to the
-Collections work, and no application code may assume a collection exists until
-that code actually creates one.
+Integration tests need Docker. They were run and passing. Re-run them before
+relying on any claim.
 
 ## Important Decisions
 
@@ -106,15 +127,16 @@ Do not change these casually. Several were corrections of earlier mistakes.
    only if enrichment later creates child rows that must be retained.
 9. **No metadata/enrichment worker exists.** No scraping, `og:title`, `og:image`,
    JSON-LD, or remote fetching anywhere in the codebase.
-10. **The Phase B schema is in place.** Migration
+10. **The Phase B schema and lifecycle are in place.** Migration
     `000022_create_collections_and_saved_item_enrichment` added `collections`,
     `saved_items.collection_id` (`NOT NULL`, `ON DELETE RESTRICT`), and the
     `enrichment_status` / `enrichment_started_at` / `last_enriched_at` columns.
-    It has been applied. It is **schema only** — no collection endpoint,
-    repository, service, sqlc query, or worker exists. `migrations/` is the
-    production source of truth and must never be edited after creation.
-    **Creating a migration and applying it are separate operations**, and
-    applying one always requires explicit user instruction.
+    It has been applied, and the Unsorted-per-user invariant described above now
+    maintains it at runtime. It is still **schema plus lifecycle only**: there is
+    no Collections API and no enrichment worker. `migrations/` is the production
+    source of truth and must never be edited after creation. **Creating a
+    migration and applying it are separate operations**, and applying one always
+    requires explicit user instruction.
 11. **`collections_system_key_check` subsumes `collections_type_check`.** Any row
     satisfying the system-key rule already has a valid `type`, so PostgreSQL
     reports the system-key constraint for an invalid `type` and the type
@@ -131,9 +153,7 @@ Do not change these casually. Several were corrections of earlier mistakes.
     work (the committed files already showed it for 13 tables). An
     `omit_unused_structs` option exists in sqlc v1.31.1 and was verified to work,
     but enabling it would touch all existing generated files and is a repo-wide
-    convention change. Deliberately left alone. Note that generated code has
-    **not** been regenerated since migration 000022, so it does not yet know
-    about `collections`.
+    convention change. Deliberately left alone.
 
 ## Next Step
 
@@ -150,15 +170,16 @@ A note on phase terminology, since it is easy to misread:
 - `collection_id` was deliberately omitted from the Phase A migration for this
   reason, and was added later by migration 000022, which has been applied.
 
-The **database foundation** for Collections and for saved item enrichment state
-is now in place: the `collections` table, the `saved_items.collection_id`
-relationship, and the `enrichment_*` columns. Nothing above that line exists
-yet — no collection endpoint, repository, service, or sqlc query, and no
-enrichment worker. `internal/database/baseline/schema.sql` has been synced to
-match migration 000022.
+The schema and the user lifecycle are both in place: the `collections` table,
+the `saved_items.collection_id` relationship, the `enrichment_*` columns, and
+the Unsorted-per-user invariant. `internal/database/baseline/schema.sql` matches
+migration 000022. Registration and Saved Item compatibility work is finished —
+do not redo it.
 
-Before starting: confirm scope with the user. The likely next slice is the
-collections data access and API layer built on the existing schema, but nothing
+The next implementation slice is the **Collections repository, service, and
+API** built on the existing schema. Basic search follows it.
+
+Before starting: confirm scope with the user. Nothing about the Collections API
 is pre-approved — do not invent additional features such as reminders, price
 tracking, comparison, or AI.
 
@@ -167,11 +188,14 @@ tracking, comparison, or AI.
 1. Read `AGENTS.md` — it is the authoritative operating guide.
 2. Read `documentation/product.md` for scope and direction.
 3. Read this file for current state and decisions.
-4. Run `git status` and `git diff` before changing anything. Saved Items work is
-   **committed** (`0fd199f feat: complete saved items core flow`), so the
-   working tree starts clean and the four endpoints are already present.
-5. Inspect `internal/api/saved_item/` before writing code. Do not reimplement
-   existing endpoints.
+4. Run `git status` and `git diff` before changing anything. Saved Items,
+   registration, and the Unsorted invariant are all **committed**
+   (`0fd199f`, then `fix: restore saved item creation after collections schema`,
+   then `feat: initialize unsorted collection on registration`), so the working
+   tree starts clean.
+5. Inspect `internal/api/saved_item/` and `internal/api/auth/registration/`
+   before writing code. Do not reimplement existing endpoints or the Unsorted
+   creation.
 6. Re-verify the tree compiles before assuming a clean start:
    `go build ./... && go vet ./... && go test ./...`
 7. Avoid unrelated refactors. If something looks wrong, report it rather than

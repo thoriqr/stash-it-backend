@@ -92,6 +92,20 @@ saving stays fast and free.
 Enrichment of `platform` and `title` is a later background process that runs
 after a save and never blocks it.
 
+### The Unsorted collection
+
+`Unsorted` is the default collection every user starts with. It exists so that
+saving never depends on organizing: a new account can save immediately, and its
+inbox begins as one unsorted pile instead of an empty requirement.
+
+- When a registration is finalized and the account becomes permanent, that user
+  receives their `Unsorted` collection.
+- A registration that is still pending has no account yet and no collections.
+- Every newly saved item belongs to the user's `Unsorted` collection.
+- Once Collections is built, users will be able to create their own collections
+  and move items out of `Unsorted` into them. `Unsorted` is allowed to stay
+  empty; it is never required to hold anything.
+
 ## Current phase: Phase A — core capture
 
 The goal is a complete, reliable path from _I saw something_ to _it is saved and
