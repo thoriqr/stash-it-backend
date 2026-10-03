@@ -18,6 +18,11 @@ type Repository interface {
 		params saveditemdb.CreateSavedItemParams,
 	) (saveditemdb.SavedItem, error)
 
+	GetUnsortedCollectionByUser(
+		ctx context.Context,
+		userID uuid.UUID,
+	) (uuid.UUID, error)
+
 	GetSavedItemByIDForUser(
 		ctx context.Context,
 		userID uuid.UUID,
@@ -59,12 +64,45 @@ func (r *repository) CreateSavedItem(
 	ctx context.Context,
 	params saveditemdb.CreateSavedItemParams,
 ) (saveditemdb.SavedItem, error) {
-	savedItem, err := r.queries.CreateSavedItem(ctx, params)
+	// Since migration 000022 added collection_id, saved_items has more columns
+	// than these queries project, so sqlc generates a query specific row type
+	// instead of reusing the SavedItem model. The row is mapped straight back so
+	// the repository interface, the service and the API stay on the model.
+	row, err := r.queries.CreateSavedItem(ctx, params)
 	if err != nil {
 		return saveditemdb.SavedItem{}, internalError(err)
 	}
 
-	return savedItem, nil
+	return newSavedItem(
+		row.ID,
+		row.UserID,
+		row.Url,
+		row.Domain,
+		row.Platform,
+		row.Title,
+		row.CreatedAt,
+		row.UpdatedAt,
+	), nil
+}
+
+func (r *repository) GetUnsortedCollectionByUser(
+	ctx context.Context,
+	userID uuid.UUID,
+) (uuid.UUID, error) {
+	collectionID, err := r.queries.GetUnsortedCollectionByUser(ctx, userID)
+	if err != nil {
+		// Migration 000022 seeds one Unsorted collection per existing user, so a
+		// missing row is a broken server side invariant rather than something the
+		// caller asked for. It is deliberately not reported as a not found error,
+		// and no collection is created here.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, apperror.Internal(err)
+		}
+
+		return uuid.Nil, internalError(err)
+	}
+
+	return collectionID, nil
 }
 
 func (r *repository) GetSavedItemByIDForUser(
@@ -72,7 +110,7 @@ func (r *repository) GetSavedItemByIDForUser(
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
 ) (saveditemdb.SavedItem, error) {
-	savedItem, err := r.queries.GetSavedItemByIDForUser(
+	row, err := r.queries.GetSavedItemByIDForUser(
 		ctx,
 		saveditemdb.GetSavedItemByIDForUserParams{
 			ID:     savedItemID,
@@ -90,7 +128,16 @@ func (r *repository) GetSavedItemByIDForUser(
 		return saveditemdb.SavedItem{}, internalError(err)
 	}
 
-	return savedItem, nil
+	return newSavedItem(
+		row.ID,
+		row.UserID,
+		row.Url,
+		row.Domain,
+		row.Platform,
+		row.Title,
+		row.CreatedAt,
+		row.UpdatedAt,
+	), nil
 }
 
 func (r *repository) DeleteSavedItemByIDForUser(
@@ -125,7 +172,7 @@ func (r *repository) ListSavedItems(
 	offset int32,
 	limit int32,
 ) ([]saveditemdb.SavedItem, error) {
-	savedItems, err := r.queries.ListSavedItems(
+	rows, err := r.queries.ListSavedItems(
 		ctx,
 		saveditemdb.ListSavedItemsParams{
 			UserID:     userID,
@@ -137,7 +184,54 @@ func (r *repository) ListSavedItems(
 		return nil, internalError(err)
 	}
 
+	savedItems := make([]saveditemdb.SavedItem, 0, len(rows))
+	for _, row := range rows {
+		savedItems = append(
+			savedItems,
+			newSavedItem(
+				row.ID,
+				row.UserID,
+				row.Url,
+				row.Domain,
+				row.Platform,
+				row.Title,
+				row.CreatedAt,
+				row.UpdatedAt,
+			),
+		)
+	}
+
 	return savedItems, nil
+}
+
+// newSavedItem builds the SavedItem model from the columns the saved items
+// queries project. Since migration 000022 added collection_id, saved_items has
+// more columns than these queries select, so sqlc generates a distinct row type
+// per query instead of reusing the model. Mapping the projected columns back
+// here keeps the Repository interface, the service and the API on the model.
+//
+// The collection and enrichment columns are not projected by these queries, so
+// they are left unset. Nothing reads them yet.
+func newSavedItem(
+	id uuid.UUID,
+	userID uuid.UUID,
+	url string,
+	domain pgtype.Text,
+	platform pgtype.Text,
+	title pgtype.Text,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) saveditemdb.SavedItem {
+	return saveditemdb.SavedItem{
+		ID:        id,
+		UserID:    userID,
+		Url:       url,
+		Domain:    domain,
+		Platform:  platform,
+		Title:     title,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}
 }
 
 func (r *repository) CountSavedItems(

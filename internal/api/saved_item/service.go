@@ -73,14 +73,26 @@ func (s *service) Create(
 	//
 	// title is likewise not client supplied and stays NULL until background
 	// metadata extraction populates it.
+	//
+	// Every saved item belongs to exactly one collection, and a newly saved item
+	// belongs to the authenticated user's Unsorted collection. It is resolved from
+	// the same user_id that comes from the access token, so an item can never be
+	// filed under another user's collection. Migration 000022 seeded Unsorted for
+	// every existing user; nothing is created here.
+	collectionID, err := s.repository.GetUnsortedCollectionByUser(ctx, userID)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
 	savedItem, err := s.repository.CreateSavedItem(
 		ctx,
 		saveditemdb.CreateSavedItemParams{
-			UserID:   userID,
-			Url:      rawURL,
-			Domain:   optionalText(domain),
-			Platform: pgtype.Text{},
-			Title:    pgtype.Text{},
+			UserID:       userID,
+			Url:          rawURL,
+			Domain:       optionalText(domain),
+			Platform:     pgtype.Text{},
+			Title:        pgtype.Text{},
+			CollectionID: collectionID,
 		},
 	)
 	if err != nil {

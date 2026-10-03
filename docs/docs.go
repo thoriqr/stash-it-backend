@@ -2341,7 +2341,7 @@ const docTemplate = `{
                 },
                 "platform": {
                     "type": "string",
-                    "example": "web"
+                    "example": "youtube"
                 },
                 "title": {
                     "type": "string",

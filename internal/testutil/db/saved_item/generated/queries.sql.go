@@ -57,6 +57,7 @@ INSERT INTO saved_items (
     domain,
     platform,
     title,
+    collection_id,
     created_at
 ) VALUES (
     $1,
@@ -64,7 +65,8 @@ INSERT INTO saved_items (
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
 RETURNING
     id,
@@ -78,24 +80,37 @@ RETURNING
 `
 
 type CreateTestSavedItemParams struct {
+	UserID       uuid.UUID
+	Url          string
+	Domain       pgtype.Text
+	Platform     pgtype.Text
+	Title        pgtype.Text
+	CollectionID uuid.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+type CreateTestSavedItemRow struct {
+	ID        uuid.UUID
 	UserID    uuid.UUID
 	Url       string
 	Domain    pgtype.Text
 	Platform  pgtype.Text
 	Title     pgtype.Text
 	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
-func (q *Queries) CreateTestSavedItem(ctx context.Context, arg CreateTestSavedItemParams) (SavedItem, error) {
+func (q *Queries) CreateTestSavedItem(ctx context.Context, arg CreateTestSavedItemParams) (CreateTestSavedItemRow, error) {
 	row := q.db.QueryRow(ctx, createTestSavedItem,
 		arg.UserID,
 		arg.Url,
 		arg.Domain,
 		arg.Platform,
 		arg.Title,
+		arg.CollectionID,
 		arg.CreatedAt,
 	)
-	var i SavedItem
+	var i CreateTestSavedItemRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -107,6 +122,28 @@ func (q *Queries) CreateTestSavedItem(ctx context.Context, arg CreateTestSavedIt
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const createUnsortedCollection = `-- name: CreateUnsortedCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    $1,
+    'Unsorted',
+    'system',
+    'unsorted'
+)
+RETURNING id
+`
+
+func (q *Queries) CreateUnsortedCollection(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createUnsortedCollection, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getSavedItemState = `-- name: GetSavedItemState :one
@@ -123,9 +160,20 @@ FROM saved_items
 WHERE id = $1
 `
 
-func (q *Queries) GetSavedItemState(ctx context.Context, id uuid.UUID) (SavedItem, error) {
+type GetSavedItemStateRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetSavedItemState(ctx context.Context, id uuid.UUID) (GetSavedItemStateRow, error) {
 	row := q.db.QueryRow(ctx, getSavedItemState, id)
-	var i SavedItem
+	var i GetSavedItemStateRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -154,15 +202,26 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListSavedItemsForUser(ctx context.Context, userID uuid.UUID) ([]SavedItem, error) {
+type ListSavedItemsForUserRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListSavedItemsForUser(ctx context.Context, userID uuid.UUID) ([]ListSavedItemsForUserRow, error) {
 	rows, err := q.db.Query(ctx, listSavedItemsForUser, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SavedItem
+	var items []ListSavedItemsForUserRow
 	for rows.Next() {
-		var i SavedItem
+		var i ListSavedItemsForUserRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -186,6 +245,7 @@ func (q *Queries) ListSavedItemsForUser(ctx context.Context, userID uuid.UUID) (
 const truncateSavedItemData = `-- name: TruncateSavedItemData :exec
 TRUNCATE TABLE
     saved_items,
+    collections,
     users
 CASCADE
 `

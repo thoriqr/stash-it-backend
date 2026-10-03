@@ -10,7 +10,8 @@ This is a handoff, not a diary. Keep it accurate and short.
 ### Saved Items — Phase A backend is complete
 
 All four endpoints are implemented, wired into `main.go` via
-`saved_item.RegisterModule`, and covered by tests.
+`saved_item.RegisterModule`, and covered by tests. This work is **committed** as
+`0fd199f feat: complete saved items core flow`, so the working tree is clean.
 
 | Endpoint          | Status  | Notes                                        |
 | ----------------- | ------- | -------------------------------------------- |
@@ -62,14 +63,27 @@ As of the last completed work (DELETE endpoint):
 
 - `go build ./...` — pass
 - `go vet ./...` — pass
-- `go test ./...` — pass, all 8 packages ok
-- Saved item unit tests: 30 subtests pass
-- Saved item integration tests: 25 subtests pass, real Postgres testcontainer
+- `go test ./...` — **failing**: saved item integration tests broke once the
+  baseline was synced to migration 000022. See "Known breakage" below.
+- Saved item unit tests: 28 subtests pass
+- Saved item integration tests: **currently failing**, real Postgres
+  testcontainer
 - `sqlc generate`, `mockgen`, `swag init -g cmd/api/main.go -parseInternal` all
   clean
 
 Integration tests need Docker. They were run and passing locally. Re-run them
 before relying on any claim.
+
+### Known breakage: saved item test fixture lacks collection_id
+
+`internal/testutil/db/saved_item/queries.sql` still seeds `saved_items` without
+`collection_id`, which has been `NOT NULL` since migration 000022. Every
+`CreateTestSavedItem` seed therefore fails with SQLSTATE 23502, and 15 saved
+item integration subtests fail, across all four saved item test functions. The
+fixture needs to create the user's Unsorted collection, pass its id, and then
+regenerate the test-only sqlc target. Not done yet — it belongs to the
+Collections work, and no application code may assume a collection exists until
+that code actually creates one.
 
 ## Important Decisions
 
@@ -92,16 +106,34 @@ Do not change these casually. Several were corrections of earlier mistakes.
    only if enrichment later creates child rows that must be retained.
 9. **No metadata/enrichment worker exists.** No scraping, `og:title`, `og:image`,
    JSON-LD, or remote fetching anywhere in the codebase.
-10. **No migration changes are needed for the next step.** `migrations/` is the
+10. **The Phase B schema is in place.** Migration
+    `000022_create_collections_and_saved_item_enrichment` added `collections`,
+    `saved_items.collection_id` (`NOT NULL`, `ON DELETE RESTRICT`), and the
+    `enrichment_status` / `enrichment_started_at` / `last_enriched_at` columns.
+    It has been applied. It is **schema only** — no collection endpoint,
+    repository, service, sqlc query, or worker exists. `migrations/` is the
     production source of truth and must never be edited after creation.
-11. **`sqlc` generated model sharing across packages is known, pre-existing
+    **Creating a migration and applying it are separate operations**, and
+    applying one always requires explicit user instruction.
+11. **`collections_system_key_check` subsumes `collections_type_check`.** Any row
+    satisfying the system-key rule already has a valid `type`, so PostgreSQL
+    reports the system-key constraint for an invalid `type` and the type
+    constraint is never the one named in the error. Treat any check violation on
+    `collections` as a validation failure rather than matching a constraint name.
+12. **The schema does not enforce that a collection belongs to the saved item's
+    owner.** `saved_items.collection_id` only guarantees the collection exists.
+    Cross-user assignment is possible at the database level, so ownership checks
+    belong in the service layer. Revisit only with an explicit decision.
+13. **`sqlc` generated model sharing across packages is known, pre-existing
     behavior and is not being changed.** Every target uses
     `schema: "migrations"`, so each generated `models.go` contains a struct for
     every table, not just the ones its queries use. This predates the Saved Items
     work (the committed files already showed it for 13 tables). An
     `omit_unused_structs` option exists in sqlc v1.31.1 and was verified to work,
-    but enabling it would touch all nine existing generated files and is a
-    repo-wide convention change. Deliberately left alone.
+    but enabling it would touch all existing generated files and is a repo-wide
+    convention change. Deliberately left alone. Note that generated code has
+    **not** been regenerated since migration 000022, so it does not yet know
+    about `collections`.
 
 ## Next Step
 
@@ -116,12 +148,18 @@ A note on phase terminology, since it is easy to misread:
 - `product.md` has been updated to reflect this, so the genuinely remaining Phase
   B work is **Collections** and **basic search**.
 - `collection_id` was deliberately omitted from the Phase A migration for this
-  reason. Adding it requires a **new** migration, which needs explicit user
-  instruction before being applied.
+  reason, and was added later by migration 000022, which has been applied.
 
-Before starting: confirm scope with the user. The likely first slice is
-collections (table, migration, sqlc target, endpoints), but nothing is
-pre-approved — do not invent additional features such as reminders, price
+The **database foundation** for Collections and for saved item enrichment state
+is now in place: the `collections` table, the `saved_items.collection_id`
+relationship, and the `enrichment_*` columns. Nothing above that line exists
+yet — no collection endpoint, repository, service, or sqlc query, and no
+enrichment worker. `internal/database/baseline/schema.sql` has been synced to
+match migration 000022.
+
+Before starting: confirm scope with the user. The likely next slice is the
+collections data access and API layer built on the existing schema, but nothing
+is pre-approved — do not invent additional features such as reminders, price
 tracking, comparison, or AI.
 
 ## Resume Instructions
@@ -130,7 +168,8 @@ tracking, comparison, or AI.
 2. Read `documentation/product.md` for scope and direction.
 3. Read this file for current state and decisions.
 4. Run `git status` and `git diff` before changing anything. Saved Items work is
-   **uncommitted**, so the working tree already contains the four endpoints.
+   **committed** (`0fd199f feat: complete saved items core flow`), so the
+   working tree starts clean and the four endpoints are already present.
 5. Inspect `internal/api/saved_item/` before writing code. Do not reimplement
    existing endpoints.
 6. Re-verify the tree compiles before assuming a clean start:

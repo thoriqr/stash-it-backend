@@ -31,6 +31,16 @@ type AuthIdentity struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
+type Collection struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Name      string
+	Type      string
+	SystemKey pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type PasswordCredential struct {
 	UserID       uuid.UUID
 	PasswordHash string
@@ -92,14 +102,18 @@ type RegistrationContinuation struct {
 }
 
 type SavedItem struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Url       string
-	Domain    pgtype.Text
-	Platform  pgtype.Text
-	Title     pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	Url                 string
+	Domain              pgtype.Text
+	Platform            pgtype.Text
+	Title               pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	CollectionID        uuid.UUID
+	EnrichmentStatus    string
+	EnrichmentStartedAt pgtype.Timestamptz
+	LastEnrichedAt      pgtype.Timestamptz
 }
 
 type Session struct {

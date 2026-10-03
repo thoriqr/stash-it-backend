@@ -1,6 +1,6 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-020.
--- Source of truth: the cumulative effect of migrations/000001..000020 (up only).
+-- Represents the final database state after migrations 001-022.
+-- Source of truth: the cumulative effect of migrations/000001..000022 (up only).
 
 -- ============================================================
 -- Functions
@@ -64,6 +64,45 @@ CREATE TABLE password_credentials (
 );
 
 
+-- Every user is expected to own exactly one 'Unsorted' system collection
+-- (type = 'system', system_key = 'unsorted'), which is where newly saved items
+-- land. migration 000022 created them for the users that existed at the time;
+-- this baseline is a schema snapshot only and seeds no rows.
+
+
+CREATE TABLE collections (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+
+    user_id UUID NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    name TEXT NOT NULL,
+
+    type TEXT NOT NULL,
+
+    system_key TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT collections_type_check
+        CHECK (
+            type IN (
+                'system',
+                'user'
+            )
+        ),
+
+    -- A system collection is identified by system_key, never by its display
+    -- name: system collections must carry a key, user collections must not.
+    CONSTRAINT collections_system_key_check
+        CHECK (
+            (type = 'system' AND system_key IS NOT NULL)
+            OR (type = 'user' AND system_key IS NULL)
+        )
+);
+
+
 CREATE TABLE saved_items (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
 
@@ -77,7 +116,31 @@ CREATE TABLE saved_items (
     title TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    collection_id UUID NOT NULL,
+
+    -- Written only by the future background enrichment phase. Nothing in the
+    -- codebase populates these yet, so domain, platform and title remain the
+    -- only metadata a saved item carries today.
+    enrichment_status TEXT NOT NULL DEFAULT 'pending',
+    enrichment_started_at TIMESTAMPTZ,
+    last_enriched_at TIMESTAMPTZ,
+
+    CONSTRAINT saved_items_collection_id_fkey
+        FOREIGN KEY (collection_id)
+        REFERENCES collections(id)
+        ON DELETE RESTRICT,
+
+    CONSTRAINT saved_items_enrichment_status_check
+        CHECK (
+            enrichment_status IN (
+                'pending',
+                'processing',
+                'completed',
+                'failed'
+            )
+        )
 );
 
 
@@ -341,6 +404,28 @@ CREATE INDEX saved_items_user_created_at_idx
     ON saved_items (user_id, created_at DESC);
 
 
+-- Collection names are unique per user, compared case-insensitively and with
+-- surrounding whitespace trimmed. This reserves the display name for system
+-- collections too, so a user cannot shadow the 'YouTube' system collection.
+CREATE UNIQUE INDEX collections_user_name_unique
+    ON collections (user_id, lower(btrim(name)));
+
+
+-- At most one system collection per system_key per user. Partial, so the NULL
+-- system_key of user collections never conflicts.
+CREATE UNIQUE INDEX collections_system_key_unique
+    ON collections (user_id, system_key)
+    WHERE system_key IS NOT NULL;
+
+
+CREATE INDEX collections_user_idx
+    ON collections (user_id);
+
+
+CREATE INDEX saved_items_collection_id_idx
+    ON saved_items (collection_id);
+
+
 -- ============================================================
 -- Triggers
 -- ============================================================
@@ -353,6 +438,12 @@ EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER password_credentials_set_updated_at
 BEFORE UPDATE ON password_credentials
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+CREATE TRIGGER collections_set_updated_at
+BEFORE UPDATE ON collections
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 

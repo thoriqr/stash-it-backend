@@ -31,13 +31,15 @@ INSERT INTO saved_items (
     url,
     domain,
     platform,
-    title
+    title,
+    collection_id
 ) VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
 RETURNING
     id,
@@ -51,22 +53,35 @@ RETURNING
 `
 
 type CreateSavedItemParams struct {
-	UserID   uuid.UUID
-	Url      string
-	Domain   pgtype.Text
-	Platform pgtype.Text
-	Title    pgtype.Text
+	UserID       uuid.UUID
+	Url          string
+	Domain       pgtype.Text
+	Platform     pgtype.Text
+	Title        pgtype.Text
+	CollectionID uuid.UUID
 }
 
-func (q *Queries) CreateSavedItem(ctx context.Context, arg CreateSavedItemParams) (SavedItem, error) {
+type CreateSavedItemRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CreateSavedItem(ctx context.Context, arg CreateSavedItemParams) (CreateSavedItemRow, error) {
 	row := q.db.QueryRow(ctx, createSavedItem,
 		arg.UserID,
 		arg.Url,
 		arg.Domain,
 		arg.Platform,
 		arg.Title,
+		arg.CollectionID,
 	)
-	var i SavedItem
+	var i CreateSavedItemRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -119,9 +134,20 @@ type GetSavedItemByIDForUserParams struct {
 	UserID uuid.UUID
 }
 
-func (q *Queries) GetSavedItemByIDForUser(ctx context.Context, arg GetSavedItemByIDForUserParams) (SavedItem, error) {
+type GetSavedItemByIDForUserRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetSavedItemByIDForUser(ctx context.Context, arg GetSavedItemByIDForUserParams) (GetSavedItemByIDForUserRow, error) {
 	row := q.db.QueryRow(ctx, getSavedItemByIDForUser, arg.ID, arg.UserID)
-	var i SavedItem
+	var i GetSavedItemByIDForUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -133,6 +159,26 @@ func (q *Queries) GetSavedItemByIDForUser(ctx context.Context, arg GetSavedItemB
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getUnsortedCollectionByUser = `-- name: GetUnsortedCollectionByUser :one
+SELECT
+    id
+FROM collections
+WHERE user_id = $1
+  AND type = 'system'
+  AND system_key = 'unsorted'
+LIMIT 1
+`
+
+// Resolves the authenticated user's Unsorted collection. system_key is the
+// stable identity of a system collection, so the display name is never used to
+// find it.
+func (q *Queries) GetUnsortedCollectionByUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getUnsortedCollectionByUser, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listSavedItems = `-- name: ListSavedItems :many
@@ -158,15 +204,26 @@ type ListSavedItemsParams struct {
 	PageLimit  int32
 }
 
-func (q *Queries) ListSavedItems(ctx context.Context, arg ListSavedItemsParams) ([]SavedItem, error) {
+type ListSavedItemsRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Url       string
+	Domain    pgtype.Text
+	Platform  pgtype.Text
+	Title     pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListSavedItems(ctx context.Context, arg ListSavedItemsParams) ([]ListSavedItemsRow, error) {
 	rows, err := q.db.Query(ctx, listSavedItems, arg.UserID, arg.PageOffset, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SavedItem
+	var items []ListSavedItemsRow
 	for rows.Next() {
-		var i SavedItem
+		var i ListSavedItemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,

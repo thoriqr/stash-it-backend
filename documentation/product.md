@@ -62,7 +62,7 @@ The initial Saved Item is deliberately minimal:
 | `title`         | null until enrichment runs                                 |
 | `created_at`    |                                                           |
 | `updated_at`    |                                                           |
-| `collection_id` | optional, not part of Phase A                              |
+| `collection_id` | owning collection, required in the database                |
 
 ### Current Saved Item behavior
 
@@ -76,6 +76,11 @@ The initial Saved Item is deliberately minimal:
   (youtube, tiktok, instagram, pinterest, ...) and is never derived from the
   client's platform header.
 - `title` stays null in Phase A.
+- `collection_id` points at the collection the item belongs to and is required.
+  Every user has an `Unsorted` system collection, and a newly saved item lands
+  there. Moving an item into another collection is not implemented yet.
+- `enrichment_status` starts at `pending` and is only ever advanced by the later
+  background enrichment process, which does not exist yet.
 
 `X-Platform` describes the client or device platform (web/android/ios). It is a
 session concern and must never be used for `saved_items.platform`. The two fields
@@ -116,6 +121,11 @@ Not part of this phase, by decision:
 Saved item detail and delete were built during Phase A because they are needed to
 complete the core loop. What genuinely remains for Phase B is **Collections** and
 **basic search**.
+
+The database foundation is in place: the `collections` table, the
+`saved_items.collection_id` relationship, and the saved item enrichment state
+columns. The Collections API, the assignment and move behavior, and basic search
+are still to be built.
 
 This phase is what turns a storage bucket into something a user returns to.
 

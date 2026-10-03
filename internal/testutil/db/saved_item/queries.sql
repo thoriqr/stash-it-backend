@@ -1,6 +1,7 @@
 -- name: TruncateSavedItemData :exec
 TRUNCATE TABLE
     saved_items,
+    collections,
     users
 CASCADE;
 
@@ -16,6 +17,20 @@ INSERT INTO users (
 )
 RETURNING id;
 
+-- name: CreateUnsortedCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    sqlc.arg(user_id),
+    'Unsorted',
+    'system',
+    'unsorted'
+)
+RETURNING id;
+
 -- name: CreateTestSavedItem :one
 INSERT INTO saved_items (
     user_id,
@@ -23,6 +38,7 @@ INSERT INTO saved_items (
     domain,
     platform,
     title,
+    collection_id,
     created_at
 ) VALUES (
     sqlc.arg(user_id),
@@ -30,6 +46,7 @@ INSERT INTO saved_items (
     sqlc.arg(domain),
     sqlc.arg(platform),
     sqlc.arg(title),
+    sqlc.arg(collection_id),
     sqlc.arg(created_at)
 )
 RETURNING

@@ -64,6 +64,23 @@ func mustParseUUID(t *testing.T, value string) uuid.UUID {
 	return parsed
 }
 
+// createUnsortedCollection creates the Unsorted system collection that every
+// user owns and returns its id. saved_items.collection_id is NOT NULL, and the
+// collection must belong to the same user as the saved item it is attached to.
+func createUnsortedCollection(
+	t *testing.T,
+	ctx context.Context,
+	db *saveditemdbtest.Queries,
+	userID uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+
+	collectionID, err := db.CreateUnsortedCollection(ctx, userID)
+	require.NoError(t, err)
+
+	return collectionID
+}
+
 func TestSavedItem_Create(t *testing.T) {
 	t.Run("saves a url for the authenticated user", func(t *testing.T) {
 		ctx := context.Background()
@@ -79,6 +96,10 @@ func TestSavedItem_Create(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
 
 		accessToken := newTestAccessToken(t, userID)
 
@@ -149,6 +170,10 @@ func TestSavedItem_Create(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
+
 		accessToken := newTestAccessToken(t, userID)
 
 		for range 2 {
@@ -186,6 +211,10 @@ func TestSavedItem_Create(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
 
 		accessToken := newTestAccessToken(t, userID)
 
@@ -261,6 +290,10 @@ func TestSavedItem_Create(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
 
 		accessToken := newTestAccessToken(t, userID)
 
@@ -396,15 +429,18 @@ func TestSavedItem_Get(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    userID,
-				Url:       "https://www.youtube.com/watch?v=abc",
-				Domain:    testText("youtube.com"),
-				Platform:  pgtype.Text{},
-				Title:     pgtype.Text{},
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       userID,
+				Url:          "https://www.youtube.com/watch?v=abc",
+				Domain:       testText("youtube.com"),
+				Platform:     pgtype.Text{},
+				Title:        pgtype.Text{},
+				CollectionID: unsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -474,6 +510,10 @@ func TestSavedItem_Get(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
 
 		accessToken := newTestAccessToken(t, userID)
 
@@ -590,13 +630,16 @@ func TestSavedItem_Get(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		ownerUnsortedCollectionID := createUnsortedCollection(t, ctx, db, ownerID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    ownerID,
-				Url:       "https://example.com/someone-elses",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       ownerID,
+				Url:          "https://example.com/someone-elses",
+				Domain:       testText("example.com"),
+				CollectionID: ownerUnsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -654,13 +697,16 @@ func TestSavedItem_Get(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		ownerUnsortedCollectionID := createUnsortedCollection(t, ctx, db, ownerID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    ownerID,
-				Url:       "https://example.com/indistinguishable",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       ownerID,
+				Url:          "https://example.com/indistinguishable",
+				Domain:       testText("example.com"),
+				CollectionID: ownerUnsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -785,13 +831,16 @@ func TestSavedItem_Delete(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    userID,
-				Url:       "https://example.com/to-be-deleted",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       userID,
+				Url:          "https://example.com/to-be-deleted",
+				Domain:       testText("example.com"),
+				CollectionID: unsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -846,13 +895,16 @@ func TestSavedItem_Delete(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    userID,
-				Url:       "https://example.com/delete-twice",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       userID,
+				Url:          "https://example.com/delete-twice",
+				Domain:       testText("example.com"),
+				CollectionID: unsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -950,13 +1002,16 @@ func TestSavedItem_Delete(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		ownerUnsortedCollectionID := createUnsortedCollection(t, ctx, db, ownerID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    ownerID,
-				Url:       "https://example.com/someone-elses",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       ownerID,
+				Url:          "https://example.com/someone-elses",
+				Domain:       testText("example.com"),
+				CollectionID: ownerUnsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -1017,13 +1072,16 @@ func TestSavedItem_Delete(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		ownerUnsortedCollectionID := createUnsortedCollection(t, ctx, db, ownerID)
+
 		created, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    ownerID,
-				Url:       "https://example.com/indistinguishable",
-				Domain:    testText("example.com"),
-				CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:       ownerID,
+				Url:          "https://example.com/indistinguishable",
+				Domain:       testText("example.com"),
+				CollectionID: ownerUnsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -1133,6 +1191,10 @@ func TestSavedItem_Delete(t *testing.T) {
 		)
 		require.NoError(t, err)
 
+		// Migration 000022 seeds one Unsorted collection per user, and that
+		// is where a newly saved item lands.
+		createUnsortedCollection(t, ctx, db, userID)
+
 		accessToken := newTestAccessToken(t, userID)
 
 		createAndDelete := func(url string) {
@@ -1224,14 +1286,19 @@ func TestSavedItem_List(t *testing.T) {
 
 		base := time.Now().Add(-time.Hour)
 
+		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
+
+		otherUnsortedCollectionID := createUnsortedCollection(t, ctx, db, otherUserID)
+
 		older, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    userID,
-				Url:       "https://example.com/older",
-				Domain:    testText("example.com"),
-				Platform:  testText("web"),
-				CreatedAt: pgtype.Timestamptz{Time: base, Valid: true},
+				UserID:       userID,
+				Url:          "https://example.com/older",
+				Domain:       testText("example.com"),
+				Platform:     testText("web"),
+				CollectionID: unsortedCollectionID,
+				CreatedAt:    pgtype.Timestamptz{Time: base, Valid: true},
 			},
 		)
 		require.NoError(t, err)
@@ -1239,10 +1306,11 @@ func TestSavedItem_List(t *testing.T) {
 		newer, err := db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    userID,
-				Url:       "https://example.com/newer",
-				Domain:    testText("example.com"),
-				Platform:  testText("web"),
+				UserID:       userID,
+				Url:          "https://example.com/newer",
+				Domain:       testText("example.com"),
+				Platform:     testText("web"),
+				CollectionID: unsortedCollectionID,
 				CreatedAt: pgtype.Timestamptz{
 					Time:  base.Add(30 * time.Minute),
 					Valid: true,
@@ -1254,10 +1322,11 @@ func TestSavedItem_List(t *testing.T) {
 		_, err = db.CreateTestSavedItem(
 			ctx,
 			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:    otherUserID,
-				Url:       "https://other.example.com/secret",
-				Domain:    testText("other.example.com"),
-				Platform:  testText("web"),
+				UserID:       otherUserID,
+				Url:          "https://other.example.com/secret",
+				Domain:       testText("other.example.com"),
+				Platform:     testText("web"),
+				CollectionID: otherUnsortedCollectionID,
 				CreatedAt: pgtype.Timestamptz{
 					Time:  base.Add(45 * time.Minute),
 					Valid: true,
@@ -1371,14 +1440,17 @@ func TestSavedItem_List(t *testing.T) {
 
 		base := time.Now().Add(-time.Hour)
 
+		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
+
 		for i := range 3 {
 			_, err := db.CreateTestSavedItem(
 				ctx,
 				saveditemdbtest.CreateTestSavedItemParams{
-					UserID:    userID,
-					Url:       "https://example.com/page/" + string(rune('a'+i)),
-					Domain:    testText("example.com"),
-					Platform:  testText("web"),
+					UserID:       userID,
+					Url:          "https://example.com/page/" + string(rune('a'+i)),
+					Domain:       testText("example.com"),
+					Platform:     testText("web"),
+					CollectionID: unsortedCollectionID,
 					CreatedAt: pgtype.Timestamptz{
 						Time:  base.Add(time.Duration(i) * time.Minute),
 						Valid: true,

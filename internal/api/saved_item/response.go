@@ -7,13 +7,13 @@ import (
 )
 
 type SavedItemResponse struct {
-	ID        uuid.UUID  `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
-	URL       string     `json:"url" example:"https://example.com/articles/1"`
-	Domain    *string    `json:"domain" example:"example.com"`
-	Platform  *string    `json:"platform" example:"web"`
-	Title     *string    `json:"title" example:"An interesting article"`
-	CreatedAt time.Time  `json:"created_at" example:"2026-10-02T10:30:00Z"`
-	UpdatedAt time.Time  `json:"updated_at" example:"2026-10-02T10:30:00Z"`
+	ID        uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	URL       string    `json:"url" example:"https://example.com/articles/1"`
+	Domain    *string   `json:"domain" example:"example.com"`
+	Platform  *string   `json:"platform" example:"youtube"`
+	Title     *string   `json:"title" example:"An interesting article"`
+	CreatedAt time.Time `json:"created_at" example:"2026-10-02T10:30:00Z"`
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T10:30:00Z"`
 }
 
 type CreateSavedItemResponse struct {

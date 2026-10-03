@@ -4,13 +4,15 @@ INSERT INTO saved_items (
     url,
     domain,
     platform,
-    title
+    title,
+    collection_id
 ) VALUES (
     sqlc.arg(user_id),
     sqlc.arg(url),
     sqlc.arg(domain),
     sqlc.arg(platform),
-    sqlc.arg(title)
+    sqlc.arg(title),
+    sqlc.arg(collection_id)
 )
 RETURNING
     id,
@@ -21,6 +23,18 @@ RETURNING
     title,
     created_at,
     updated_at;
+
+-- name: GetUnsortedCollectionByUser :one
+-- Resolves the authenticated user's Unsorted collection. system_key is the
+-- stable identity of a system collection, so the display name is never used to
+-- find it.
+SELECT
+    id
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND type = 'system'
+  AND system_key = 'unsorted'
+LIMIT 1;
 
 -- name: GetSavedItemByIDForUser :one
 SELECT

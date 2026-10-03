@@ -24,6 +24,7 @@ func TestService_Create(t *testing.T) {
 		svc := saved_item.NewService(repo)
 
 		userID := uuid.New()
+		collectionID := uuid.New()
 
 		created := saveditemdb.SavedItem{
 			ID:     uuid.New(),
@@ -33,14 +34,19 @@ func TestService_Create(t *testing.T) {
 		}
 
 		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(collectionID, nil)
+
+		repo.EXPECT().
 			CreateSavedItem(
 				gomock.Any(),
 				saveditemdb.CreateSavedItemParams{
-					UserID:   userID,
-					Url:      "https://example.com/articles/1",
-					Domain:   pgtype.Text{String: "example.com", Valid: true},
-					Platform: pgtype.Text{},
-					Title:    pgtype.Text{},
+					UserID:       userID,
+					Url:          "https://example.com/articles/1",
+					Domain:       pgtype.Text{String: "example.com", Valid: true},
+					Platform:     pgtype.Text{},
+					Title:        pgtype.Text{},
+					CollectionID: collectionID,
 				},
 			).
 			Return(created, nil)
@@ -62,6 +68,10 @@ func TestService_Create(t *testing.T) {
 		svc := saved_item.NewService(repo)
 
 		userID := uuid.New()
+
+		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(uuid.New(), nil)
 
 		repo.EXPECT().
 			CreateSavedItem(
@@ -105,6 +115,10 @@ func TestService_Create(t *testing.T) {
 		svc := saved_item.NewService(repo)
 
 		userID := uuid.New()
+
+		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(uuid.New(), nil)
 
 		repo.EXPECT().
 			CreateSavedItem(
@@ -190,6 +204,13 @@ func TestService_Create(t *testing.T) {
 
 				svc := saved_item.NewService(repo)
 
+				userID := uuid.New()
+				collectionID := uuid.New()
+
+				repo.EXPECT().
+					GetUnsortedCollectionByUser(gomock.Any(), userID).
+					Return(collectionID, nil)
+
 				repo.EXPECT().
 					CreateSavedItem(
 						gomock.Any(),
@@ -205,6 +226,11 @@ func TestService_Create(t *testing.T) {
 								tc.expected,
 								params.Domain.String,
 							)
+							require.Equal(
+								t,
+								collectionID,
+								params.CollectionID,
+							)
 
 							return saveditemdb.SavedItem{}, nil
 						},
@@ -212,7 +238,7 @@ func TestService_Create(t *testing.T) {
 
 				_, err := svc.Create(
 					context.Background(),
-					uuid.New(),
+					userID,
 					tc.rawURL,
 				)
 
@@ -267,7 +293,13 @@ func TestService_Create(t *testing.T) {
 
 		svc := saved_item.NewService(repo)
 
+		userID := uuid.New()
+
 		repoErr := apperror.Internal(errors.New("insert failed"))
+
+		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(uuid.New(), nil)
 
 		repo.EXPECT().
 			CreateSavedItem(gomock.Any(), gomock.Any()).
@@ -275,10 +307,76 @@ func TestService_Create(t *testing.T) {
 
 		_, err := svc.Create(
 			context.Background(),
-			uuid.New(),
+			userID,
 			"https://example.com",
 		)
 
 		require.Equal(t, repoErr, err)
+	})
+
+	t.Run("files the item under the authenticated user's unsorted collection", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := saveditemmocks.NewMockRepository(ctrl)
+
+		svc := saved_item.NewService(repo)
+
+		userID := uuid.New()
+		collectionID := uuid.New()
+
+		// The collection is resolved with the same user id that comes from the
+		// access token, so an item can never land in another user's collection.
+		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(collectionID, nil)
+
+		repo.EXPECT().
+			CreateSavedItem(gomock.Any(), gomock.Any()).
+			DoAndReturn(
+				func(
+					_ context.Context,
+					params saveditemdb.CreateSavedItemParams,
+				) (saveditemdb.SavedItem, error) {
+					require.Equal(t, userID, params.UserID)
+					require.Equal(t, collectionID, params.CollectionID)
+
+					return saveditemdb.SavedItem{}, nil
+				},
+			)
+
+		_, err := svc.Create(
+			context.Background(),
+			userID,
+			"https://example.com",
+		)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("does not create a saved item when the unsorted lookup fails", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := saveditemmocks.NewMockRepository(ctrl)
+
+		svc := saved_item.NewService(repo)
+
+		userID := uuid.New()
+
+		lookupErr := apperror.Internal(errors.New("no unsorted collection"))
+
+		repo.EXPECT().
+			GetUnsortedCollectionByUser(gomock.Any(), userID).
+			Return(uuid.Nil, lookupErr)
+
+		// No fallback collection id is invented and no insert is attempted.
+		repo.EXPECT().
+			CreateSavedItem(gomock.Any(), gomock.Any()).
+			Times(0)
+
+		_, err := svc.Create(
+			context.Background(),
+			userID,
+			"https://example.com",
+		)
+
+		require.Equal(t, lookupErr, err)
 	})
 }
