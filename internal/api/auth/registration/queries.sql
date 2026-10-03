@@ -254,6 +254,25 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: CreateUnsortedCollection :one
+-- Every permanent user owns exactly one Unsorted system collection, which is
+-- where their saved items land. Created in the same transaction as the user, so
+-- a user can never exist without one. system_key is the stable identity of a
+-- system collection, so collections_system_key_unique is the invariant guard
+-- against a duplicate; no lookup or ON CONFLICT is used on purpose.
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    sqlc.arg(user_id),
+    'Unsorted',
+    'system',
+    'unsorted'
+)
+RETURNING id;
+
 -- name: CreatePasswordCredential :one
 INSERT INTO password_credentials (
     user_id,

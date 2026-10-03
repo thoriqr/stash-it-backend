@@ -738,6 +738,62 @@ func TestFinalizeManualRegistration_Success(t *testing.T) {
 	require.Equal(t, state.UserID, state.PasswordUserID)
 	require.Equal(t, "completed", state.RegistrationStatus)
 	require.True(t, state.ConsumedAt.Valid)
+
+	requireSingleUnsortedCollection(t, ctx, db, state.UserID)
+}
+
+// requireSingleUnsortedCollection asserts the per-user Unsorted invariant: a
+// permanent user owns exactly one system collection keyed 'unsorted'.
+func requireSingleUnsortedCollection(
+	t *testing.T,
+	ctx context.Context,
+	db *registrationtestdb.Queries,
+	userID uuid.UUID,
+) {
+	t.Helper()
+
+	collections, err := db.GetUnsortedCollectionsForUser(ctx, userID)
+	require.NoError(t, err)
+
+	require.Len(
+		t,
+		collections,
+		1,
+		"user must own exactly one Unsorted collection",
+	)
+
+	require.Equal(t, userID, collections[0].UserID)
+	require.Equal(t, "Unsorted", collections[0].Name)
+	require.Equal(t, "system", collections[0].Type)
+
+	require.True(t, collections[0].SystemKey.Valid)
+	require.Equal(t, "unsorted", collections[0].SystemKey.String)
+}
+
+// TestRegisterManual_PendingHasNoUnsortedCollection pins the lifecycle
+// distinction: a pending registration is not a permanent user yet, so no
+// collection may exist for it. The collection belongs to user finalization.
+func TestRegisterManual_PendingHasNoUnsortedCollection(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/manual",
+		strings.NewReader(`{"email":"pending-only@example.com"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	count, err := db.CountAllCollections(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), count)
 }
 
 func TestFinalizeManualRegistration_UserAlreadyExists(t *testing.T) {
@@ -932,6 +988,8 @@ func TestFinalizeSocialRegistration_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, int64(1), sessionCount)
+
+	requireSingleUnsortedCollection(t, ctx, db, userID)
 }
 
 func TestFinalizeSocialRegistration_UserAlreadyExists(t *testing.T) {

@@ -623,6 +623,11 @@ func (r *repository) FinalizeManualRegistration(
 		return registrationdb.CreateUserRow{}, mapRegistrationDBError(err)
 	}
 
+	_, err = qtx.CreateUnsortedCollection(ctx, user.ID)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
+	}
+
 	_, err = qtx.CreatePasswordCredential(
 		ctx,
 		registrationdb.CreatePasswordCredentialParams{
@@ -717,6 +722,11 @@ func (r *repository) FinalizeSocialRegistration(
 	)
 	if err != nil {
 		return registrationdb.CreateUserRow{}, mapRegistrationDBError(err)
+	}
+
+	_, err = qtx.CreateUnsortedCollection(ctx, user.ID)
+	if err != nil {
+		return registrationdb.CreateUserRow{}, apperror.Internal(err)
 	}
 
 	_, err = qtx.CreateAuthIdentity(

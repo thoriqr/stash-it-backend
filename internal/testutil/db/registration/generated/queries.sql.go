@@ -12,6 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAllCollections = `-- name: CountAllCollections :one
+SELECT COUNT(*) AS count
+FROM collections
+`
+
+func (q *Queries) CountAllCollections(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAllCollections)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserSessions = `-- name: CountUserSessions :one
 SELECT COUNT(*) AS count
 FROM sessions
@@ -463,6 +475,53 @@ func (q *Queries) GetRegistrationState(ctx context.Context, email string) (GetRe
 		&i.LastSentAt,
 	)
 	return i, err
+}
+
+const getUnsortedCollectionsForUser = `-- name: GetUnsortedCollectionsForUser :many
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key
+FROM collections
+WHERE user_id = $1
+  AND type = 'system'
+  AND system_key = 'unsorted'
+`
+
+type GetUnsortedCollectionsForUserRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Name      string
+	Type      string
+	SystemKey pgtype.Text
+}
+
+func (q *Queries) GetUnsortedCollectionsForUser(ctx context.Context, userID uuid.UUID) ([]GetUnsortedCollectionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, getUnsortedCollectionsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUnsortedCollectionsForUserRow
+	for rows.Next() {
+		var i GetUnsortedCollectionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.Type,
+			&i.SystemKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const makeVerificationResendable = `-- name: MakeVerificationResendable :exec

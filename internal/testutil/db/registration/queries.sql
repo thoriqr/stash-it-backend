@@ -230,6 +230,22 @@ FROM sessions
 WHERE user_id = sqlc.arg(user_id)
   AND revoked_at IS NULL;
 
+-- name: GetUnsortedCollectionsForUser :many
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND type = 'system'
+  AND system_key = 'unsorted';
+
+-- name: CountAllCollections :one
+SELECT COUNT(*) AS count
+FROM collections;
+
 -- name: CreateExistingAuthIdentity :exec
 INSERT INTO auth_identities (
     user_id,

@@ -309,6 +309,33 @@ func (q *Queries) CreateRegistrationContinuation(ctx context.Context, arg Create
 	return i, err
 }
 
+const createUnsortedCollection = `-- name: CreateUnsortedCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    $1,
+    'Unsorted',
+    'system',
+    'unsorted'
+)
+RETURNING id
+`
+
+// Every permanent user owns exactly one Unsorted system collection, which is
+// where their saved items land. Created in the same transaction as the user, so
+// a user can never exist without one. system_key is the stable identity of a
+// system collection, so collections_system_key_unique is the invariant guard
+// against a duplicate; no lookup or ON CONFLICT is used on purpose.
+func (q *Queries) CreateUnsortedCollection(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createUnsortedCollection, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (
     email,
