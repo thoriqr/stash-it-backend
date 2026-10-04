@@ -10,7 +10,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/saved_item"
-	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	saveditemmocks "github.com/thoriqr/stash-it-backend/internal/api/saved_item/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 )
@@ -24,7 +23,7 @@ func TestService_List(t *testing.T) {
 
 		userID := uuid.New()
 
-		savedItems := []saveditemdb.SavedItem{
+		savedItems := []saved_item.SavedItem{
 			{ID: uuid.New(), UserID: userID},
 			{ID: uuid.New(), UserID: userID},
 		}
@@ -75,7 +74,7 @@ func TestService_List(t *testing.T) {
 				int32(0),
 				int32(10),
 			).
-			Return([]saveditemdb.SavedItem{}, nil)
+			Return([]saved_item.SavedItem{}, nil)
 
 		repo.EXPECT().
 			CountSavedItems(gomock.Any(), userID).
@@ -108,7 +107,7 @@ func TestService_List(t *testing.T) {
 				int32(0),
 				int32(saved_item.SavedItemListMaxLimit),
 			).
-			Return([]saveditemdb.SavedItem{}, nil)
+			Return([]saved_item.SavedItem{}, nil)
 
 		repo.EXPECT().
 			CountSavedItems(gomock.Any(), userID).
@@ -144,7 +143,7 @@ func TestService_List(t *testing.T) {
 				int32(0),
 				int32(saved_item.SavedItemListDefaultLimit),
 			).
-			Return([]saveditemdb.SavedItem{}, nil)
+			Return([]saved_item.SavedItem{}, nil)
 
 		repo.EXPECT().
 			CountSavedItems(gomock.Any(), userID).

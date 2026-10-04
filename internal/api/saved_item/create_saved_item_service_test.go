@@ -26,7 +26,7 @@ func TestService_Create(t *testing.T) {
 		userID := uuid.New()
 		collectionID := uuid.New()
 
-		created := saveditemdb.SavedItem{
+		created := saved_item.SavedItem{
 			ID:     uuid.New(),
 			UserID: userID,
 			Url:    "https://example.com/articles/1",
@@ -82,7 +82,7 @@ func TestService_Create(t *testing.T) {
 				func(
 					_ context.Context,
 					params saveditemdb.CreateSavedItemParams,
-				) (saveditemdb.SavedItem, error) {
+				) (saved_item.SavedItem, error) {
 					require.Equal(
 						t,
 						"youtube.com",
@@ -95,7 +95,7 @@ func TestService_Create(t *testing.T) {
 					)
 					require.False(t, params.Title.Valid)
 
-					return saveditemdb.SavedItem{}, nil
+					return saved_item.SavedItem{}, nil
 				},
 			)
 
@@ -129,14 +129,14 @@ func TestService_Create(t *testing.T) {
 				func(
 					_ context.Context,
 					params saveditemdb.CreateSavedItemParams,
-				) (saveditemdb.SavedItem, error) {
+				) (saved_item.SavedItem, error) {
 					require.Equal(
 						t,
 						"shop.example.com",
 						params.Domain.String,
 					)
 
-					return saveditemdb.SavedItem{}, nil
+					return saved_item.SavedItem{}, nil
 				},
 			)
 
@@ -220,7 +220,7 @@ func TestService_Create(t *testing.T) {
 						func(
 							_ context.Context,
 							params saveditemdb.CreateSavedItemParams,
-						) (saveditemdb.SavedItem, error) {
+						) (saved_item.SavedItem, error) {
 							require.Equal(
 								t,
 								tc.expected,
@@ -232,7 +232,7 @@ func TestService_Create(t *testing.T) {
 								params.CollectionID,
 							)
 
-							return saveditemdb.SavedItem{}, nil
+							return saved_item.SavedItem{}, nil
 						},
 					)
 
@@ -303,7 +303,7 @@ func TestService_Create(t *testing.T) {
 
 		repo.EXPECT().
 			CreateSavedItem(gomock.Any(), gomock.Any()).
-			Return(saveditemdb.SavedItem{}, repoErr)
+			Return(saved_item.SavedItem{}, repoErr)
 
 		_, err := svc.Create(
 			context.Background(),
@@ -335,11 +335,11 @@ func TestService_Create(t *testing.T) {
 				func(
 					_ context.Context,
 					params saveditemdb.CreateSavedItemParams,
-				) (saveditemdb.SavedItem, error) {
+				) (saved_item.SavedItem, error) {
 					require.Equal(t, userID, params.UserID)
 					require.Equal(t, collectionID, params.CollectionID)
 
-					return saveditemdb.SavedItem{}, nil
+					return saved_item.SavedItem{}, nil
 				},
 			)
 

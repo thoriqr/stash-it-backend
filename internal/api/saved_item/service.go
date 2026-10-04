@@ -52,7 +52,7 @@ func NewService(
 }
 
 type CreateResult struct {
-	SavedItem saveditemdb.SavedItem
+	SavedItem SavedItem
 }
 
 func (s *service) Create(
@@ -105,7 +105,7 @@ func (s *service) Create(
 }
 
 type GetResult struct {
-	SavedItem saveditemdb.SavedItem
+	SavedItem SavedItem
 }
 
 func (s *service) Get(
@@ -140,7 +140,7 @@ func (s *service) Delete(
 }
 
 type ListResult struct {
-	SavedItems []saveditemdb.SavedItem
+	SavedItems []SavedItem
 	Page       int
 	Limit      int
 	Total      int64

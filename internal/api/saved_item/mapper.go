@@ -2,11 +2,9 @@ package saved_item
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"
-
-	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 )
 
-func mapSavedItemResponse(savedItem saveditemdb.SavedItem) SavedItemResponse {
+func mapSavedItemResponse(savedItem SavedItem) SavedItemResponse {
 	return SavedItemResponse{
 		ID:        savedItem.ID,
 		URL:       savedItem.Url,

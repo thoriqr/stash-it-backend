@@ -16,7 +16,7 @@ type Repository interface {
 	CreateSavedItem(
 		ctx context.Context,
 		params saveditemdb.CreateSavedItemParams,
-	) (saveditemdb.SavedItem, error)
+	) (SavedItem, error)
 
 	GetUnsortedCollectionByUser(
 		ctx context.Context,
@@ -27,7 +27,7 @@ type Repository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
-	) (saveditemdb.SavedItem, error)
+	) (SavedItem, error)
 
 	DeleteSavedItemByIDForUser(
 		ctx context.Context,
@@ -40,7 +40,7 @@ type Repository interface {
 		userID uuid.UUID,
 		offset int32,
 		limit int32,
-	) ([]saveditemdb.SavedItem, error)
+	) ([]SavedItem, error)
 
 	CountSavedItems(
 		ctx context.Context,
@@ -63,14 +63,14 @@ func NewRepository(
 func (r *repository) CreateSavedItem(
 	ctx context.Context,
 	params saveditemdb.CreateSavedItemParams,
-) (saveditemdb.SavedItem, error) {
+) (SavedItem, error) {
 	// Since migration 000022 added collection_id, saved_items has more columns
 	// than these queries project, so sqlc generates a query specific row type
 	// instead of reusing the SavedItem model. The row is mapped straight back so
-	// the repository interface, the service and the API stay on the model.
+	// the repository interface, the service and the API stay on one type.
 	row, err := r.queries.CreateSavedItem(ctx, params)
 	if err != nil {
-		return saveditemdb.SavedItem{}, internalError(err)
+		return SavedItem{}, internalError(err)
 	}
 
 	return newSavedItem(
@@ -109,7 +109,7 @@ func (r *repository) GetSavedItemByIDForUser(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
-) (saveditemdb.SavedItem, error) {
+) (SavedItem, error) {
 	row, err := r.queries.GetSavedItemByIDForUser(
 		ctx,
 		saveditemdb.GetSavedItemByIDForUserParams{
@@ -122,10 +122,10 @@ func (r *repository) GetSavedItemByIDForUser(
 		// here, so both surface as the same not found error. That avoids
 		// disclosing whether a given ID exists for someone else.
 		if errors.Is(err, pgx.ErrNoRows) {
-			return saveditemdb.SavedItem{}, apperror.NotFound(err)
+			return SavedItem{}, apperror.NotFound(err)
 		}
 
-		return saveditemdb.SavedItem{}, internalError(err)
+		return SavedItem{}, internalError(err)
 	}
 
 	return newSavedItem(
@@ -171,7 +171,7 @@ func (r *repository) ListSavedItems(
 	userID uuid.UUID,
 	offset int32,
 	limit int32,
-) ([]saveditemdb.SavedItem, error) {
+) ([]SavedItem, error) {
 	rows, err := r.queries.ListSavedItems(
 		ctx,
 		saveditemdb.ListSavedItemsParams{
@@ -184,7 +184,7 @@ func (r *repository) ListSavedItems(
 		return nil, internalError(err)
 	}
 
-	savedItems := make([]saveditemdb.SavedItem, 0, len(rows))
+	savedItems := make([]SavedItem, 0, len(rows))
 	for _, row := range rows {
 		savedItems = append(
 			savedItems,
@@ -204,14 +204,16 @@ func (r *repository) ListSavedItems(
 	return savedItems, nil
 }
 
-// newSavedItem builds the SavedItem model from the columns the saved items
+// newSavedItem builds the SavedItem projection from the columns the saved items
 // queries project. Since migration 000022 added collection_id, saved_items has
 // more columns than these queries select, so sqlc generates a distinct row type
-// per query instead of reusing the model. Mapping the projected columns back
-// here keeps the Repository interface, the service and the API on the model.
+// per query instead of reusing a table model. Mapping the projected columns back
+// here keeps the Repository interface, the service and the API on one type.
 //
-// The collection and enrichment columns are not projected by these queries, so
-// they are left unset. Nothing reads them yet.
+// collection_id and the enrichment columns are not projected by these queries, so
+// SavedItem has no field for them and nothing can read a zero value by accident.
+// The collection feature carries its own projection, which does include
+// collection_id.
 func newSavedItem(
 	id uuid.UUID,
 	userID uuid.UUID,
@@ -221,8 +223,8 @@ func newSavedItem(
 	title pgtype.Text,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) saveditemdb.SavedItem {
-	return saveditemdb.SavedItem{
+) SavedItem {
+	return SavedItem{
 		ID:        id,
 		UserID:    userID,
 		Url:       url,

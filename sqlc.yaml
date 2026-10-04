@@ -7,6 +7,7 @@ sql:
     queries: "internal/api/auth/registration/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "registrationdb"
         out: "internal/api/auth/registration/generated"
         sql_package: "pgx/v5"
@@ -19,6 +20,7 @@ sql:
     queries: "internal/api/auth/login/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "logindb"
         out: "internal/api/auth/login/generated"
         sql_package: "pgx/v5"
@@ -31,6 +33,7 @@ sql:
     queries: "internal/api/auth/session/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "sessiondb"
         out: "internal/api/auth/session/generated"
         sql_package: "pgx/v5"
@@ -43,6 +46,7 @@ sql:
     queries: "internal/api/auth/password_reset/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "passwordresetdb"
         out: "internal/api/auth/password_reset/generated"
         sql_package: "pgx/v5"
@@ -55,6 +59,7 @@ sql:
     queries: "internal/api/user/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "userdb"
         out: "internal/api/user/generated"
         sql_package: "pgx/v5"
@@ -67,6 +72,7 @@ sql:
     queries: "internal/api/saved_item/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "saveditemdb"
         out: "internal/api/saved_item/generated"
         sql_package: "pgx/v5"
@@ -79,6 +85,7 @@ sql:
     queries: "internal/api/collection/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "collectiondb"
         out: "internal/api/collection/generated"
         sql_package: "pgx/v5"
@@ -92,6 +99,7 @@ sql:
     queries: "internal/testutil/db/registration/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "registrationtestdb"
         out: "internal/testutil/db/registration/generated"
         sql_package: "pgx/v5"
@@ -105,6 +113,7 @@ sql:
     queries: "internal/testutil/db/password_reset/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "passwordresetdbtest"
         out: "internal/testutil/db/password_reset/generated"
         sql_package: "pgx/v5"
@@ -118,6 +127,7 @@ sql:
     queries: "internal/testutil/db/login/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "logindbtest"
         out: "internal/testutil/db/login/generated"
         sql_package: "pgx/v5"
@@ -131,6 +141,7 @@ sql:
     queries: "internal/testutil/db/session/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "sessiondbtest"
         out: "internal/testutil/db/session/generated"
         sql_package: "pgx/v5"
@@ -144,6 +155,7 @@ sql:
     queries: "internal/testutil/db/saved_item/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "saveditemdbtest"
         out: "internal/testutil/db/saved_item/generated"
         sql_package: "pgx/v5"
@@ -157,6 +169,7 @@ sql:
     queries: "internal/testutil/db/collection/queries.sql"
     gen:
       go:
+        omit_unused_structs: true
         package: "collectiondbtest"
         out: "internal/testutil/db/collection/generated"
         sql_package: "pgx/v5"

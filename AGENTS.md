@@ -10,8 +10,10 @@ if explicitly asked.
 - Fiber **v3**; handlers are `func(c fiber.Ctx) error` — `fiber.Ctx` is a **value** type.
 - Postgres via `pgx/v5` + `pgxpool` directly. No ORM, no query builder.
 - Swagger 2.0 via `swaggo/swag`, served at `/docs/*`. `zap` logging, `validator/v10` validation.
-- Scope today: authentication (`internal/api/auth`). `internal/api/user` has a
-  repository and generated code but no service/handler/routes — scaffolding, not dead code.
+- Scope today: authentication (`internal/api/auth`), saved items
+  (`internal/api/saved_item`), and collections (`internal/api/collection`).
+  `internal/api/user` has a repository and generated code but no
+  service/handler/routes — scaffolding, not dead code.
 
 ## Architecture
 
@@ -173,15 +175,41 @@ Output paths: `internal/**/mocks/` (mockgen), `internal/api/**/generated/` (sqlc
   `internal/testutil/db/<feature>/queries.sql` generate into the sibling
   `generated/` directory via the same config, and are output too.
 
+  Every target sets `omit_unused_structs: true`, so a generated `models.go`
+  contains only the table structs that target's own queries reference. Generated
+  persistence models are therefore **not** automatically shared across features,
+  and a feature must not assume a struct another feature's target happens to
+  generate. When a feature's queries project only part of a table, sqlc emits a
+  per-query row type and the table model goes unused; in that case the feature
+  owns its projected type in `types.go` (see `saved_item.SavedItem`, which carries
+  the 8 columns the saved items queries select). Keep sqlc `Params`/`Row` types
+  as generated types.
+
+  A generated model with a real consumer in another feature stays, and borrowing
+  it is fine: `sessiondb.Session` is used by both `login` and `registration`
+  because session's queries project the whole table. But such a model survives
+  only while the owning target's queries reference it — narrowing those queries
+  would remove the struct and break the borrowing feature, so change the owner's
+  `queries.sql` with that in mind. Do **not** introduce a shared domain type to
+  avoid two structs that look alike; `saved_item.SavedItem` and
+  `collection.SavedItem` are deliberately separate projections that project
+  different columns.
+
 - **swag** — edit the handler annotation comments, then regenerate Swagger
   documentation with:
   `swag init -g cmd/api/main.go -parseInternal`.
 
 Features are directories under `internal/api/` — currently `auth/registration`,
-`auth/login`, `auth/session`, `auth/password_reset`, and `user`; new features may
-be added there following the same structure. Don't treat `auth` as the only
-feature area, and for sqlc follow the existing `sqlc.yaml` mapping for the
-specific module instead of inventing a new output location.
+`auth/login`, `auth/session`, `auth/password_reset`, `saved_item`,
+`collection`, and `user`; new features may be added there following the same
+structure. Don't treat `auth` as the only feature area, and for sqlc follow the
+existing `sqlc.yaml` mapping for the specific module instead of inventing a new
+output location.
+
+`collection` acts on a saved item and mounts under the same `/saved-items`
+prefix as `saved_item` (`PUT /saved-items/:id/collection`). Its module registers
+into that prefix independently; both features' routes coexist, so do not fold one
+into the other.
 
 ## API documentation
 

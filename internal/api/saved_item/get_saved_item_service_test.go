@@ -13,7 +13,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/saved_item"
-	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	saveditemmocks "github.com/thoriqr/stash-it-backend/internal/api/saved_item/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 )
@@ -28,7 +27,7 @@ func TestService_Get(t *testing.T) {
 		userID := uuid.New()
 		savedItemID := uuid.New()
 
-		savedItem := saveditemdb.SavedItem{
+		savedItem := saved_item.SavedItem{
 			ID:       savedItemID,
 			UserID:   userID,
 			Url:      "https://example.com/articles/1",
@@ -76,12 +75,12 @@ func TestService_Get(t *testing.T) {
 					_ context.Context,
 					gotUserID uuid.UUID,
 					gotSavedItemID uuid.UUID,
-				) (saveditemdb.SavedItem, error) {
+				) (saved_item.SavedItem, error) {
 					require.Equal(t, userID, gotUserID)
 					require.Equal(t, savedItemID, gotSavedItemID)
 					require.NotEqual(t, otherUserID, gotUserID)
 
-					return saveditemdb.SavedItem{
+					return saved_item.SavedItem{
 						ID:     gotSavedItemID,
 						UserID: gotUserID,
 					}, nil
@@ -110,7 +109,7 @@ func TestService_Get(t *testing.T) {
 				gomock.Any(),
 			).
 			Return(
-				saveditemdb.SavedItem{},
+				saved_item.SavedItem{},
 				apperror.NotFound(pgx.ErrNoRows),
 			)
 
@@ -143,7 +142,7 @@ func TestService_Get(t *testing.T) {
 				gomock.Any(),
 				gomock.Any(),
 			).
-			Return(saveditemdb.SavedItem{}, repoErr)
+			Return(saved_item.SavedItem{}, repoErr)
 
 		_, err := svc.Get(
 			context.Background(),

@@ -72,13 +72,13 @@ The initial Saved Item is deliberately minimal:
   lowercases the hostname and removes one leading `www.` prefix. Other subdomains
   are preserved, and no public suffix or registrable-domain detection is
   performed.
-- `platform` stays null in Phase A. It is the **content/source** platform
-  (youtube, tiktok, instagram, pinterest, ...) and is never derived from the
-  client's platform header.
-- `title` stays null in Phase A.
+- `platform` stays null until enrichment runs. It is the **content/source**
+  platform (youtube, tiktok, instagram, pinterest, ...) and is never derived from
+  the client's platform header.
+- `title` stays null until enrichment runs.
 - `collection_id` points at the collection the item belongs to and is required.
   Every user has an `Unsorted` system collection, and a newly saved item lands
-  there. Moving an item into another collection is not implemented yet.
+  there. An item can then be moved into a collection of the user's own.
 - `enrichment_status` starts at `pending` and is only ever advanced by the later
   background enrichment process, which does not exist yet.
 
@@ -102,20 +102,61 @@ inbox begins as one unsorted pile instead of an empty requirement.
   receives their `Unsorted` collection.
 - A registration that is still pending has no account yet and no collections.
 - Every newly saved item belongs to the user's `Unsorted` collection.
-- Once Collections is built, users will be able to create their own collections
-  and move items out of `Unsorted` into them. `Unsorted` is allowed to stay
-  empty; it is never required to hold anything.
+- `Unsorted` is allowed to stay empty; it is never required to hold anything,
+  and it is never removed when its items move elsewhere.
 
-## Current phase: Phase A — core capture
+### Collections
 
-The goal is a complete, reliable path from _I saw something_ to _it is saved and
-waiting in my Inbox_.
+`Unsorted` is where saving lands, and the user's own collections are where items
+go once they have been organized. Organizing is optional: an item that has never
+been moved stays in `Unsorted`, and that is a normal state, not a problem.
+
+- A user names the collection when filing an item into it. If that collection
+  does not exist yet it is created as part of the same action, so a collection is
+  never created holding nothing.
+- A user collection belongs to exactly one user. Only the owner can file an item
+  into it, and only their own items can be moved.
+- Collection names are unique per user. `"Wishlist"`, `"wishlist"` and
+  `" Wishlist "` are the same name, so organizing stays predictable instead of
+  producing near-duplicate piles. Surrounding whitespace is not stored.
+- Names already reserved by a system collection, such as `Unsorted`, cannot be
+  used for a user collection.
+- Filing an item that is already in that collection succeeds and changes nothing,
+  so repeating the action — or retrying after a dropped connection — is harmless.
+- Metadata extraction is unaffected. Organizing an item never waits on, blocks,
+  or alters enrichment, and an item can be moved whatever state its metadata is
+  in.
+
+## Current phase: Phase B — basic organization and return
+
+Phase A gave a complete, reliable path from _I saw something_ to _it is saved and
+waiting in my Inbox_: authentication, saving a URL, and the Inbox.
+
+Phase B turns a storage bucket into something a user returns to. It is what
+makes saved items findable again later.
 
 Implemented:
 
 - Authentication
 - Save a URL
 - Inbox
+- Saved item detail
+- Delete a saved item
+- Collections, including filing an item into a collection of the user's own
+
+Still to build:
+
+- Basic search
+
+Saved item detail and delete were built during Phase A because they are needed to
+complete the core loop, and Collections followed once the loop was solid. What
+genuinely remains for Phase B is **basic search**: without it, an item saved
+weeks ago is only findable if the user remembers which collection it went into.
+
+The database foundation is in place: the `collections` table, the
+`saved_items.collection_id` relationship, and the saved item enrichment state
+columns. The enrichment columns exist but nothing populates them yet; metadata
+extraction remains a later phase.
 
 Not part of this phase, by decision:
 
@@ -123,25 +164,6 @@ Not part of this phase, by decision:
   loop requires it, so it is not scheduled ahead of the work below.
 - Opening the original URL is a client-side behavior, outside the current backend
   scope.
-
-## Next phase: Phase B — basic organization and return
-
-- Collections
-- Basic search
-- Saved item detail *(already available; listed here as part of the Phase B
-  grouping, not as outstanding work)*
-- Delete a saved item *(already available)*
-
-Saved item detail and delete were built during Phase A because they are needed to
-complete the core loop. What genuinely remains for Phase B is **Collections** and
-**basic search**.
-
-The database foundation is in place: the `collections` table, the
-`saved_items.collection_id` relationship, and the saved item enrichment state
-columns. The Collections API, the assignment and move behavior, and basic search
-are still to be built.
-
-This phase is what turns a storage bucket into something a user returns to.
 
 ## Out of scope for the core MVP
 
@@ -192,7 +214,7 @@ for the core loop.
 ## Development order
 
 1. Share → Save → Inbox *(done)*
-2. Collections + Search *(next)*
+2. Collections + Search *(Collections done, Search next)*
 3. Background metadata extraction
 4. Reminder / return loop
 5. Product metadata enrichment

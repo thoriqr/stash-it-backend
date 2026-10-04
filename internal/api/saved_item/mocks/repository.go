@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	uuid "github.com/google/uuid"
+	saved_item "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -82,10 +83,10 @@ func (c *MockRepositoryCountSavedItemsCall) DoAndReturn(f func(context.Context, 
 }
 
 // CreateSavedItem mocks base method.
-func (m *MockRepository) CreateSavedItem(ctx context.Context, params saveditemdb.CreateSavedItemParams) (saveditemdb.SavedItem, error) {
+func (m *MockRepository) CreateSavedItem(ctx context.Context, params saveditemdb.CreateSavedItemParams) (saved_item.SavedItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateSavedItem", ctx, params)
-	ret0, _ := ret[0].(saveditemdb.SavedItem)
+	ret0, _ := ret[0].(saved_item.SavedItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -103,19 +104,19 @@ type MockRepositoryCreateSavedItemCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryCreateSavedItemCall) Return(arg0 saveditemdb.SavedItem, arg1 error) *MockRepositoryCreateSavedItemCall {
+func (c *MockRepositoryCreateSavedItemCall) Return(arg0 saved_item.SavedItem, arg1 error) *MockRepositoryCreateSavedItemCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryCreateSavedItemCall) Do(f func(context.Context, saveditemdb.CreateSavedItemParams) (saveditemdb.SavedItem, error)) *MockRepositoryCreateSavedItemCall {
+func (c *MockRepositoryCreateSavedItemCall) Do(f func(context.Context, saveditemdb.CreateSavedItemParams) (saved_item.SavedItem, error)) *MockRepositoryCreateSavedItemCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryCreateSavedItemCall) DoAndReturn(f func(context.Context, saveditemdb.CreateSavedItemParams) (saveditemdb.SavedItem, error)) *MockRepositoryCreateSavedItemCall {
+func (c *MockRepositoryCreateSavedItemCall) DoAndReturn(f func(context.Context, saveditemdb.CreateSavedItemParams) (saved_item.SavedItem, error)) *MockRepositoryCreateSavedItemCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -159,10 +160,10 @@ func (c *MockRepositoryDeleteSavedItemByIDForUserCall) DoAndReturn(f func(contex
 }
 
 // GetSavedItemByIDForUser mocks base method.
-func (m *MockRepository) GetSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) (saveditemdb.SavedItem, error) {
+func (m *MockRepository) GetSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) (saved_item.SavedItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSavedItemByIDForUser", ctx, userID, savedItemID)
-	ret0, _ := ret[0].(saveditemdb.SavedItem)
+	ret0, _ := ret[0].(saved_item.SavedItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -180,19 +181,19 @@ type MockRepositoryGetSavedItemByIDForUserCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryGetSavedItemByIDForUserCall) Return(arg0 saveditemdb.SavedItem, arg1 error) *MockRepositoryGetSavedItemByIDForUserCall {
+func (c *MockRepositoryGetSavedItemByIDForUserCall) Return(arg0 saved_item.SavedItem, arg1 error) *MockRepositoryGetSavedItemByIDForUserCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (saveditemdb.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
+func (c *MockRepositoryGetSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (saveditemdb.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
+func (c *MockRepositoryGetSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -237,10 +238,10 @@ func (c *MockRepositoryGetUnsortedCollectionByUserCall) DoAndReturn(f func(conte
 }
 
 // ListSavedItems mocks base method.
-func (m *MockRepository) ListSavedItems(ctx context.Context, userID uuid.UUID, offset, limit int32) ([]saveditemdb.SavedItem, error) {
+func (m *MockRepository) ListSavedItems(ctx context.Context, userID uuid.UUID, offset, limit int32) ([]saved_item.SavedItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListSavedItems", ctx, userID, offset, limit)
-	ret0, _ := ret[0].([]saveditemdb.SavedItem)
+	ret0, _ := ret[0].([]saved_item.SavedItem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -258,19 +259,19 @@ type MockRepositoryListSavedItemsCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryListSavedItemsCall) Return(arg0 []saveditemdb.SavedItem, arg1 error) *MockRepositoryListSavedItemsCall {
+func (c *MockRepositoryListSavedItemsCall) Return(arg0 []saved_item.SavedItem, arg1 error) *MockRepositoryListSavedItemsCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryListSavedItemsCall) Do(f func(context.Context, uuid.UUID, int32, int32) ([]saveditemdb.SavedItem, error)) *MockRepositoryListSavedItemsCall {
+func (c *MockRepositoryListSavedItemsCall) Do(f func(context.Context, uuid.UUID, int32, int32) ([]saved_item.SavedItem, error)) *MockRepositoryListSavedItemsCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryListSavedItemsCall) DoAndReturn(f func(context.Context, uuid.UUID, int32, int32) ([]saveditemdb.SavedItem, error)) *MockRepositoryListSavedItemsCall {
+func (c *MockRepositoryListSavedItemsCall) DoAndReturn(f func(context.Context, uuid.UUID, int32, int32) ([]saved_item.SavedItem, error)) *MockRepositoryListSavedItemsCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
