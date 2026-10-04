@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package passwordresetdbtest
+package collectiondb
 
 import (
 	"github.com/google/uuid"
@@ -26,9 +26,9 @@ type AuthIdentity struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
+	CreatedAt           pgtype.Timestamptz
 	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
-	CreatedAt           pgtype.Timestamptz
 }
 
 type Collection struct {
@@ -79,9 +79,9 @@ type PendingSocialIdentity struct {
 	PendingRegistrationID uuid.UUID
 	Provider              string
 	ProviderSubject       string
+	CreatedAt             pgtype.Timestamptz
 	EmailSnapshot         pgtype.Text
 	DisplayNameSnapshot   pgtype.Text
-	CreatedAt             pgtype.Timestamptz
 }
 
 type RefreshToken struct {
@@ -132,10 +132,10 @@ type Session struct {
 type User struct {
 	ID              uuid.UUID
 	Email           string
-	DisplayName     string
-	EmailVerifiedAt pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	DisplayName     string
+	EmailVerifiedAt pgtype.Timestamptz
 }
 
 type VerificationCode struct {

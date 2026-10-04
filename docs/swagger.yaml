@@ -1,5 +1,94 @@
 basePath: /
 definitions:
+  collection.CollectionResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      name:
+        example: Wishlist
+        type: string
+      type:
+        example: user
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+    type: object
+  collection.PutSavedItemIntoCollectionAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/collection.PutSavedItemIntoCollectionResponse'
+      message:
+        example: saved item moved into collection successfully
+        type: string
+    type: object
+  collection.PutSavedItemIntoCollectionRequest:
+    properties:
+      collection_name:
+        description: |-
+          CollectionName is the display name of the user collection to file the saved
+          item under. The collection is created if it does not exist yet. Names are
+          matched case-insensitively with surrounding whitespace ignored, and a name
+          already used by a system collection is rejected.
+
+          This field carries no `validate` constraint on purpose. The service owns
+          collection name rules and answers with the INVALID_COLLECTION_NAME code, so
+          a constraint here would pre-empt that and collapse both failure cases into a
+          generic VALIDATION_ERROR.
+        example: Wishlist
+        type: string
+    type: object
+  collection.PutSavedItemIntoCollectionResponse:
+    properties:
+      already_in_collection:
+        description: |-
+          AlreadyInCollection is true when the saved item was already in the target
+          collection, in which case nothing was written. It is mutually exclusive with
+          CollectionCreated.
+        example: false
+        type: boolean
+      collection:
+        $ref: '#/definitions/collection.CollectionResponse'
+      collection_created:
+        description: |-
+          CollectionCreated is true only when this call created the collection. It is
+          false when an existing collection was reused.
+        example: true
+        type: boolean
+      saved_item:
+        $ref: '#/definitions/collection.PutSavedItemSavedItemResponse'
+    type: object
+  collection.PutSavedItemSavedItemResponse:
+    properties:
+      collection_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      domain:
+        example: example.com
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      platform:
+        example: youtube
+        type: string
+      title:
+        example: An interesting article
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      url:
+        example: https://example.com/articles/1
+        type: string
+    type: object
   login.GetAccountLinkConfirmationAPIResponse:
     properties:
       data:
@@ -1905,6 +1994,71 @@ paths:
       summary: Get a saved item
       tags:
       - SavedItem
+  /saved-items/{id}/collection:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        File one of the current user's saved items into one of their user collections, identified by display name.
+        The collection is created if it does not exist yet. A user collection is never created empty, so this call always ends with the saved item inside it.
+        Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed.
+        This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
+        A name already held by a system collection, such as "Unsorted", is reserved. It returns COLLECTION_NAME_RESERVED rather than filing the saved item into a system collection.
+        The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
+        Possible error codes:
+        - INVALID_COLLECTION_NAME
+        - COLLECTION_NAME_RESERVED
+        - BAD_REQUEST
+        - SAVED_ITEM_NOT_FOUND
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Put saved item into collection request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/collection.PutSavedItemIntoCollectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/collection.PutSavedItemIntoCollectionAPIResponse'
+        "400":
+          description: Invalid collection name or saved item ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Collection name is reserved
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Put a saved item into a collection
+      tags:
+      - Collection
 securityDefinitions:
   BearerAuth:
     description: 'Enter your access token using the Bearer scheme. Example: "Bearer

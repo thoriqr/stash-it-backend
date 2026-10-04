@@ -1589,9 +1589,191 @@
                     }
                 }
             }
+        },
+        "/saved-items/{id}/collection": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "File one of the current user's saved items into one of their user collections, identified by display name.\nThe collection is created if it does not exist yet. A user collection is never created empty, so this call always ends with the saved item inside it.\nNames are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed.\nThis operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.\nA name already held by a system collection, such as \"Unsorted\", is reserved. It returns COLLECTION_NAME_RESERVED rather than filing the saved item into a system collection.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nPossible error codes:\n- INVALID_COLLECTION_NAME\n- COLLECTION_NAME_RESERVED\n- BAD_REQUEST\n- SAVED_ITEM_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Collection"
+                ],
+                "summary": "Put a saved item into a collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Put saved item into collection request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/collection.PutSavedItemIntoCollectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/collection.PutSavedItemIntoCollectionAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid collection name or saved item ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Collection name is reserved",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "collection.CollectionResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Wishlist"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "user"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                }
+            }
+        },
+        "collection.PutSavedItemIntoCollectionAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/collection.PutSavedItemIntoCollectionResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item moved into collection successfully"
+                }
+            }
+        },
+        "collection.PutSavedItemIntoCollectionRequest": {
+            "type": "object",
+            "properties": {
+                "collection_name": {
+                    "description": "CollectionName is the display name of the user collection to file the saved\nitem under. The collection is created if it does not exist yet. Names are\nmatched case-insensitively with surrounding whitespace ignored, and a name\nalready used by a system collection is rejected.\n\nThis field carries no `validate` constraint on purpose. The service owns\ncollection name rules and answers with the INVALID_COLLECTION_NAME code, so\na constraint here would pre-empt that and collapse both failure cases into a\ngeneric VALIDATION_ERROR.",
+                    "type": "string",
+                    "example": "Wishlist"
+                }
+            }
+        },
+        "collection.PutSavedItemIntoCollectionResponse": {
+            "type": "object",
+            "properties": {
+                "already_in_collection": {
+                    "description": "AlreadyInCollection is true when the saved item was already in the target\ncollection, in which case nothing was written. It is mutually exclusive with\nCollectionCreated.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "collection": {
+                    "$ref": "#/definitions/collection.CollectionResponse"
+                },
+                "collection_created": {
+                    "description": "CollectionCreated is true only when this call created the collection. It is\nfalse when an existing collection was reused.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "saved_item": {
+                    "$ref": "#/definitions/collection.PutSavedItemSavedItemResponse"
+                }
+            }
+        },
+        "collection.PutSavedItemSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "domain": {
+                    "type": "string",
+                    "example": "example.com"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "youtube"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "An interesting article"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com/articles/1"
+                }
+            }
+        },
         "login.GetAccountLinkConfirmationAPIResponse": {
             "type": "object",
             "properties": {
