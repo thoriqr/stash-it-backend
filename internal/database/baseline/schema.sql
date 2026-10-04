@@ -1,6 +1,20 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-022.
--- Source of truth: the cumulative effect of migrations/000001..000022 (up only).
+-- Represents the final database state after migrations 001-023.
+-- Source of truth: the cumulative effect of migrations/000001..000023 (up only).
+
+-- ============================================================
+-- Extensions
+-- ============================================================
+
+-- pg_trgm supplies the gin_trgm_ops operator class and the word_similarity
+-- function that global search matches and ranks with.
+--
+-- btree_gin supplies the uuid GIN operator class, which has no default. Without
+-- it a composite GIN index over user_id cannot be created at all.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE EXTENSION IF NOT EXISTS btree_gin;
+
 
 -- ============================================================
 -- Functions
@@ -424,6 +438,17 @@ CREATE INDEX collections_user_idx
 
 CREATE INDEX saved_items_collection_id_idx
     ON saved_items (collection_id);
+
+
+-- Global search. Leading user_id keeps the search owner-scoped and lets one
+-- index serve both the ownership filter and the trigram filter. btree_gin
+-- provides the uuid GIN operator class; pg_trgm provides gin_trgm_ops.
+CREATE INDEX saved_items_search_idx
+    ON saved_items USING gin (user_id, title gin_trgm_ops);
+
+
+CREATE INDEX collections_search_idx
+    ON collections USING gin (user_id, name gin_trgm_ops);
 
 
 -- ============================================================

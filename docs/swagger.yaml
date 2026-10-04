@@ -609,6 +609,77 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  search.SearchAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/search.SearchResponse'
+      message:
+        example: search completed successfully
+        type: string
+    type: object
+  search.SearchCollectionResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      name:
+        example: Camera Gear
+        type: string
+      system_key:
+        example: unsorted
+        type: string
+      type:
+        example: user
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+    type: object
+  search.SearchResponse:
+    properties:
+      collections:
+        items:
+          $ref: '#/definitions/search.SearchCollectionResponse'
+        type: array
+      saved_items:
+        items:
+          $ref: '#/definitions/search.SearchSavedItemResponse'
+        type: array
+    type: object
+  search.SearchSavedItemResponse:
+    properties:
+      collection_id:
+        description: |-
+          CollectionID is the collection the item is currently in. It is returned
+          because the client needs it to show where a result lives, not because
+          collection_id is searchable.
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      domain:
+        description: |-
+          Domain and Title are null until background enrichment populates them, which
+          is why they are pointers rather than strings.
+        example: example.org
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      title:
+        example: Camera Buying Guide
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      url:
+        example: https://example.org/notes/camera-buying-guide
+        type: string
+    type: object
   session.ListSessionsAPIResponse:
     properties:
       data:
@@ -2059,6 +2130,56 @@ paths:
       summary: Put a saved item into a collection
       tags:
       - Collection
+  /search:
+    get:
+      description: |-
+        Search the current user's saved items and collections with one query.
+        Saved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for "unsorted" can find the Unsorted collection.
+        Matching prefers a substring match and falls back to fuzzy matching for typos, so "ca" finds "camera" and "camra" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.
+        Results are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.
+        Only the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.
+        A search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.
+        The query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.
+        Possible error codes:
+        - INVALID_SEARCH_QUERY
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Search query, at least 2 and at most 128 characters
+        example: camera
+        in: query
+        maxLength: 128
+        minLength: 2
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/search.SearchAPIResponse'
+        "400":
+          description: Search query is blank, shorter than 2 characters or longer
+            than 128 characters
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Global Search
+      tags:
+      - Search
 securityDefinitions:
   BearerAuth:
     description: 'Enter your access token using the Bearer scheme. Example: "Bearer

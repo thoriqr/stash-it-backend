@@ -93,6 +93,19 @@ sql:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
 
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/api/search/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "searchdb"
+        out: "internal/api/search/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
   # Integration test queries for registration
   - engine: "postgresql"
     schema: "internal/database/baseline/schema.sql"
@@ -172,6 +185,20 @@ sql:
         omit_unused_structs: true
         package: "collectiondbtest"
         out: "internal/testutil/db/collection/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for search
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/search/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "searchdbtest"
+        out: "internal/testutil/db/search/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"

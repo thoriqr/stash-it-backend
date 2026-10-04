@@ -142,16 +142,78 @@ login and registration both use it.
 
 `AGENTS.md` documents the rule under Code generation.
 
+### Search — implemented
+
+`internal/api/search/` is a complete vertical slice (repository → service →
+handler → routes), wired in `main.go` and `testutil/app.go` via
+`search.RegisterModule`. It owns its own read projections rather than borrowing
+`saved_item.SavedItem` or the collection feature's type.
+
+| Endpoint | Status | Notes |
+| -------- | ------ | ----- |
+| `GET /search` | done | 200, owner-scoped, requires Bearer |
+
+Built in three reviewed phases, **none of it committed yet**: migration 000023,
+then the data/domain layer, then the HTTP layer. The working tree is the whole of
+basic search.
+
+Final API contract:
+
+- `GET /search?q=<query>` — authenticated. `user_id` always comes from the token's
+  `sub` claim.
+- `q` is the only parameter. It must be 2–128 runes after trimming; blank, too
+  short and too long all return 400 `INVALID_SEARCH_QUERY`. Length is measured in
+  runes, and the query is trimmed but never lowercased.
+- The response is `data.collections` and `data.saved_items`. Both are always
+  present and always arrays — an empty result is a successful 200, never a 404.
+- Saved items match on **title, domain and url**. Collections match on **name**.
+- `platform`, IDs, timestamps and `collection_id` are not searchable.
+  `collection_id` **is** returned on each saved item, because the client needs to
+  show where a result lives.
+- `Score` is on the internal projections, because the SQL needs it to rank, but it
+  is **not** in the public response. Review removed it deliberately: the ordering
+  is the contract, the number behind it is not, and its values depend on internal
+  weights that are expected to change.
+
+Matching and ranking:
+
+- PostgreSQL native, `pg_trgm` based, user scoped. **No** Elasticsearch,
+  OpenSearch, Meilisearch, Typesense or Algolia, and **no** PostgreSQL full-text
+  search or `tsvector`. FTS is out of scope for v1.
+- Substring matching is the normal path; `word_similarity()` is a **fallback
+  inside the same query**, not a second round trip. There is one query per entity
+  and no separate fuzzy endpoint.
+- `word_similarity()`, not `similarity()`, because long titles and URLs score
+  poorly against whole-string similarity. The fuzzy threshold is `> 0.3`.
+- An exact-substring bonus of `10.0` outranks any fuzzy-only result, whose maximum
+  weighted total is `2.4`. Recency is a deterministic tiebreaker only
+  (`score DESC, created_at DESC, id DESC`), never a relevance component.
+- System collections are searchable, so a search for "unsorted" finds Unsorted.
+
+Limits are internal and not exposed as a parameter: saved items default to 20 and
+cap at 50, collections cap at 5. **Cursor pagination is not implemented**, and
+neither is autocomplete or search suggestions. No migration was added for either.
+
+Worth knowing before touching the index strategy: the composite GIN indexes from
+migration 000023 serve the `user_id` restriction, but a single GIN index cannot
+satisfy an `OR` across `title`, `domain` and `url`, so the match clauses are
+filtered rather than index-accelerated. Separately, `title` is NULL for every
+saved item until enrichment runs, so the `title` trigram index currently indexes
+an all-NULL column. Both were measured with `EXPLAIN`, not assumed, and neither
+was redesigned. See decisions 14–17.
+
 ### Testing and verification status
 
-As of the completed Collection work and sqlc cleanup:
+As of the completed Search work:
 
 - `go build ./...` — pass
 - `go vet ./...` — pass
-- `go test -count=1 ./...` — pass, all 9 packages ok
+- `go test -count=1 ./...` — pass, all 10 packages ok
 - Saved item unit and integration tests pass
 - Collection unit and integration tests pass
 - Registration unit and integration tests pass
+- Search service unit tests, repository integration tests, and HTTP API
+  integration tests pass
 - `sqlc generate`, `mockgen`, `swag init -g cmd/api/main.go -parseInternal` all
   clean
 
@@ -208,34 +270,69 @@ Do not change these casually. Several were corrections of earlier mistakes.
     referenced because migration 000022 added columns they do not project. Two
     same-shaped structs across features are expected and are not a reason to
     introduce a shared domain type. Revisit only with an explicit decision.
+14. **Search is PostgreSQL native and user scoped.** `pg_trgm` only, using
+    `word_similarity()` for fuzzy matching. Do not add Elasticsearch, OpenSearch,
+    Meilisearch, Typesense, Algolia, or any other external search engine, and do
+    not add PostgreSQL full-text search or `tsvector` columns for v1. Neither was
+    needed: the scale does not justify either.
+15. **The relevance score is internal and is not part of the public contract.**
+    `SearchSavedItem.Score` and `SearchCollection.Score` exist because the SQL
+    ranks and orders on them, and they stay internal. `GET /search` returns the
+    results already ordered and exposes no score. A substring match must always
+    outrank a fuzzy-only match, and recency must only ever break ties. Revisit the
+    weights or the threshold only with an explicit decision, and never let a
+    weight change silently alter what a user sees first.
+16. **Search limits are internal, and there is no pagination.** Saved items
+    default to 20 and cap at 50, collections cap at 5. No `limit`, `page` or
+    `cursor` parameter is exposed, so those caps are the only bound on one
+    request. Cursor pagination, autocomplete and search suggestions are not
+    implemented. Because results are capped and not paged, a user with more
+    matches than the cap cannot currently reach the tail.
+17. **The search indexes from migration 000023 are the v1 index strategy.** They
+    serve the `user_id` restriction, but the trigram half cannot accelerate an
+    `OR` across `title`, `domain` and `url`, and `title` is NULL for every saved
+    item until enrichment exists. Adding a url trigram index, splitting the
+    predicate, or introducing any search table, ranking column or denormalized
+    document needs evidence from real query timings, not expectation.
 
 ## Next Step
 
-Per the roadmap in `documentation/product.md`, the next work is **basic search**
-— the remaining half of Phase B.
+**Phase B is complete.** Per the roadmap in `documentation/product.md`, step 2 is
+"Collections + Search" and both are done, so the next work is step 3,
+**background URL metadata extraction**.
 
 A note on phase terminology, since it is easy to misread:
 
 - The roadmap lists "Saved item detail" and "Delete a saved item" under Phase B,
   but both were built during Phase A because the core loop needed them. They are
   done, not pending.
-- **Collections is now done too** — repository, service, and the
-  `PUT /saved-items/:id/collection` endpoint, committed as `1e85c5d`. So the
-  genuinely remaining Phase B work is **basic search**.
+- **Collections is done** — repository, service, and the
+  `PUT /saved-items/:id/collection` endpoint, committed as `1e85c5d`.
+- **Basic search is now done too** — migration 000023, the search queries and sqlc
+  target, repository, service, projections, and the `GET /search` endpoint, with
+  unit, repository integration and HTTP integration tests. See the Search section
+  above.
 - `collection_id` was deliberately omitted from the Phase A migration for this
   reason, and was added later by migration 000022, which has been applied.
 
 The schema and the user lifecycle are both in place: the `collections` table,
-the `saved_items.collection_id` relationship, the `enrichment_*` columns, and
-the Unsorted-per-user invariant. `internal/database/baseline/schema.sql` matches
-migration 000022. Registration, Saved Item, and Collections work is finished —
-do not redo it.
+the `saved_items.collection_id` relationship, the `enrichment_*` columns, the
+Unsorted-per-user invariant, and the two search indexes.
+`internal/database/baseline/schema.sql` now matches migration 000023.
+Registration, Saved Item, Collections, and Search work is finished — do not redo
+it.
 
-Search is not designed yet. Nothing about it is pre-approved: the query shape,
-whether it is a `GET` query parameter or a dedicated endpoint, and what it may
-match on (`url`, `domain`, `title`) are all open questions. Confirm scope with
-the user before writing code, and do not invent additional features such as
-collection CRUD, reminders, price tracking, comparison, or AI.
+Basic search is **uncommitted**. Run `git status` before starting: the working
+tree contains migration 000023, the whole search feature, the baseline and
+`sqlc.yaml` changes, the generated Swagger, and the wiring in `main.go` and
+`testutil/app.go`. Committing was explicitly out of scope for that work, so
+whether to commit it is an open decision for the user.
+
+What is **not** done, and should not be started without asking: metadata
+extraction itself, cursor pagination, autocomplete, search suggestions, the
+`UNION` predicate optimization, and collection CRUD. Confirm scope with the user
+before writing code, and do not invent additional features such as reminders,
+price tracking, comparison, or AI.
 
 ## Resume Instructions
 
@@ -243,13 +340,17 @@ collection CRUD, reminders, price tracking, comparison, or AI.
 2. Read `documentation/product.md` for scope and direction.
 3. Read this file for current state and decisions.
 4. Run `git status` and `git diff` before changing anything. Saved Items,
-   registration, the Unsorted invariant, and Collections are all **committed**
-   (`0fd199f`, `fix: restore saved item creation after collections schema`,
-   `7f5637b feat: initialize unsorted collection on registration`, then
-   `1e85c5d feat: add saved item collection flow`).
-5. Inspect `internal/api/saved_item/`, `internal/api/collection/`, and
-   `internal/api/auth/registration/` before writing code. Do not reimplement
-   existing endpoints, the Unsorted creation, or the collection flow.
+   registration, the Unsorted invariant, Collections and the sqlc cleanup are
+   **committed** (`0fd199f`, `fix: restore saved item creation after collections
+   schema`, `7f5637b feat: initialize unsorted collection on registration`,
+   `1e85c5d feat: add saved item collection flow`, then `88e24d8 refactor(sqlc):
+   own the saved item projection and enable omit_unused_structs`).
+   **Basic search is not committed** — it is the whole current working tree. Do
+   not discard it, and do not commit it without being asked.
+5. Inspect `internal/api/saved_item/`, `internal/api/collection/`,
+   `internal/api/search/`, and `internal/api/auth/registration/` before writing
+   code. Do not reimplement existing endpoints, the Unsorted creation, the
+   collection flow, or search.
 6. Re-verify the tree compiles before assuming a clean start:
    `go build ./... && go vet ./... && go test ./...`
 7. Avoid unrelated refactors. If something looks wrong, report it rather than

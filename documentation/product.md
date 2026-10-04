@@ -143,20 +143,70 @@ Implemented:
 - Saved item detail
 - Delete a saved item
 - Collections, including filing an item into a collection of the user's own
-
-Still to build:
-
-- Basic search
+- Basic search, across saved items and collections
 
 Saved item detail and delete were built during Phase A because they are needed to
-complete the core loop, and Collections followed once the loop was solid. What
-genuinely remains for Phase B is **basic search**: without it, an item saved
-weeks ago is only findable if the user remembers which collection it went into.
+complete the core loop, and Collections followed once the loop was solid. Basic
+search completes Phase B: an item saved weeks ago is now findable again without
+remembering which collection it went into.
 
 The database foundation is in place: the `collections` table, the
 `saved_items.collection_id` relationship, and the saved item enrichment state
 columns. The enrichment columns exist but nothing populates them yet; metadata
 extraction remains a later phase.
+
+### Search
+
+Search answers one question: where is the thing I saved? It is a single query
+across the user's saved items and collections, because the user types one query
+and expects both kinds of results back together.
+
+**What it searches.** Saved items are matched on their title, their domain, and
+their URL. Collections are matched on their name. System collections take part
+too, so searching for "unsorted" finds the Unsorted collection. Nothing else is
+searchable: not the content platform, not identifiers, not dates. A saved item
+result does report which collection it is in, so the user can see where a result
+lives, but that collection is not itself searchable.
+
+**Matching.** A query that appears in a result matches it. That is the normal
+case, and it covers partial words: "ca" finds "camera". Because people mistype,
+a result that does not contain the query exactly can still match when it is
+close enough, so "camra" finds "camera" and "sourdogh" finds "sourdough".
+
+A query must be at least two characters long and at most 128. The lower bound is
+what keeps single characters from matching almost everything, and the upper bound
+is a guard rather than a real limit, since no honest search comes close to it.
+Surrounding whitespace is ignored, and case is ignored throughout.
+
+Fuzzy matching exists only to recover typos. It is never a second, competing way
+of searching, and the user never has to ask for it: a single search does both at
+once, and a result that matched exactly always appears above one that only matched
+approximately. Fuzzy matching is deliberately strict enough that a query with no
+real relationship to anything returns nothing, rather than a screen full of
+weak matches the user has to sift through. **No meaningful match is a normal,
+successful outcome, not an error.**
+
+**Ordering.** Results come back best match first. Recency matters only to break
+a tie between results that matched equally well, so a newer item never outranks a
+better match. Ordering is deterministic, so the same search twice gives the same
+results in the same order.
+
+The relevance behind that ordering is a ranking detail rather than part of what
+the user or the client sees: results are returned already ordered, and no score
+is exposed. The matching behavior above is the promise, not any particular number
+attached to a result.
+
+**Reach and ownership.** Search looks only at the user's own saved items and
+collections. Another user's data is never returned, even when the text matches
+exactly. Results are capped rather than paged, and the caps are deliberately
+small because search is for finding something again, not for browsing a whole
+library. **Paging through search results, autocomplete, and search suggestions are
+not part of this version.**
+
+**How it works.** Search is native to the database the product already runs on.
+That keeps saving and searching free of any extra service to run, scale, or
+depend on. PostgreSQL full-text search and any external search engine are not used
+in this version, because at this scale the simpler approach is the right one.
 
 Not part of this phase, by decision:
 
@@ -214,7 +264,7 @@ for the core loop.
 ## Development order
 
 1. Share → Save → Inbox *(done)*
-2. Collections + Search *(Collections done, Search next)*
+2. Collections + Search *(done)*
 3. Background metadata extraction
 4. Reminder / return loop
 5. Product metadata enrichment

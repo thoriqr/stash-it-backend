@@ -12,6 +12,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
+	"github.com/thoriqr/stash-it-backend/internal/api/search"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
@@ -58,7 +59,7 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 	}
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler:   httpx.NewErrorHandler(log),
+		ErrorHandler:    httpx.NewErrorHandler(log),
 		StructValidator: validate,
 	})
 
@@ -98,6 +99,12 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 	)
 
 	collection.RegisterModule(
+		app,
+		pool,
+		cfg,
+	)
+
+	search.RegisterModule(
 		app,
 		pool,
 		cfg,

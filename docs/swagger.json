@@ -1666,6 +1666,61 @@
                     }
                 }
             }
+        },
+        "/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Search the current user's saved items and collections with one query.\nSaved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for \"unsorted\" can find the Unsorted collection.\nMatching prefers a substring match and falls back to fuzzy matching for typos, so \"ca\" finds \"camera\" and \"camra\" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.\nResults are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.\nOnly the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.\nA search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.\nThe query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.\nPossible error codes:\n- INVALID_SEARCH_QUERY\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Global Search",
+                "parameters": [
+                    {
+                        "maxLength": 128,
+                        "minLength": 2,
+                        "type": "string",
+                        "example": "camera",
+                        "description": "Search query, at least 2 and at most 128 characters",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/search.SearchAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Search query is blank, shorter than 2 characters or longer than 128 characters",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -2529,6 +2584,99 @@
                 "url": {
                     "type": "string",
                     "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "search.SearchAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/search.SearchResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "search completed successfully"
+                }
+            }
+        },
+        "search.SearchCollectionResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Camera Gear"
+                },
+                "system_key": {
+                    "type": "string",
+                    "example": "unsorted"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "user"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                }
+            }
+        },
+        "search.SearchResponse": {
+            "type": "object",
+            "properties": {
+                "collections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.SearchCollectionResponse"
+                    }
+                },
+                "saved_items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/search.SearchSavedItemResponse"
+                    }
+                }
+            }
+        },
+        "search.SearchSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "description": "CollectionID is the collection the item is currently in. It is returned\nbecause the client needs it to show where a result lives, not because\ncollection_id is searchable.",
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "domain": {
+                    "description": "Domain and Title are null until background enrichment populates them, which\nis why they are pointers rather than strings.",
+                    "type": "string",
+                    "example": "example.org"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "Camera Buying Guide"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.org/notes/camera-buying-guide"
                 }
             }
         },
