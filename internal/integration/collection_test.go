@@ -539,19 +539,15 @@ func TestCollection_PutSavedItem(t *testing.T) {
 		ctx := context.Background()
 		db := collectiondbtest.New(testPool)
 
-		enrichmentStartedAt := pgtype.Timestamptz{
-			Time:  timeAt(t, -2*time.Hour),
-			Valid: true,
-		}
 		lastEnrichedAt := pgtype.Timestamptz{
 			Time:  timeAt(t, -1*time.Hour),
 			Valid: true,
 		}
 
-		// Every value the enrichment_status CHECK allows.
+		// Every value the enrichment_status CHECK allows. 'processing' was
+		// removed by migration 000024: worker execution state is not persisted.
 		statuses := []string{
 			"pending",
-			"processing",
 			"completed",
 			"failed",
 		}
@@ -574,10 +570,9 @@ func TestCollection_PutSavedItem(t *testing.T) {
 				db.SetTestSavedItemEnrichmentState(
 					ctx,
 					collectiondbtest.SetTestSavedItemEnrichmentStateParams{
-						ID:                  savedItemID,
-						EnrichmentStatus:    status,
-						EnrichmentStartedAt: enrichmentStartedAt,
-						LastEnrichedAt:      lastEnrichedAt,
+						ID:               savedItemID,
+						EnrichmentStatus: status,
+						LastEnrichedAt:   lastEnrichedAt,
 					},
 				),
 			)
@@ -598,7 +593,6 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			// and must leave every enrichment column byte-identical.
 			after := savedItemState(t, savedItemID)
 			require.Equal(t, before.EnrichmentStatus, after.EnrichmentStatus)
-			require.Equal(t, before.EnrichmentStartedAt, after.EnrichmentStartedAt)
 			require.Equal(t, before.LastEnrichedAt, after.LastEnrichedAt)
 		}
 	})
@@ -644,7 +638,6 @@ func TestCollection_PutSavedItem(t *testing.T) {
 		// move did not either.
 		after := savedItemState(t, savedItemID)
 		require.Equal(t, "pending", after.EnrichmentStatus)
-		require.False(t, after.EnrichmentStartedAt.Valid)
 		require.False(t, after.LastEnrichedAt.Valid)
 	})
 

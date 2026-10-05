@@ -15,5 +15,25 @@ services:
     volumes:
       - stash_it_postgres_dev_data:/var/lib/postgresql
 
+  redis:
+    image: redis:8-alpine
+    container_name: stash-it-redis-dev
+    restart: unless-stopped
+
+    ports:
+      - "6379:6379"
+
+    # Development Redis carries no state that must survive a restart, so
+    # persistence is disabled explicitly rather than left at the image default
+    # (which would snapshot RDB files into a container with no volume). No
+    # volume is declared for this service, so an RDB file would be lost on
+    # recreate anyway.
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+
 volumes:
   stash_it_postgres_dev_data:

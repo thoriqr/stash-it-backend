@@ -12,19 +12,15 @@ This is a handoff, not a diary. Keep it accurate and short.
 All four endpoints are implemented, wired into `main.go` via
 `saved_item.RegisterModule`, and covered by tests.
 
-Committed work so far:
+Saved Items is implemented and committed; see the feature and decision sections
+below for the current behavior and constraints.
 
-- `0fd199f feat: complete saved items core flow`
-- `fix: restore saved item creation after collections schema`
-- `7f5637b feat: initialize unsorted collection on registration`
-- `1e85c5d feat: add saved item collection flow`
-
-| Endpoint          | Status  | Notes                                        |
-| ----------------- | ------- | -------------------------------------------- |
-| `POST /saved-items`     | done | 201, requires Bearer                        |
-| `GET /saved-items`      | done | 200, paginated inbox, `created_at DESC`       |
-| `GET /saved-items/:id`  | done | 200, owner-scoped                            |
-| `DELETE /saved-items/:id`| done | 200, hard delete, owner-scoped               |
+| Endpoint                  | Status | Notes                                   |
+| ------------------------- | ------ | --------------------------------------- |
+| `POST /saved-items`       | done   | 201, requires Bearer                    |
+| `GET /saved-items`        | done   | 200, paginated inbox, `created_at DESC` |
+| `GET /saved-items/:id`    | done   | 200, owner-scoped                       |
+| `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped          |
 
 **Not implemented:** update/edit (PATCH or PUT) — deliberately out of scope for
 now. There is no update endpoint and none is scheduled.
@@ -84,17 +80,15 @@ Collections service was involved.
 `collections_system_key_unique` constraint prevents a second system collection
 with the same key for one user.
 
-Committed as `feat: initialize unsorted collection on registration`.
-
 ### Collections — implemented
 
 `internal/api/collection/` is a complete vertical slice (repository → service →
 handler → routes), wired in `main.go` and `testutil/app.go` via
 `collection.RegisterModule`.
 
-| Endpoint | Status | Notes |
-| -------- | ------ | ----- |
-| `PUT /saved-items/:id/collection` | done | 200, owner-scoped, requires Bearer |
+| Endpoint                          | Status | Notes                              |
+| --------------------------------- | ------ | ---------------------------------- |
+| `PUT /saved-items/:id/collection` | done   | 200, owner-scoped, requires Bearer |
 
 The endpoint takes `{"collection_name": "..."}` and files one saved item into one
 user collection, creating that collection if it does not exist. There is **no
@@ -108,8 +102,7 @@ Behavior:
   owning one transaction: lock and verify the item, create-or-get the collection,
   move the item, commit. No empty collection can survive a failed move.
 - **Idempotent.** An item already in the target collection is a success with
-  `already_in_collection: true` and no write — `updated_at` is left alone. Not a
-  409.
+  `already_in_collection: true` and no write — `updated_at` is left alone. Not a 409.
 - **Owner-scoped.** The item must belong to the caller. Unknown and foreign IDs
   both return 404 `SAVED_ITEM_NOT_FOUND` with byte-identical bodies.
 - **Unsorted stays permanent.** `system_key = 'unsorted'` resolves by key, never
@@ -119,8 +112,9 @@ Behavior:
 - **Names** are trimmed and matched case-insensitively by
   `collections_user_name_unique`; the display name keeps its casing. No Go-side
   existence check.
-- **Unrelated to enrichment.** `enrichment_status`, `enrichment_started_at` and
-  `last_enriched_at` are neither read nor written.
+- **Unrelated to enrichment.** The enrichment columns `enrichment_status`,
+  `last_enriched_at`, `description` and `image_url` are neither read nor written.
+  `enrichment_started_at` was dropped by migration 000024 and no longer exists.
 
 Committed as `1e85c5d feat: add saved item collection flow`.
 
@@ -142,20 +136,19 @@ login and registration both use it.
 
 `AGENTS.md` documents the rule under Code generation.
 
-### Search — implemented
+### Search — implemented and committed
 
 `internal/api/search/` is a complete vertical slice (repository → service →
 handler → routes), wired in `main.go` and `testutil/app.go` via
 `search.RegisterModule`. It owns its own read projections rather than borrowing
 `saved_item.SavedItem` or the collection feature's type.
 
-| Endpoint | Status | Notes |
-| -------- | ------ | ----- |
-| `GET /search` | done | 200, owner-scoped, requires Bearer |
+| Endpoint      | Status | Notes                              |
+| ------------- | ------ | ---------------------------------- |
+| `GET /search` | done   | 200, owner-scoped, requires Bearer |
 
-Built in three reviewed phases, **none of it committed yet**: migration 000023,
-then the data/domain layer, then the HTTP layer. The working tree is the whole of
-basic search.
+Built in three reviewed phases: migration 000023, then the data/domain layer,
+then the HTTP layer. The complete Search feature is committed.
 
 Final API contract:
 
@@ -202,6 +195,75 @@ saved item until enrichment runs, so the `title` trigram index currently indexes
 an all-NULL column. Both were measured with `EXPLAIN`, not assumed, and neither
 was redesigned. See decisions 14–17.
 
+### Enrichment — schema finalized, worker foundation in place
+
+**This is only the initial worker infrastructure.** No enrichment behavior
+exists. Nothing is queued, nothing is consumed, and no URL is ever fetched. What
+is in place is the final schema the enrichment will write into, plus a second
+binary that proves it can start and reach Redis.
+
+Migration `000024_finalize_saved_item_enrichment` has been created and manually
+applied. It finalizes enrichment on the single `saved_items` table. No separate
+metadata table was introduced.
+
+| Column              | Notes                                       |
+| ------------------- | ------------------------------------------- |
+| `description`       | optional, NULL until enrichment             |
+| `image_url`         | optional, NULL until enrichment             |
+| `enrichment_status` | `NOT NULL DEFAULT 'pending'`                |
+| `last_enriched_at`  | optional, when metadata was last refreshed  |
+
+`saved_items_enrichment_status_check` now allows exactly `pending`, `completed`,
+`failed`. `enrichment_started_at` was dropped and `processing` was removed as an
+allowed status: worker execution state is not product state, so an item stays
+`pending` until enrichment completes or fails, and a worker that dies mid-job
+needs no `processing` marker to reconcile afterwards.
+
+Status semantics: `pending` means enrichment has not successfully completed yet,
+`completed` means metadata was extracted and need **not** be complete, and
+`failed` means the worker could not enrich that URL. The URL is the Saved Item's
+real data and is independent of all three — a URL that cannot be fetched must
+never invalidate or delete the Saved Item.
+
+`internal/database/baseline/schema.sql` was updated to match. The integration
+container is built from the baseline, not from `migrations/`, so the two drift
+easily and both needed the same edit.
+
+Worker infrastructure:
+
+- `docker-compose.dev.yml` gained a `redis` service: `redis:8-alpine`,
+  `stash-it-redis-dev`, `restart: unless-stopped`, port `6379`, no volume, and
+  persistence explicitly disabled. It follows the existing `postgres` service
+  conventions. The `postgres` service and the `volumes:` block are unchanged, and
+  no second compose file was added.
+- `github.com/redis/go-redis/v9` was added. No Redis client existed before.
+- `internal/config/worker.go` adds `WorkerConfig` and `LoadWorker`, a separate
+  configuration boundary. The worker validates only `AppEnv`, `DATABASE_URL` and
+  `REDIS_URL`, and never requires `GOOGLE_CLIENT_ID`,
+  `VERIFICATION_CODE_SECRET` or `ACCESS_TOKEN_SECRET`, so it can be deployed with
+  only the variables it actually reads. `Config` and `Load` were not changed.
+  `LoadWorker` tolerates a missing `.env.<APP_ENV>` where `Load` treats it as
+  fatal, because godotenv never overrides variables that are already set and a
+  deployed worker supplies real environment variables instead of a file.
+- `cmd/worker/main.go` is a second binary. It imports nothing from
+  `internal/api` and no Fiber. It loads its own configuration, reuses the
+  existing `internal/logger` unchanged, builds a client with `redis.ParseURL`,
+  pings, logs `worker started`, then blocks on `signal.NotifyContext` so the
+  process stays alive until `SIGINT`/`SIGTERM`.
+- Local `REDIS_URL=redis://localhost:6379/0` — one value for Docker, Cloud Run
+  and a VPS, with no worker-side knowledge of the environment.
+- Redis connectivity and worker startup were manually verified: the worker
+  reached the ping, logged `worker started`, and stayed running until signalled.
+
+**None of the following is implemented:** Redis queue or job processing of any
+kind (`LPUSH`, `BLPOP`, Streams, pub/sub), job payloads, retries or
+acknowledgements, a sqlc target for the worker, enrichment `queries.sql`, a
+generated worker package, an enrichment repository or service, URL fetching, an
+HTTP client for enrichment, HTML parsing, OpenGraph parsing, description or image
+extraction, SSRF protection, enrichment status writes, and actual background
+enrichment. `docker-compose.dev.yml`, `go.mod` and `cmd/worker/main.go` are the
+only things this phase touches.
+
 ### Testing and verification status
 
 As of the completed Search work:
@@ -219,6 +281,11 @@ As of the completed Search work:
 
 Integration tests need Docker. They were run and passing. Re-run them before
 relying on any claim.
+
+The enrichment foundation phase above has **no** `go build` / `go vet` /
+`go test` claim recorded. What was verified was Redis reachability and worker
+startup behavior. Re-run all three commands before relying on this tree being
+healthy.
 
 ## Important Decisions
 
@@ -239,18 +306,22 @@ Do not change these casually. Several were corrections of earlier mistakes.
 7. **No update/PATCH endpoint exists yet.** Do not add one unless asked.
 8. **Delete is a hard delete.** No soft-delete or `deleted_at` column. Revisit
    only if enrichment later creates child rows that must be retained.
-9. **No metadata/enrichment worker exists.** No scraping, `og:title`, `og:image`,
-   JSON-LD, or remote fetching anywhere in the codebase.
+9. **No metadata/enrichment behavior exists.** A worker binary exists and
+   connects to Redis, but nothing is queued, consumed, or fetched. No scraping,
+   `og:title`, `og:image`, JSON-LD, or remote fetching anywhere in the codebase.
 10. **The Phase B schema and lifecycle are in place.** Migration
     `000022_create_collections_and_saved_item_enrichment` added `collections`,
     `saved_items.collection_id` (`NOT NULL`, `ON DELETE RESTRICT`), and the
     `enrichment_status` / `enrichment_started_at` / `last_enriched_at` columns.
     It has been applied, and the Unsorted-per-user invariant described above now
     maintains it at runtime. The Collections API is now implemented on top of it
-    (`1e85c5d`), but there is still **no enrichment worker**.
-    `migrations/` is the production source of truth and must never be edited
-    after creation. **Creating a migration and applying it are separate
-    operations**, and applying one always requires explicit user instruction.
+    (`1e85c5d`). Migration `000024_finalize_saved_item_enrichment` later
+    finalized the enrichment columns: `description` and `image_url` added,
+    `enrichment_started_at` dropped, `processing` removed. There is still **no
+    enrichment behavior**. `migrations/` is the production source of truth and
+    must never be edited after creation. **Creating a migration and applying it
+    are separate operations**, and applying one always requires explicit user
+    instruction.
 11. **`collections_system_key_check` subsumes `collections_type_check`.** Any row
     satisfying the system-key rule already has a valid `type`, so PostgreSQL
     reports the system-key constraint for an invalid `type` and the type
@@ -294,67 +365,61 @@ Do not change these casually. Several were corrections of earlier mistakes.
     item until enrichment exists. Adding a url trigram index, splitting the
     predicate, or introducing any search table, ranking column or denormalized
     document needs evidence from real query timings, not expectation.
+18. **Worker execution state is not persisted.** `enrichment_status` is exactly
+    `pending`, `completed`, `failed`, and there is deliberately no `processing`
+    value and no `enrichment_started_at` column. A worker that dies mid-job
+    leaves the item `pending`, which is the correct product state on its own.
+    Do not reintroduce `processing` to make retries or observability easier;
+    that needs an explicit decision. `last_enriched_at` is kept because "last
+    refreshed" is product state and is independent of the status value.
+19. **API and worker configuration are separate boundaries.** The worker uses
+    `config.WorkerConfig` / `config.LoadWorker` and never reads `Config` or
+    `Load`, so it never requires API-only secrets such as `GOOGLE_CLIENT_ID`,
+    `VERIFICATION_CODE_SECRET` or `ACCESS_TOKEN_SECRET`. Sharing one environment
+    and one `.env.<APP_ENV>` file is fine; sharing one struct or loader is not.
+    Redis is configured as a single `REDIS_URL` value, not host/port/database
+    fields, so the same variable works on Docker, Cloud Run and a VPS.
+20. **Enrichment failure must never invalidate a Saved Item.** The URL is the
+    Saved Item's real data and is independent of `enrichment_status`. A job that
+    is lost, a page that times out, a site that blocks the request, or an
+    extraction that finds nothing must all leave the item present and usable.
+    Revisit only with an explicit decision.
 
 ## Next Step
 
-**Phase B is complete.** Per the roadmap in `documentation/product.md`, step 2 is
+**Phase B is complete and committed.** Per the roadmap in `documentation/product.md`, step 2 is
 "Collections + Search" and both are done, so the next work is step 3,
 **background URL metadata extraction**.
 
-A note on phase terminology, since it is easy to misread:
+The roadmap calls "Saved item detail" and "Delete a saved item" Phase B work,
+but both were implemented earlier as part of the core loop. They are done.
 
-- The roadmap lists "Saved item detail" and "Delete a saved item" under Phase B,
-  but both were built during Phase A because the core loop needed them. They are
-  done, not pending.
-- **Collections is done** — repository, service, and the
-  `PUT /saved-items/:id/collection` endpoint, committed as `1e85c5d`.
-- **Basic search is now done too** — migration 000023, the search queries and sqlc
-  target, repository, service, projections, and the `GET /search` endpoint, with
-  unit, repository integration and HTTP integration tests. See the Search section
-  above.
-- `collection_id` was deliberately omitted from the Phase A migration for this
-  reason, and was added later by migration 000022, which has been applied.
+The schema and user lifecycle are in place: Collections, `saved_items.collection_id`,
+the final enrichment columns, the Unsorted-per-user invariant, and the search
+indexes. `internal/database/baseline/schema.sql` now matches migration 000024.
 
-The schema and the user lifecycle are both in place: the `collections` table,
-the `saved_items.collection_id` relationship, the `enrichment_*` columns, the
-Unsorted-per-user invariant, and the two search indexes.
-`internal/database/baseline/schema.sql` now matches migration 000023.
-Registration, Saved Item, Collections, and Search work is finished — do not redo
-it.
+The next implementation is **background URL metadata extraction**, and the
+foundation for it is now in place: the final enrichment schema, local Redis,
+`go-redis/v9`, `config.LoadWorker`, and a `cmd/worker` binary that starts and
+verifies its Redis connection. That is all that exists. The next work still has
+to add the Redis queue and its publish and consume sides, the worker sqlc target
+and enrichment `queries.sql`, the enrichment repository and service, URL
+fetching with SSRF protection, and metadata extraction.
 
-Basic search is **uncommitted**. Run `git status` before starting: the working
-tree contains migration 000023, the whole search feature, the baseline and
-`sqlc.yaml` changes, the generated Swagger, and the wiring in `main.go` and
-`testutil/app.go`. Committing was explicitly out of scope for that work, so
-whether to commit it is an open decision for the user.
-
-What is **not** done, and should not be started without asking: metadata
-extraction itself, cursor pagination, autocomplete, search suggestions, the
-`UNION` predicate optimization, and collection CRUD. Confirm scope with the user
-before writing code, and do not invent additional features such as reminders,
-price tracking, comparison, or AI.
+Search pagination, autocomplete, search suggestions, the `UNION` predicate
+optimization, and collection CRUD are not part of the current scope. Do not add
+unrelated features without explicit direction.
 
 ## Resume Instructions
 
-1. Read `AGENTS.md` — it is the authoritative operating guide.
-2. Read `documentation/product.md` for scope and direction.
-3. Read this file for current state and decisions.
-4. Run `git status` and `git diff` before changing anything. Saved Items,
-   registration, the Unsorted invariant, Collections and the sqlc cleanup are
-   **committed** (`0fd199f`, `fix: restore saved item creation after collections
-   schema`, `7f5637b feat: initialize unsorted collection on registration`,
-   `1e85c5d feat: add saved item collection flow`, then `88e24d8 refactor(sqlc):
-   own the saved item projection and enable omit_unused_structs`).
-   **Basic search is not committed** — it is the whole current working tree. Do
-   not discard it, and do not commit it without being asked.
-5. Inspect `internal/api/saved_item/`, `internal/api/collection/`,
-   `internal/api/search/`, and `internal/api/auth/registration/` before writing
-   code. Do not reimplement existing endpoints, the Unsorted creation, the
-   collection flow, or search.
-6. Re-verify the tree compiles before assuming a clean start:
-   `go build ./... && go vet ./... && go test ./...`
-7. Avoid unrelated refactors. If something looks wrong, report it rather than
-   fixing it as a side effect.
-8. Never edit files in `migrations/` or `internal/api/**/generated/`. Change
-   `queries.sql` and regenerate, or change the feature code.
-9. Do not apply migrations or commit unless explicitly instructed.
+1. Read `AGENTS.md`, `documentation/product.md`, and this file before coding.
+2. Check `git status` and `git diff` to understand the actual current working tree.
+3. Inspect the relevant existing feature packages before changing code. Do not
+   reimplement functionality that is already present.
+4. Run `go build ./... && go vet ./... && go test ./...` before assuming the tree
+   is healthy.
+5. Avoid unrelated refactors. If something looks wrong outside the current task,
+   report it instead of fixing it as a side effect.
+6. Never edit generated files manually. Change the source (`queries.sql`, feature
+   code, etc.) and regenerate generated output.
+7. Do not apply migrations or create commits unless explicitly instructed.

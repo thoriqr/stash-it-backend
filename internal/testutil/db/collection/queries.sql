@@ -76,11 +76,10 @@ INSERT INTO saved_items (
 RETURNING id;
 
 -- name: SetTestSavedItemEnrichmentState :exec
--- Sets the full enrichment state on an existing saved item so a test can seed a
+-- Sets the enrichment state on an existing saved item so a test can seed a
 -- non-default state and then assert it is untouched by a move.
 UPDATE saved_items
 SET enrichment_status = sqlc.arg(enrichment_status),
-    enrichment_started_at = sqlc.narg(enrichment_started_at),
     last_enriched_at = sqlc.narg(last_enriched_at)
 WHERE id = sqlc.arg(id);
 
@@ -118,7 +117,6 @@ SELECT
     user_id,
     collection_id,
     enrichment_status,
-    enrichment_started_at,
     last_enriched_at,
     updated_at
 FROM saved_items

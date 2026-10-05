@@ -10,17 +10,16 @@ if explicitly asked.
 - Fiber **v3**; handlers are `func(c fiber.Ctx) error` — `fiber.Ctx` is a **value** type.
 - Postgres via `pgx/v5` + `pgxpool` directly. No ORM, no query builder.
 - Swagger 2.0 via `swaggo/swag`, served at `/docs/*`. `zap` logging, `validator/v10` validation.
-- Scope today: authentication (`internal/api/auth`), saved items
-  (`internal/api/saved_item`), and collections (`internal/api/collection`).
-  `internal/api/user` has a repository and generated code but no
-  service/handler/routes — scaffolding, not dead code.
+- Scope today: authentication (`internal/api/auth`), saved items (`internal/api/saved_item`),
+  and collections (`internal/api/collection`). `internal/api/user` has a repository and
+  generated code but no service/handler/routes — scaffolding, not dead code.
 
 ## Architecture
 
 Vertical slices by feature; each owns its whole stack. **No DI container** —
 wiring is explicit, by hand, in `module.go`.
 
-```
+```text
 cmd/api/main.go               bootstrap only; calls auth.RegisterModule, no feature details
 internal/api/<module>/        routes.go handler.go service.go service_validation.go
                               repository.go mapper.go request.go response.go
@@ -59,8 +58,8 @@ through; don't wrap them.
 **Errors** (`internal/apperror`) — construct in the lowest layer that knows the
 meaning. Repositories translate driver errors (`pgx.ErrNoRows` → `NotFoundWith`
 or `UnauthorizedWith`, otherwise `Internal`); services and handlers pass errors
-through untouched. Prefer the `...With(code, message, err)` form so clients get a
-specific `error.code`. Responses come from `httpx` helpers: success is
+through untouched. Prefer the `...With(code, message, err)` form so clients get
+a specific `error.code`. Responses come from `httpx` helpers: success is
 `{"data","message","meta"}`, error is `{"error":{code,message,fields}}`. Don't
 leak internal error text into `Message`.
 
@@ -124,22 +123,7 @@ Two schemas with different roles. **They can drift.**
   a user-controlled step on their environment.
 - If a task requires a schema change, stop after creating the migration and report
   the files with their SQL/diff for review, unless the user asked for application as
-  part of the task. The user reviews the migration SQL before it is applied:
-
-  ```
-  schema change request
-      ↓
-  create new migration
-      ↓
-  agent shows/reports migration SQL
-      ↓
-  user reviews migration
-      ↓
-  user explicitly instructs migration to be applied
-      ↓
-  migration is applied
-  ```
-
+  part of the task.
 - `internal/database/baseline/schema.sql` — manually maintained snapshot,
   embedded via `//go:embed`, used as the `schema:` input for the **test-only**
   sqlc targets in `internal/testutil/db/*` and applied to throwaway Postgres
@@ -159,57 +143,43 @@ Output paths: `internal/**/mocks/` (mockgen), `internal/api/**/generated/` (sqlc
 
 - **mockgen** — mocks are generated from the Go interfaces a package consumes
   (see `types.go` / `service.go` in the feature). Source and destination depend on
-  which module or interface is involved, so there is **no single fixed mockgen
-  command or output directory**;
-  `mockgen -typed -source <interface-source> -destination <mock-output> -package mocks`
-  shows the shape, not a project-wide fixed path. If an interface changes, modify
-  the source interface first, then regenerate the affected mock.
+  the module or interface, so there is no single project-wide command or output
+  directory. If an interface changes, modify the source interface first, then
+  regenerate the affected mock.
+- **sqlc** — feature `queries.sql` files are the source. `sqlc.yaml` defines query
+  sources, generated packages, output directories, and the `pgx/v5` database
+  configuration. If a query changes, modify `queries.sql` first, then run
+  `sqlc generate`. Change `sqlc.yaml` only when its configuration actually needs
+  to change.
 
-- **sqlc** — features that use sqlc own a `queries.sql`; those SQL files are the source.
-  `sqlc.yaml` holds the query sources, generated package names, output
-  directories, and the `pgx/v5` database configuration. If a query changes,
-  modify the relevant `queries.sql` first, then run `sqlc generate`. If the
-  configuration itself is wrong, change `sqlc.yaml` deliberately — never edit the
-  output, and don't modify `sqlc.yaml` merely to make a generated file change
-  unless the configuration actually needs to change. Integration-test queries at
-  `internal/testutil/db/<feature>/queries.sql` generate into the sibling
-  `generated/` directory via the same config, and are output too.
+  Integration-test queries at `internal/testutil/db/<feature>/queries.sql` generate
+  into the sibling `generated/` directory via the same config.
 
-  Every target sets `omit_unused_structs: true`, so a generated `models.go`
-  contains only the table structs that target's own queries reference. Generated
-  persistence models are therefore **not** automatically shared across features,
-  and a feature must not assume a struct another feature's target happens to
-  generate. When a feature's queries project only part of a table, sqlc emits a
-  per-query row type and the table model goes unused; in that case the feature
-  owns its projected type in `types.go` (see `saved_item.SavedItem`, which carries
-  the 8 columns the saved items queries select). Keep sqlc `Params`/`Row` types
-  as generated types.
+  Every target sets `omit_unused_structs: true`, so `models.go` contains only table
+  structs referenced by that target's queries. Generated persistence models are
+  therefore not automatically shared across features. When a feature's queries
+  project only part of a table, the feature owns its projected type in `types.go`;
+  keep sqlc `Params`/`Row` types generated.
 
-  A generated model with a real consumer in another feature stays, and borrowing
-  it is fine: `sessiondb.Session` is used by both `login` and `registration`
-  because session's queries project the whole table. But such a model survives
-  only while the owning target's queries reference it — narrowing those queries
-  would remove the struct and break the borrowing feature, so change the owner's
-  `queries.sql` with that in mind. Do **not** introduce a shared domain type to
-  avoid two structs that look alike; `saved_item.SavedItem` and
-  `collection.SavedItem` are deliberately separate projections that project
-  different columns.
+  A generated model with a real consumer in another feature may be shared:
+  `sessiondb.Session` is used by both `login` and `registration` because session
+  queries project the whole table. Such sharing depends on the owning target's
+  queries continuing to reference that model.
 
-- **swag** — edit the handler annotation comments, then regenerate Swagger
-  documentation with:
+  Do **not** introduce a shared domain type merely to avoid similar structs;
+  `saved_item.SavedItem` and `collection.SavedItem` are deliberately separate
+  projections.
+
+- **swag** — edit handler annotation comments, then regenerate with:
   `swag init -g cmd/api/main.go -parseInternal`.
 
-Features are directories under `internal/api/` — currently `auth/registration`,
-`auth/login`, `auth/session`, `auth/password_reset`, `saved_item`,
-`collection`, and `user`; new features may be added there following the same
-structure. Don't treat `auth` as the only feature area, and for sqlc follow the
-existing `sqlc.yaml` mapping for the specific module instead of inventing a new
-output location.
+Features live under `internal/api/` — currently `auth/registration`,
+`auth/login`, `auth/session`, `auth/password_reset`, `saved_item`, `collection`,
+and `user`. Follow the existing `sqlc.yaml` mapping for the relevant module.
 
-`collection` acts on a saved item and mounts under the same `/saved-items`
-prefix as `saved_item` (`PUT /saved-items/:id/collection`). Its module registers
-into that prefix independently; both features' routes coexist, so do not fold one
-into the other.
+`collection` acts on a saved item and mounts under the same `/saved-items` prefix
+as `saved_item` (`PUT /saved-items/:id/collection`). Its module registers into
+that prefix independently; both features' routes coexist.
 
 ## API documentation
 
@@ -218,7 +188,7 @@ possible error codes, params, success/failure responses, route); the global
 annotation and `BearerAuth` definition live on `main()` in `cmd/api/main.go`.
 `internal/api/swagger/` holds documentation-only response shapes — never import it
 from runtime code. Don't put hand-written project docs in `docs/`; those belong
-under `documentation/` (not yet created).
+under `documentation/`.
 
 ## Testing
 
@@ -226,10 +196,10 @@ under `documentation/` (not yet created).
   test (`*_service_test.go`, `*_helpers_test.go`). Use `testify` and
   `go.uber.org/mock`; mock the consumer interface from `types.go` and regenerate
   mocks rather than editing them.
-- Integration tests live in `internal/integration/`. A single shared `TestMain`
-  starts one Postgres 18 testcontainer, applies the baseline schema, builds the
-  real app via `testutil.NewApp`, then tears down. One shared database means tests
-  must not collide on data. **Docker is required.**
+- Integration tests live in `internal/integration/`. A shared `TestMain` starts one
+  Postgres 18 testcontainer, applies the baseline schema, builds the real app via
+  `testutil.NewApp`, then tears down. One shared database means tests must not collide
+  on data. **Docker is required.**
 - Prefer asserting error codes over error strings, and service/repository tests
   over handler plumbing.
 
@@ -242,16 +212,11 @@ go test ./...
 ```
 
 Report which verification commands you ran and whether they passed or failed.
-**Never claim tests pass unless they were actually run.** If Docker is
-unavailable, state that plainly when the integration tests cannot run.
+**Never claim tests pass unless they were actually run.** If Docker is unavailable,
+state that plainly when integration tests cannot run.
 
 ## Rules
 
 - Inspect the code rather than guessing; prefer existing patterns over new ones.
-- Don't change architecture, add dependencies, or alter API contracts and
+- Don't change architecture, add dependencies, or alter API contracts or
   auth/session behavior without explicit instruction.
-- Never edit an existing migration file, even if explicitly asked — introduce
-  schema changes in a new migration instead. Creating one when the task requires
-  a schema change is fine, but applying it always needs explicit user
-  instruction. Don't touch `internal/database/baseline/schema.sql` unless asked.
-- Don't hand-edit generated code.

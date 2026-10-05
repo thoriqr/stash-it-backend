@@ -208,7 +208,7 @@ type MoveSavedItemToCollectionRow struct {
 // user_id keeps ownership enforced on the write itself, not only on the read that
 // preceded it.
 //
-// enrichment_status, enrichment_started_at and last_enriched_at are neither
+// enrichment_status, last_enriched_at, description and image_url are neither
 // selected nor written. Moving an item has no effect on enrichment, whatever
 // state enrichment is in.
 //

@@ -224,7 +224,6 @@ SELECT
     user_id,
     collection_id,
     enrichment_status,
-    enrichment_started_at,
     last_enriched_at,
     updated_at
 FROM saved_items
@@ -232,13 +231,12 @@ WHERE id = $1
 `
 
 type GetSavedItemCollectionStateRow struct {
-	ID                  uuid.UUID
-	UserID              uuid.UUID
-	CollectionID        uuid.UUID
-	EnrichmentStatus    string
-	EnrichmentStartedAt pgtype.Timestamptz
-	LastEnrichedAt      pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // The full enrichment state is projected on purpose: tests assert it is
@@ -251,7 +249,6 @@ func (q *Queries) GetSavedItemCollectionState(ctx context.Context, id uuid.UUID)
 		&i.UserID,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
-		&i.EnrichmentStartedAt,
 		&i.LastEnrichedAt,
 		&i.UpdatedAt,
 	)
@@ -261,27 +258,20 @@ func (q *Queries) GetSavedItemCollectionState(ctx context.Context, id uuid.UUID)
 const setTestSavedItemEnrichmentState = `-- name: SetTestSavedItemEnrichmentState :exec
 UPDATE saved_items
 SET enrichment_status = $1,
-    enrichment_started_at = $2,
-    last_enriched_at = $3
-WHERE id = $4
+    last_enriched_at = $2
+WHERE id = $3
 `
 
 type SetTestSavedItemEnrichmentStateParams struct {
-	EnrichmentStatus    string
-	EnrichmentStartedAt pgtype.Timestamptz
-	LastEnrichedAt      pgtype.Timestamptz
-	ID                  uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	ID               uuid.UUID
 }
 
-// Sets the full enrichment state on an existing saved item so a test can seed a
+// Sets the enrichment state on an existing saved item so a test can seed a
 // non-default state and then assert it is untouched by a move.
 func (q *Queries) SetTestSavedItemEnrichmentState(ctx context.Context, arg SetTestSavedItemEnrichmentStateParams) error {
-	_, err := q.db.Exec(ctx, setTestSavedItemEnrichmentState,
-		arg.EnrichmentStatus,
-		arg.EnrichmentStartedAt,
-		arg.LastEnrichedAt,
-		arg.ID,
-	)
+	_, err := q.db.Exec(ctx, setTestSavedItemEnrichmentState, arg.EnrichmentStatus, arg.LastEnrichedAt, arg.ID)
 	return err
 }
 

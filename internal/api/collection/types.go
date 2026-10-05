@@ -33,7 +33,7 @@ const (
 //
 // The enrichment columns are deliberately absent. Putting a saved item into a
 // collection neither inspects nor reports enrichment state, so projecting
-// enrichment_status, enrichment_started_at or last_enriched_at here would only
+// enrichment_status, last_enriched_at, description or image_url here would only
 // invite code to depend on them.
 type SavedItem struct {
 	ID           uuid.UUID

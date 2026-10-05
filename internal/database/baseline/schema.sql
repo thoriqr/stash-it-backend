@@ -129,16 +129,25 @@ CREATE TABLE saved_items (
     platform TEXT,
     title TEXT,
 
+    -- Optional enriched metadata. Both stay NULL until background enrichment
+    -- runs, and either may still be NULL afterwards because a page is not
+    -- required to expose a description or a preview image.
+    description TEXT,
+    image_url TEXT,
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     collection_id UUID NOT NULL,
 
-    -- Written only by the future background enrichment phase. Nothing in the
-    -- codebase populates these yet, so domain, platform and title remain the
-    -- only metadata a saved item carries today.
+    -- Written only by the background enrichment phase. domain is derived from
+    -- the URL at save time; platform, title, description and image_url come
+    -- from enrichment and remain NULL until it runs.
+    --
+    -- Worker execution state is deliberately not persisted. An item stays
+    -- pending until enrichment completes or fails, so a worker that dies
+    -- mid-job needs no 'processing' marker to be reconciled afterwards.
     enrichment_status TEXT NOT NULL DEFAULT 'pending',
-    enrichment_started_at TIMESTAMPTZ,
     last_enriched_at TIMESTAMPTZ,
 
     CONSTRAINT saved_items_collection_id_fkey
@@ -150,7 +159,6 @@ CREATE TABLE saved_items (
         CHECK (
             enrichment_status IN (
                 'pending',
-                'processing',
                 'completed',
                 'failed'
             )
