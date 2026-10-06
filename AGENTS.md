@@ -13,6 +13,8 @@ if explicitly asked.
 - Scope today: authentication (`internal/api/auth`), saved items (`internal/api/saved_item`),
   and collections (`internal/api/collection`). `internal/api/user` has a repository and
   generated code but no service/handler/routes — scaffolding, not dead code.
+  `internal/enrichment` holds reusable metadata extraction and is **not yet wired
+  into any endpoint, service, or worker**.
 
 ## Architecture
 
@@ -27,6 +29,7 @@ internal/api/<module>/        routes.go handler.go service.go service_validation
 internal/api/auth/module.go   composition root for auth sub-features (wire there only)
 internal/middleware/auth.go   JWT bearer guard
 internal/{apperror,httpx,validation,email,security,config,logger,health,database}/
+internal/enrichment/           reusable metadata extraction; no Fiber, sqlc, Asynq, persistence
 internal/testutil/            testcontainers helpers, fakes, test-only sqlc output
 internal/integration/         end-to-end HTTP tests
 migrations/                   production schema (source of truth)
@@ -89,6 +92,39 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
 - Keep Google ID-token verification behind `login.GoogleTokenVerifier` so tests can fake it.
 - Registration / password-reset verification endpoints are intentionally
   unauthenticated; the `verification_id` + emailed PIN is the credential.
+
+## Outbound fetches and enrichment
+
+Security-critical. `internal/security` is the outbound-fetch boundary;
+`internal/enrichment` is reusable extraction logic. Neither is wired into the
+application yet — no service, repository method, handler, route, or Asynq task
+calls enrichment.
+
+- `security.NewGuardedHTTPClient(policy)` is the only sanctioned way to fetch a
+  user-supplied URL. Its `net.Dialer.ControlContext` validates the **resolved**
+  address at dial time, which is what makes DNS rebinding ineffective and what
+  covers every redirect hop and pooled connection. Do not add a second outbound
+  client, transport, or address allow/deny list anywhere else in the codebase.
+- Allowed schemes are `http`/`https` and allowed ports are 80/443 only. The
+  blocked address ranges live in `internal/security`; don't duplicate or extend
+  them elsewhere.
+- `Proxy` is nil on the guarded transport deliberately — a proxy connects from
+  its own process and would put the dial-time policy out of reach.
+- `internal/enrichment` receives its `*http.Client` by constructor injection and
+  must never build one, use `http.DefaultClient`, or call `http.Get`. Keep it
+  independent of Fiber, `internal/api`, sqlc, Asynq, and persistence.
+- Enrichment **must not** touch `collection_id` or move an item between
+  collections. Automatic organization is a separate concern.
+- `platform` is derived from metadata the page publishes about itself, never
+  from the URL hostname. Don't add host-based inference or a domain→platform
+  mapping.
+- A successful enrichment means the process ran, not that every field was found.
+  A page exposing no metadata is a successful enrichment with an empty result,
+  not a failure.
+- `Author` and `SiteName` have no `saved_items` column. Don't add a migration for
+  them without an explicit decision.
+- Metadata URLs are resolved to absolute form but are never fetched or validated
+  during extraction.
 
 ## Data integrity
 

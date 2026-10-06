@@ -53,8 +53,10 @@ detection. `m.youtube.com` and `youtube.com` remain distinct by design.
 
 ### platform and title
 
-Both are **NULL** for every item saved in Phase A. They are populated by a later
-background enrichment process that does not exist yet.
+Both are **NULL** for every item saved in Phase A, and they are still NULL for
+every item today: the columns and the extraction layer exist, but nothing calls
+the extractor. They will be populated by a background enrichment process that
+does not exist yet. See the enrichment section below.
 
 `platform` is the **content/source** platform (youtube, tiktok, instagram,
 pinterest, ...). It is NOT the client platform. `X-Platform` is session-only.
@@ -195,12 +197,14 @@ saved item until enrichment runs, so the `title` trigram index currently indexes
 an all-NULL column. Both were measured with `EXPLAIN`, not assumed, and neither
 was redesigned. See decisions 14–17.
 
-### Enrichment — schema finalized, worker foundation in place
+### Enrichment — security boundary and extraction implemented, not integrated
 
-**This is only the initial worker infrastructure.** No enrichment behavior
-exists. Nothing is queued, nothing is consumed, and no URL is ever fetched. What
-is in place is the final schema the enrichment will write into, plus a second
-binary that proves it can start and reach Redis.
+Two foundations are now implemented and verified. **Neither is wired into the
+application**: there is still no enrichment service, repository method, handler,
+route, or Asynq task, and no Saved Item has ever been fetched. Nothing a user
+does can currently trigger enrichment.
+
+#### Schema
 
 Migration `000024_finalize_saved_item_enrichment` has been created and manually
 applied. It finalizes enrichment on the single `saved_items` table. No separate
@@ -225,11 +229,107 @@ Status semantics: `pending` means enrichment has not successfully completed yet,
 real data and is independent of all three — a URL that cannot be fetched must
 never invalidate or delete the Saved Item.
 
-`internal/database/baseline/schema.sql` was updated to match. The integration
-container is built from the baseline, not from `migrations/`, so the two drift
-easily and both needed the same edit.
+`internal/database/baseline/schema.sql` matches. The integration container is
+built from the baseline, not from `migrations/`, so the two drift easily. No
+migration has been created or modified since `000024`; none is needed for the
+security or extraction work.
 
-Worker infrastructure:
+#### Outbound fetch security
+
+`internal/security/outbound_fetch.go` is the SSRF boundary for any server-side
+fetch of a user-supplied URL. No dependency was added.
+
+- `NewGuardedHTTPClient(policy)` returns the only `*http.Client` this project
+  should use to fetch a user-supplied URL. Its `net.Dialer.ControlContext`
+  validates the **resolved** address at dial time, which closes the
+  time-of-check/time-of-use gap that makes DNS rebinding work, and covers every
+  redirect hop and pooled connection without redirect-specific code.
+- Allowed schemes are `http`/`https` and allowed ports are 80/443 only. The port
+  allowlist is the highest-leverage control in the file: it is what keeps a
+  co-located Redis (6379), Cloud SQL (5432) and every other non-standard service
+  out of reach without having to recognise them as private addresses.
+- Blocked addresses: loopback, unspecified, RFC 1918, IPv6 unique-local,
+  link-local (v4 and v6), multicast, zoned, plus 14 special-purpose prefixes
+  that `net/netip` reports as ordinary global unicast. `::ffff:` forms are
+  unmapped first, and NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`) and the GCP IPv6
+  metadata address (`fd20:ce::254`) are blocked explicitly.
+- Redirects capped at 3, `Timeout` 10s, `ResponseHeaderTimeout` 5s, dial and TLS
+  handshakes 5s each, response body bounded at 2 MiB (applied to the
+  *decompressed* stream, so a compression bomb is covered by the same limit).
+- `Proxy` is nil rather than `http.ProxyFromEnvironment`, because a proxy
+  connects from its own process and would put the dial-time policy out of reach.
+- `ValidateOutboundURL` provides early rejection with clear errors: scheme,
+  userinfo (refused outright — the classic `http://user@host` disguise), host
+  names that can only mean something local (`localhost`, `*.local`, `*.internal`),
+  unsafe literal addresses, and port.
+- 100% statement coverage on every function in the file, including a real
+  `httptest` server on loopback proving the guard is installed in the transport.
+
+#### Enrichment extraction layer
+
+`internal/enrichment/` is the reusable extraction core. It is deliberately
+independent of Fiber, `internal/api`, sqlc, Asynq and persistence, so the future
+endpoint and the future worker call the same code.
+
+- `Enricher` interface with `NewEnricher(client *http.Client, policy security.OutboundFetchPolicy)`.
+  The guarded client is injected; enrichment never constructs one, never uses
+  `http.DefaultClient`, and holds **no** SSRF logic of its own. The client is the
+  single boundary.
+- `Metadata` carries `Title`, `Platform`, `Description`, `ImageURL`,
+  `CanonicalURL`, `SiteName`, `Author`. Every field is `*string` and nil when
+  nothing was found, so "no description" stays distinguishable from "an empty
+  one". `SiteName` and `Author` have no `saved_items` column; no migration was
+  added for them.
+- Sources: `<title>`; `og:title/description/image/url/site_name/author`;
+  `twitter:title/description/image/image:src`; `<meta name=description/author/application-name>`;
+  `<link rel=canonical>`; JSON-LD `name`, `headline`, `description`, `image`
+  (string, `ImageObject`, or list), `url`, `author.name`, `publisher.name`, plus
+  `Organization`/`WebSite` nodes — across single objects, arrays, `@graph`,
+  `{"@value":…}`, `@type` as string or list, and fully-qualified schema.org types.
+- Precedence is declared as data, one slice per field, and all four sources write
+  into one flat candidate map. JSON-LD candidate keys are namespaced `jsonld:`
+  because the property names collide with the HTML vocabularies; without the
+  prefix a meta description and a JSON-LD description were the same key and
+  document order, not the declared order, decided the winner.
+- `publisher.name` can never become the title. It is collected under its own key
+  and JSON-LD descent suppresses generic fields inside reference subtrees.
+- `platform` is derived only from metadata the page publishes about itself
+  (`application-name`, then JSON-LD publisher/organization/website, then
+  `og:site_name`). A recognised hostname with no metadata yields nil. There is no
+  domain-to-platform mapping.
+- Normalization is minimal: trim, collapse whitespace runs, fold non-breaking
+  spaces. No lowercasing, truncation, or punctuation changes. Relative metadata
+  URLs resolve against the **post-redirect** URL, non-http(s) results are dropped,
+  and nothing is fetched or validated during extraction.
+- `CanonicalURL` is reported and deliberately not acted on. Replacing a saved
+  item's URL is a product decision and belongs to the caller.
+- Failure semantics: every error is a `*Failure` with a `Kind` — `fetch`,
+  `content`, or `parse` — so a caller can decide whether a job is worth retrying.
+  Missing metadata is **not** a failure; a page with no Open Graph tags returns an
+  empty `Metadata` and a nil error.
+- 95% statement coverage across the package. No test makes a real network
+  request.
+
+`golang.org/x/net/html` is used for parsing. It was **already in the module graph
+as an indirect dependency** at `v0.59.0`; `go mod tidy` only moved it to direct.
+`go.sum` is unchanged — no module was added and no version changed.
+
+#### Still not implemented
+
+- An enrichment service or repository method on `saved_items`. No sqlc query
+  reads or writes `title`, `platform`, `description`, `image_url`,
+  `enrichment_status` or `last_enriched_at` yet.
+- `POST /saved-items/:id/enrich`. No route, handler, response shape, or swagger
+  annotation.
+- Any Asynq task, `ServeMux` registration, or queue configuration.
+- Any change to `cmd/worker`, `cmd/api`, or `internal/testutil/app.go`. Neither
+  binary knows `internal/enrichment` exists.
+- `updated_at` consequences of enrichment writes. The `saved_items_set_updated_at`
+  trigger fires on any UPDATE, so the first enrichment will move `updated_at` on
+  items whose metadata was null. Nothing orders by it, but `ListSavedItems`
+  returns it.
+
+#### Worker infrastructure
 
 - `docker-compose.dev.yml` gained a `redis` service: `redis:8-alpine`,
   `stash-it-redis-dev`, `restart: unless-stopped`, port `6379`, no volume, and
@@ -254,15 +354,16 @@ Worker infrastructure:
   and a VPS, with no worker-side knowledge of the environment.
 - Redis connectivity and worker startup were manually verified: the worker
   reached the ping, logged `worker started`, and stayed running until signalled.
+  This has not been re-verified since.
 
-**None of the following is implemented:** Redis queue or job processing of any
-kind (`LPUSH`, `BLPOP`, Streams, pub/sub), job payloads, retries or
-acknowledgements, a sqlc target for the worker, enrichment `queries.sql`, a
-generated worker package, an enrichment repository or service, URL fetching, an
-HTTP client for enrichment, HTML parsing, OpenGraph parsing, description or image
-extraction, SSRF protection, enrichment status writes, and actual background
-enrichment. `docker-compose.dev.yml`, `go.mod` and `cmd/worker/main.go` are the
-only things this phase touches.
+#### Still not implemented (worker side)
+
+- Redis queue or job processing of any kind (`LPUSH`, `BLPOP`, Streams, pub/sub),
+  job payloads, retries or acknowledgements, a sqlc target for the worker,
+  enrichment `queries.sql`, a generated worker package, URL fetching in the
+  worker, HTML parsing in the worker, enrichment status writes, and actual
+  background enrichment. `docker-compose.dev.yml`, `go.mod` and `cmd/worker/main.go`
+  are the only things the worker infrastructure phase touched.
 
 ### Testing and verification status
 
@@ -282,10 +383,23 @@ As of the completed Search work:
 Integration tests need Docker. They were run and passing. Re-run them before
 relying on any claim.
 
-The enrichment foundation phase above has **no** `go build` / `go vet` /
-`go test` claim recorded. What was verified was Redis reachability and worker
-startup behavior. Re-run all three commands before relying on this tree being
-healthy.
+After the security and extraction work, all three commands were re-run over the
+whole tree and pass:
+
+- `gofmt -l internal/enrichment internal/security` — clean
+- `go build ./...` — pass
+- `go vet ./...` — pass
+- `go test ./... -count=1` — pass, 11 packages ok, including `internal/integration`
+  (Postgres 18 testcontainer, Docker 29.7.2)
+- `internal/security` — 100% statement coverage on `outbound_fetch.go`
+- `internal/enrichment` — 95% statement coverage
+
+`go.sum` is unchanged by the extraction work. `golang.org/x/net` moved from
+indirect to direct in `go.mod` because `golang.org/x/net/html` is now imported;
+the version did not change and no module was added.
+
+`cmd/worker` itself was not exercised by these commands. Its only verification is
+the manual Redis connectivity check recorded above.
 
 ## Important Decisions
 
@@ -306,9 +420,12 @@ Do not change these casually. Several were corrections of earlier mistakes.
 7. **No update/PATCH endpoint exists yet.** Do not add one unless asked.
 8. **Delete is a hard delete.** No soft-delete or `deleted_at` column. Revisit
    only if enrichment later creates child rows that must be retained.
-9. **No metadata/enrichment behavior exists.** A worker binary exists and
-   connects to Redis, but nothing is queued, consumed, or fetched. No scraping,
-   `og:title`, `og:image`, JSON-LD, or remote fetching anywhere in the codebase.
+9. **No enrichment is wired into the application.** A worker binary exists and
+   connects to Redis, and an extraction layer exists in `internal/enrichment`, but
+   nothing is queued, nothing is consumed, and no Saved Item is ever fetched. No
+   route, service, repository method or Asynq task calls the extractor, so the
+   extraction code has never run against a real page. Superseded in part by
+   decisions 21–26.
 10. **The Phase B schema and lifecycle are in place.** Migration
     `000022_create_collections_and_saved_item_enrichment` added `collections`,
     `saved_items.collection_id` (`NOT NULL`, `ON DELETE RESTRICT`), and the
@@ -317,8 +434,8 @@ Do not change these casually. Several were corrections of earlier mistakes.
     maintains it at runtime. The Collections API is now implemented on top of it
     (`1e85c5d`). Migration `000024_finalize_saved_item_enrichment` later
     finalized the enrichment columns: `description` and `image_url` added,
-    `enrichment_started_at` dropped, `processing` removed. There is still **no
-    enrichment behavior**. `migrations/` is the production source of truth and
+    `enrichment_started_at` dropped, `processing` removed. The columns exist and
+    nothing writes them yet. `migrations/` is the production source of truth and
     must never be edited after creation. **Creating a migration and applying it
     are separate operations**, and applying one always requires explicit user
     instruction.
@@ -384,27 +501,93 @@ Do not change these casually. Several were corrections of earlier mistakes.
     is lost, a page that times out, a site that blocks the request, or an
     extraction that finds nothing must all leave the item present and usable.
     Revisit only with an explicit decision.
+21. **`security.NewGuardedHTTPClient` is the only outbound fetch path.**
+    `internal/security` owns the SSRF boundary: the dial-time address check, the
+    scheme and port allowlists, the redirect cap, the timeouts and the response
+    size limit. Enrichment holds none of that logic and must not grow any. Do not
+    add a second client, transport, or address list anywhere in the codebase. The
+    guard is at dial time rather than before the request on purpose: validating
+    the URL and then connecting leaves a gap that DNS rebinding exploits, and
+    putting the check in the dialer also covers redirect hops for free.
+22. **The port allowlist is 80/443 only.** This is a deliberate product
+    constraint, not an oversight. It is the control that keeps a co-located Redis
+    or Cloud SQL out of reach, and some legitimate sites on other ports will not
+    enrich. Widening it needs an explicit decision.
+23. **`internal/enrichment` is reusable extraction logic, not a service.** It
+    takes a URL and returns metadata or a classified failure. It has no Fiber, no
+    sqlc, no Asynq and no persistence, so the future endpoint and the future
+    worker cannot diverge. Persistence, `enrichment_status` writes and the
+    `pgtype.Text` conversion all belong to the caller. This also keeps
+    `cmd/worker`'s "imports nothing from `internal/api`" invariant intact.
+24. **`completed` means the process succeeded, not that fields were found.** An
+    item whose page exposed only a title is `completed`; an item whose page
+    exposed nothing usable may also be `completed`. `failed` means the process
+    itself failed. Missing metadata is never a failure, and `enrichment.Kind`
+    exists so the caller can separate a retryable fetch problem from a permanent
+    content problem without matching error text.
+25. **Enrichment must not touch `collection_id` or move items.** Metadata
+    extraction has no opinion about organization. Automatically filing items into
+    collections is a separate worker responsibility, and conflating the two would
+    make a failed or partial enrichment look like a lost item. Revisit only with
+    an explicit decision.
+26. **`platform` stays metadata-derived.** The extractor takes it from
+    `application-name`, JSON-LD publisher/organization/website, then
+    `og:site_name`, and never from the URL hostname. This extends decision 3:
+    adding a host-based rule or a domain-to-platform mapping now needs an explicit
+    decision, because it would contradict both the product definition of the field
+    and the extractor's tests.
+
+Two deliberate omissions worth recording, both revisitable:
+
+- `Metadata.Author` and `Metadata.SiteName` have no `saved_items` column. They
+  are extracted because pages publish them and they are the raw material
+  `Platform` comes from, but **no migration may be added for them** without an
+  explicit decision.
+- `Metadata.CanonicalURL` is reported and deliberately not acted on. Replacing a
+  Saved Item's `url` with its canonical form is a product decision about what a
+  Saved Item means, and it belongs to the caller.
 
 ## Next Step
 
 **Phase B is complete and committed.** Per the roadmap in `documentation/product.md`, step 2 is
-"Collections + Search" and both are done, so the next work is step 3,
-**background URL metadata extraction**.
+"Collections + Search" and both are done, so the current work is step 3,
+**background URL metadata extraction**, which is now partly in place.
 
 The roadmap calls "Saved item detail" and "Delete a saved item" Phase B work,
 but both were implemented earlier as part of the core loop. They are done.
 
 The schema and user lifecycle are in place: Collections, `saved_items.collection_id`,
 the final enrichment columns, the Unsorted-per-user invariant, and the search
-indexes. `internal/database/baseline/schema.sql` now matches migration 000024.
+indexes. `internal/database/baseline/schema.sql` matches migration 000024.
 
-The next implementation is **background URL metadata extraction**, and the
-foundation for it is now in place: the final enrichment schema, local Redis,
-`go-redis/v9`, `config.LoadWorker`, and a `cmd/worker` binary that starts and
-verifies its Redis connection. That is all that exists. The next work still has
-to add the Redis queue and its publish and consume sides, the worker sqlc target
-and enrichment `queries.sql`, the enrichment repository and service, URL
-fetching with SSRF protection, and metadata extraction.
+For this step the following now exist: the enrichment columns, local Redis,
+`go-redis/v9`, `config.LoadWorker`, a `cmd/worker` binary that starts and verifies
+its Redis connection, the guarded outbound HTTP client in `internal/security`, and
+the extraction layer in `internal/enrichment`.
+
+What is still missing, in the order it needs doing:
+
+1. **An enrichment sqlc target and queries** that read a Saved Item's URL for
+   enrichment and write back `title`, `platform`, `description`, `image_url`,
+   `enrichment_status` and `last_enriched_at`. No query touches those columns yet.
+2. **A saved-item enrichment service and repository method** that owns
+   `pgtype.Text` conversion and the status write, wrapping `enrichment.Enricher`.
+   Persistence stays outside `internal/enrichment` (decision 23).
+3. **`POST /saved-items/:id/enrich`** — exactly one item, owner-scoped, returning
+   the updated item with its `enrichment_status`. Not a batch endpoint. It mounts
+   under the existing `/saved-items` group the way `collection` does, and a
+   synchronous fetch failure is reported in the payload as `enrichment_status`
+   rather than as a 5xx, since the item itself is fine.
+4. **Enqueueing on save**, then **the Asynq consume side**: task type, payload,
+   retry classification driven by `enrichment.Kind`, and graceful shutdown.
+   `cmd/worker` and `cmd/api` still know nothing about enrichment.
+
+Decisions that must be settled before step 4 rather than during it: whether
+`POST /saved-items` enqueues at all, what the worker concurrency is (asynq's
+default is `NumCPU`, which is 1 on a default Cloud Run instance), and whether
+per-user rate limiting exists. The API binary also has no signal handling yet, so
+graceful shutdown is part of that work rather than something the worker can
+assume.
 
 Search pagination, autocomplete, search suggestions, the `UNION` predicate
 optimization, and collection CRUD are not part of the current scope. Do not add
@@ -423,3 +606,6 @@ unrelated features without explicit direction.
 6. Never edit generated files manually. Change the source (`queries.sql`, feature
    code, etc.) and regenerate generated output.
 7. Do not apply migrations or create commits unless explicitly instructed.
+8. Enrichment has never run. `internal/enrichment` and `internal/security` are
+   verified by their own unit tests only, so do not assume behaviour that is not
+   asserted there.

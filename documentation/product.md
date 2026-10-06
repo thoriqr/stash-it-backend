@@ -60,9 +60,14 @@ The initial Saved Item is deliberately minimal:
 | `domain`        | derived from the URL, never fetched from the remote source |
 | `platform`      | content/source platform, null until enrichment runs        |
 | `title`         | null until enrichment runs                                 |
+| `description`   | null until enrichment runs, and may stay null afterwards   |
+| `image_url`     | null until enrichment runs, and may stay null afterwards   |
 | `created_at`    |                                                            |
 | `updated_at`    |                                                            |
 | `collection_id` | owning collection, required in the database                |
+
+Enrichment metadata is additive. A Saved Item is a valid, useful saved item
+before any of it arrives, and it stays one when none of it does.
 
 ### Current Saved Item behavior
 
@@ -85,6 +90,43 @@ session concern. It must never be used for `saved_items.platform`.
 
 Saving never contacts the remote source: domain derivation is local, and metadata
 enrichment happens later without blocking the initial save.
+
+### Metadata enrichment
+
+Enrichment adds what the original source can tell us about a Saved Item, so the
+item reads as a preview of what the user saved rather than a bare link. It is an
+enhancement to the core loop, never a condition of it.
+
+- **It is best effort.** Enrichment happens after the save, or not at all. A user
+  who never comes back is no worse off than before it existed.
+- **`domain` is not enrichment.** The domain is derived locally from the saved URL
+  the moment the item is saved. `title`, `platform`, `description` and `image_url`
+  are enrichment metadata, because they are facts about the page at its source
+  rather than about the URL.
+- **Every metadata field is optional.** A page may expose only some of them, or
+  none. A product page with a title and image but no description is normal, and a
+  page that exposes nothing usable is normal too. Missing metadata is not a
+  defect in the Saved Item and not a defect in enrichment.
+- **`completed` means the enrichment process succeeded**, not that every field was
+  found. An item whose page exposed a title and nothing else is `completed`. An
+  item whose page exposed nothing at all may also be `completed`. The status
+  describes the process, not the fullness of the result.
+- **`failed` means the enrichment process itself failed** — the page could not be
+  retrieved or read at all. A `failed` item keeps its URL, its domain, its place
+  in its collection, and its presence in search by URL and domain.
+- **Enrichment never invalidates a Saved Item.** The URL is the user's real data.
+  A page that times out, blocks the request, has been deleted, or simply has
+  nothing to say must never make the item disappear, be rejected, or be considered
+  broken.
+- **Enrichment does not organize.** It never decides a collection and never moves
+  an item between collections. An item stays in the collection the user chose, or
+  in `Unsorted`, regardless of enrichment state. Automatically filing items into
+  collections is a separate concern and is not implied by enrichment.
+- **Where metadata comes from.** Titles, descriptions and images come from what
+  the page declares about itself, and where a page offers several such statements
+  the more specific one wins. `platform` is only ever taken from what the page
+  claims to be — never guessed from which site the URL happens to point at, since
+  a link to an article hosted elsewhere is not made by that host.
 
 ### The Unsorted collection
 
@@ -137,8 +179,31 @@ Saved item detail and delete were built during Phase A to complete the core loop
 Collections and Basic Search complete Phase B.
 
 The database foundation is in place: `collections`, `saved_items.collection_id`,
-and the saved item enrichment state columns. The enrichment columns exist, but
-metadata extraction remains a later phase.
+and the saved item enrichment state columns. The columns exist and the
+capability to read metadata from a page exists, but a user cannot yet trigger or
+observe enrichment: nothing is fetched on a user's behalf yet. Metadata extraction
+is the current phase and is not finished.
+
+### Metadata extraction
+
+How a Saved Item's metadata is obtained, without exposing how it is stored or
+scheduled.
+
+- Retrieval is a separate, later step. Saving a URL never fetches the page, so a
+  slow or unreachable source can never delay or break a save.
+- A page is read as a document, and its own declarations are preferred in order of
+  specificity: a description written for sharing beats a generic one, and a title
+  declared for the page beats one padded with a site name.
+- Extracted text is tidied of the whitespace markup introduces, and otherwise left
+  alone. A title is something a person reads, so it is not lowercased,
+  shortened, or rewritten.
+- Relative image and canonical links are made absolute against the page they were
+  found on, so a stored reference actually identifies something.
+- A page that is not a readable HTML page — an image, a PDF, an archive, or a
+  response reporting an error — yields no metadata rather than a wrong guess. It
+  is not treated as a partially successful extraction.
+- One unreadable block on an otherwise fine page, such as malformed structured
+  data, does not cost the page the metadata that was readable around it.
 
 ### Search
 
@@ -197,7 +262,6 @@ These are excluded on purpose. Their absence is a decision, not a gap.
 Optional and additive, in rough order of leverage. None of them are prerequisites
 for the core loop.
 
-- Background URL metadata extraction
 - Reminders
 - Richer product metadata
 - Comparison
@@ -230,7 +294,7 @@ for the core loop.
 
 1. Share → Save → Inbox _(done)_
 2. Collections + Search _(done)_
-3. Background metadata extraction
+3. Background metadata extraction _(in progress)_
 4. Reminder / return loop
 5. Product metadata enrichment
 6. Comparison
