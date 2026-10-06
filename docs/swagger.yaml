@@ -89,6 +89,65 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  enrichment.EnrichSavedItemAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/enrichment.EnrichSavedItemResponse'
+      message:
+        example: saved item enriched successfully
+        type: string
+    type: object
+  enrichment.EnrichSavedItemResponse:
+    properties:
+      saved_item:
+        $ref: '#/definitions/enrichment.SavedItemResponse'
+    type: object
+  enrichment.SavedItemResponse:
+    properties:
+      collection_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      description:
+        example: A short summary of the page
+        type: string
+      domain:
+        example: example.com
+        type: string
+      enrichment_status:
+        description: |-
+          EnrichmentStatus is pending, completed or failed. It is completed when the
+          enrichment process succeeded, which is not the same as every metadata field
+          being present.
+        example: completed
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      image_url:
+        example: https://example.com/og.png
+        type: string
+      last_enriched_at:
+        description: |-
+          LastEnrichedAt is null until an enrichment has succeeded at least once. A
+          failed attempt does not set it, because nothing was refreshed.
+        example: "2026-10-02T10:31:00Z"
+        type: string
+      platform:
+        example: youtube
+        type: string
+      title:
+        example: An interesting article
+        type: string
+      updated_at:
+        example: "2026-10-02T10:31:00Z"
+        type: string
+      url:
+        example: https://example.com/articles/1
+        type: string
+    type: object
   login.GetAccountLinkConfirmationAPIResponse:
     properties:
       data:
@@ -2130,6 +2189,57 @@ paths:
       summary: Put a saved item into a collection
       tags:
       - Collection
+  /saved-items/{id}/enrich:
+    post:
+      description: |-
+        Fetches the page at the saved item's URL and stores the metadata it exposes, such as title, platform, description and preview image.
+        This acts on exactly one saved item. It is not a batch operation and never touches other saved items.
+        A page is not required to expose every field. Whatever is found is stored and the rest stay null, so an item with only a title is still enriched successfully.
+        If the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.
+        The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
+        Enrichment never changes which collection the item is in.
+        Possible error codes:
+        - SAVED_ITEM_NOT_FOUND
+        - BAD_REQUEST
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/enrichment.EnrichSavedItemAPIResponse'
+        "400":
+          description: Invalid saved item ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Enrich one saved item's metadata
+      tags:
+      - SavedItem
   /search:
     get:
       description: |-

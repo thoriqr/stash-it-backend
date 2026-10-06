@@ -10,72 +10,85 @@ if explicitly asked.
 - Fiber **v3**; handlers are `func(c fiber.Ctx) error` — `fiber.Ctx` is a **value** type.
 - Postgres via `pgx/v5` + `pgxpool` directly. No ORM, no query builder.
 - Swagger 2.0 via `swaggo/swag`, served at `/docs/*`. `zap` logging, `validator/v10` validation.
-- Scope today: authentication (`internal/api/auth`), saved items (`internal/api/saved_item`),
-  and collections (`internal/api/collection`). `internal/api/user` has a repository and
-  generated code but no service/handler/routes — scaffolding, not dead code.
-  `internal/enrichment` holds reusable metadata extraction and is **not yet wired
-  into any endpoint, service, or worker**.
+- Project progress and current implementation status belong in `PROGRESS.md`.
 
 ## Architecture
 
-Vertical slices by feature; each owns its whole stack. **No DI container** —
+Vertical slices by feature; each owns its application stack. **No DI container** —
 wiring is explicit, by hand, in `module.go`.
 
 ```text
-cmd/api/main.go               bootstrap only; calls auth.RegisterModule, no feature details
+cmd/api/main.go               bootstrap only; feature modules are registered here
 internal/api/<module>/        routes.go handler.go service.go service_validation.go
                               repository.go mapper.go request.go response.go
                               error_codes.go constants.go types.go generated/ mocks/
-internal/api/auth/module.go   composition root for auth sub-features (wire there only)
+internal/api/auth/module.go   composition root for auth sub-features
 internal/middleware/auth.go   JWT bearer guard
 internal/{apperror,httpx,validation,email,security,config,logger,health,database}/
-internal/enrichment/           reusable metadata extraction; no Fiber, sqlc, Asynq, persistence
-internal/testutil/            testcontainers helpers, fakes, test-only sqlc output
-internal/integration/         end-to-end HTTP tests
-migrations/                   production schema (source of truth)
-docs/                         GENERATED swagger
+internal/enrichment/          reusable metadata extraction; no Fiber, sqlc, Asynq, persistence
+internal/testutil/             testcontainers helpers, fakes, test-only sqlc output
+internal/integration/          end-to-end HTTP tests
+migrations/                    production schema (source of truth)
+docs/                          GENERATED swagger
+documentation/                 hand-written project documentation
 ```
+
+Do not introduce a new architectural pattern when an existing feature already
+provides the appropriate pattern.
+
+Do not change architecture, add dependencies, or alter public API contracts
+without explicit instruction.
 
 ## Conventions
 
 **Handlers are thin** — bind input (`httpx.BindBody`/`BindQuery`), parse path
 params (`uuid.Parse(c.Params(...))`), extract device metadata where relevant
-(`session.ExtractMetadata`), call exactly one service method, map the result
-(`mapper.go`), return via `httpx.OK`/`OKWithMeta`/`Created`/`OKMessage`. Return
-errors unchanged — never build an error response in a handler. No business logic,
-no SQL, no direct DB access.
+(`session.ExtractMetadata`), call the appropriate service method, map the result
+(`mapper.go`), and return via `httpx.OK`/`OKWithMeta`/`Created`/`OKMessage`.
+Return errors unchanged. No business logic, SQL, or direct DB access in handlers.
 
-**Routes** — `func Routes(router fiber.Router, h *Handler)`. Auth is applied
-per-route with `middleware.Auth(verifier)`, not `router.Use`.
+**Routes** — `func Routes(router fiber.Router, h *Handler)`. Auth is applied per
+protected route with `middleware.Auth(verifier)`, not globally with `router.Use`.
 
 **Services** — exported interface + unexported struct + `NewService` returning
-`*service`, plus `...Result` structs. Dependencies are interfaces declared in the
-consuming package's `types.go` (also what mocks are generated from). Keep
-interfaces narrow (e.g. `session.SessionCreator`).
+`*service`, plus `...Result` structs where appropriate. Dependencies are narrow
+interfaces declared in the consuming package's `types.go`; generate mocks from
+those interfaces.
 
 **Repositories** — consumer-defined `Repository` interface; unexported struct
 holding `*xxxdb.Queries` plus `*pgxpool.Pool` when it needs a transaction;
-`NewRepository` returns the interface. Pass sqlc `Params`/`Row` types straight
-through; don't wrap them.
+`NewRepository` returns the interface. Pass sqlc `Params`/`Row` types through
+directly; don't wrap them without a concrete reason.
 
 **Errors** (`internal/apperror`) — construct in the lowest layer that knows the
-meaning. Repositories translate driver errors (`pgx.ErrNoRows` → `NotFoundWith`
-or `UnauthorizedWith`, otherwise `Internal`); services and handlers pass errors
-through untouched. Prefer the `...With(code, message, err)` form so clients get
-a specific `error.code`. Responses come from `httpx` helpers: success is
-`{"data","message","meta"}`, error is `{"error":{code,message,fields}}`. Don't
-leak internal error text into `Message`.
+meaning. Repositories translate driver errors (`pgx.ErrNoRows` →
+`NotFoundWith`/`UnauthorizedWith`); services and handlers pass errors through.
+Prefer `...With(code, message, err)` when retaining an underlying error.
+Do not leak internal error text into API `Message`.
 
-**Transactions** — repositories hold `*pgxpool.Pool` and own their transaction
-(`pool.Begin` → `queries.WithTx` → `defer tx.Rollback` → `tx.Commit`). There is
-**no shared unit-of-work and no nested transaction across repositories** — if a
-change seems to need one, ask rather than inventing a pattern. Use
-`SELECT ... FOR UPDATE` for read-modify-write that must not race, and keep rules
-that depend on locked rows inside the transaction.
+Responses use the shared `httpx` helpers:
+
+```json
+{ "data": "...", "message": "...", "meta": "..." }
+```
+
+and:
+
+```json
+{ "error": { "code": "...", "message": "...", "fields": "..." } }
+```
+
+**Transactions** — repositories own their transactions:
+`pool.Begin` → `queries.WithTx` → `defer tx.Rollback` → `tx.Commit`.
+There is **no shared unit-of-work and no nested transaction across repositories**.
+If a change appears to require one, ask rather than inventing a pattern.
+Use `SELECT ... FOR UPDATE` for read-modify-write operations that must not race,
+and keep rules depending on locked rows inside the transaction.
 
 ## Auth and sessions
 
 Security-critical. Leave unchanged unless the task is explicitly about auth.
+
 Implementation lives in `internal/security` and `internal/api/auth/session`.
 
 - Access token = HS256 JWT carrying `sub` (user) and `sid` (session); the verifier
@@ -83,163 +96,153 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
 - Refresh tokens are opaque and stored **hashed only**, rotated through a
   `replaced_by` link. **Reusing an already-replaced token must revoke the entire
   session** — never weaken or bypass this.
-- Sessions have both idle and absolute expiry; either one revokes the session.
-  Lifetimes are constants in `session/constants.go`.
-- Passwords are bcrypt, verification codes HMAC'd with a configured secret. Never
-  store or log plaintext secrets, tokens, or codes.
-- Email flows are non-enumerating by design — don't change response shapes to
-  reveal whether an account exists.
-- Keep Google ID-token verification behind `login.GoogleTokenVerifier` so tests can fake it.
+- Sessions have both idle and absolute expiry; lifetimes are constants in
+  `session/constants.go`.
+- Passwords are bcrypt. Verification codes are HMAC'd with a configured secret.
+  Never store or log plaintext secrets, tokens, passwords, or codes.
+- Email flows are non-enumerating by design.
+- Keep Google ID-token verification behind `login.GoogleTokenVerifier` so tests
+  can fake it.
 - Registration / password-reset verification endpoints are intentionally
-  unauthenticated; the `verification_id` + emailed PIN is the credential.
+  unauthenticated; the existing `verification_id` + emailed PIN flow is the
+  credential.
 
 ## Outbound fetches and enrichment
 
-Security-critical. `internal/security` is the outbound-fetch boundary;
-`internal/enrichment` is reusable extraction logic. Neither is wired into the
-application yet — no service, repository method, handler, route, or Asynq task
-calls enrichment.
+Security-critical. `internal/security` is the outbound-fetch boundary and
+`internal/enrichment` is reusable extraction logic. The current synchronous
+Saved Item integration lives under `internal/api/enrichment`. Background
+Asynq enrichment is not implemented yet.
 
 - `security.NewGuardedHTTPClient(policy)` is the only sanctioned way to fetch a
   user-supplied URL. Its `net.Dialer.ControlContext` validates the **resolved**
-  address at dial time, which is what makes DNS rebinding ineffective and what
-  covers every redirect hop and pooled connection. Do not add a second outbound
-  client, transport, or address allow/deny list anywhere else in the codebase.
+  address at dial time. Do not add a second outbound client, transport, proxy
+  path, or address allow/deny list elsewhere.
 - Allowed schemes are `http`/`https` and allowed ports are 80/443 only. The
   blocked address ranges live in `internal/security`; don't duplicate or extend
   them elsewhere.
-- `Proxy` is nil on the guarded transport deliberately — a proxy connects from
-  its own process and would put the dial-time policy out of reach.
+- `Proxy` is nil on the guarded transport deliberately.
 - `internal/enrichment` receives its `*http.Client` by constructor injection and
   must never build one, use `http.DefaultClient`, or call `http.Get`. Keep it
   independent of Fiber, `internal/api`, sqlc, Asynq, and persistence.
-- Enrichment **must not** touch `collection_id` or move an item between
-  collections. Automatic organization is a separate concern.
+- Enrichment operates on one Saved Item at a time. Ownership is scoped by
+  `id AND user_id`; missing and foreign items must have the same not-found
+  behavior.
+- Enrichment must not touch `collection_id` or move an item between collections.
+  Automatic organization is a separate concern.
 - `platform` is derived from metadata the page publishes about itself, never
-  from the URL hostname. Don't add host-based inference or a domain→platform
+  from the URL hostname. Do not add host-based inference or domain→platform
   mapping.
 - A successful enrichment means the process ran, not that every field was found.
-  A page exposing no metadata is a successful enrichment with an empty result,
-  not a failure.
-- `Author` and `SiteName` have no `saved_items` column. Don't add a migration for
-  them without an explicit decision.
-- Metadata URLs are resolved to absolute form but are never fetched or validated
-  during extraction.
+  A page exposing no metadata is a successful enrichment with an empty result.
+- A failed enrichment is represented by `enrichment_status`, not an HTTP 5xx.
+  A failed attempt must preserve existing metadata and must not update
+  `last_enriched_at`.
+- Enrichment is repeatable and must not be gated on the current
+  `enrichment_status`.
+- `Author` and `SiteName` are extraction-only unless persistence is explicitly
+  changed.
+- Metadata URLs may be resolved to absolute form but are never fetched merely
+  because they appear in metadata.
 
 ## Data integrity
 
-Partial unique indexes and CHECK constraints encode business rules (one active
-registration or reset per email, one active verification code per request, one
-continuation per registration, one user per email, one identity per
-provider+subject). Names are listed in `internal/database/baseline/schema.sql`.
-**Do not drop or weaken them to make a test pass** — fix the code, and when
-adding an allowed value, do it in a migration.
+Database constraints encode business rules. **Do not drop or weaken them to make
+a test pass** — fix the code. When adding an allowed value or schema rule, use
+a migration.
 
 ## Migrations and baseline schema
 
-Two schemas with different roles. **They can drift.**
+Two schemas have different roles and **can drift**.
 
 - `migrations/` — production database schema and **source of truth**, as
   `NNNNNN_name.up.sql` / `.down.sql` pairs. **Never edit an existing migration**
   once created — add a new one instead.
-- When a schema change is required, create a new migration with the project's
-  migration CLI, following the existing convention:
+- Create a migration with:
 
-  ```sh
-  migrate create -ext sql -dir migrations -seq <migration_name>
-  # e.g. migrate create -ext sql -dir migrations -seq remove_pending_social_display_name
-  ```
+```sh
+migrate create -ext sql -dir migrations -seq <migration_name>
+```
 
-- **Creating a migration and applying a migration are two separate operations.**
-  Creating the files may be part of a task; applying them is not.
+- **Creating and applying a migration are separate operations.**
 - **Never apply a migration to any database unless the user explicitly instructs
-  it.** Don't run `migrate -path migrations -database "<database-url>" up` or any
-  equivalent. No migration runner is wired into the app either.
-- **Don't invent database URLs, environments, or migration targets** — applying is
-  a user-controlled step on their environment.
-- If a task requires a schema change, stop after creating the migration and report
-  the files with their SQL/diff for review, unless the user asked for application as
-  part of the task.
-- `internal/database/baseline/schema.sql` — manually maintained snapshot,
-  embedded via `//go:embed`, used as the `schema:` input for the **test-only**
-  sqlc targets in `internal/testutil/db/*` and applied to throwaway Postgres
-  containers. Not used at runtime.
-- Creating a migration does **not** update the baseline. Update it only when asked,
-  and don't assume the two are in sync. Preserve its existing formatting and
-  organization.
+  it.** Do not run `migrate ... up` or an equivalent command.
+- Do not invent database URLs, environments, or migration targets.
+- If a schema change is required, create the migration and report the SQL/diff
+  for review unless the user explicitly asked for application.
+- `internal/database/baseline/schema.sql` is a manually maintained snapshot,
+  embedded with `//go:embed`, used only by test-only sqlc targets and throwaway
+  Postgres containers. It is not used at runtime.
+- Creating a migration does **not** update the baseline. Update the baseline only
+  when asked, and preserve its formatting and organization.
 
 ## Code generation
 
-Generated code is **output**. Never hand-edit it. Always change the source, then
-regenerate. There is no Makefile or task runner, so every step here is manual.
+Generated code is **output**. Never hand-edit it. Change the source, then
+regenerate.
 
-Output paths: `internal/**/mocks/` (mockgen), `internal/api/**/generated/` (sqlc),
-`internal/testutil/db/**/generated/` (sqlc, test-only), and `docs/` —
-`docs.go`, `swagger.json`, `swagger.yaml` (swag).
+Output paths include:
 
-- **mockgen** — mocks are generated from the Go interfaces a package consumes
-  (see `types.go` / `service.go` in the feature). Source and destination depend on
-  the module or interface, so there is no single project-wide command or output
-  directory. If an interface changes, modify the source interface first, then
-  regenerate the affected mock.
-- **sqlc** — feature `queries.sql` files are the source. `sqlc.yaml` defines query
-  sources, generated packages, output directories, and the `pgx/v5` database
-  configuration. If a query changes, modify `queries.sql` first, then run
-  `sqlc generate`. Change `sqlc.yaml` only when its configuration actually needs
-  to change.
+```text
+internal/**/mocks/
+internal/api/**/generated/
+internal/testutil/db/**/generated/
+docs/
+```
 
-  Integration-test queries at `internal/testutil/db/<feature>/queries.sql` generate
-  into the sibling `generated/` directory via the same config.
-
-  Every target sets `omit_unused_structs: true`, so `models.go` contains only table
-  structs referenced by that target's queries. Generated persistence models are
-  therefore not automatically shared across features. When a feature's queries
-  project only part of a table, the feature owns its projected type in `types.go`;
-  keep sqlc `Params`/`Row` types generated.
-
-  A generated model with a real consumer in another feature may be shared:
-  `sessiondb.Session` is used by both `login` and `registration` because session
-  queries project the whole table. Such sharing depends on the owning target's
-  queries continuing to reference that model.
-
-  Do **not** introduce a shared domain type merely to avoid similar structs;
-  `saved_item.SavedItem` and `collection.SavedItem` are deliberately separate
-  projections.
-
+- **mockgen** — generated from the interfaces consumed by a package. Change the
+  source interface first, then regenerate the affected mock.
+- **sqlc** — `queries.sql` files are the source. `sqlc.yaml` defines targets,
+  packages, output directories, and pgx configuration. After query changes, run
+  `sqlc generate`.
+- Integration-test queries live under `internal/testutil/db/<feature>/queries.sql`
+  and generate into the sibling `generated/` directory.
+- Every current sqlc target uses `omit_unused_structs: true`, so generated
+  persistence models are target-specific. Do not introduce shared domain types
+  merely to avoid similar structs. A feature may own a projected type in
+  `types.go` while keeping sqlc `Params`/`Row` types generated.
+- A generated model may be shared when another feature genuinely consumes it
+  and the owning sqlc target continues to generate it.
 - **swag** — edit handler annotation comments, then regenerate with:
-  `swag init -g cmd/api/main.go -parseInternal`.
 
-Features live under `internal/api/` — currently `auth/registration`,
-`auth/login`, `auth/session`, `auth/password_reset`, `saved_item`, `collection`,
-and `user`. Follow the existing `sqlc.yaml` mapping for the relevant module.
+```sh
+swag init -g cmd/api/main.go -parseInternal
+```
 
-`collection` acts on a saved item and mounts under the same `/saved-items` prefix
-as `saved_item` (`PUT /saved-items/:id/collection`). Its module registers into
-that prefix independently; both features' routes coexist.
+Features live under `internal/api/`. Follow the existing `sqlc.yaml` mapping for
+the relevant feature.
+
+`collection` mounts under the same `/saved-items` prefix as `saved_item`
+(`PUT /saved-items/:id/collection`); its module registers independently.
 
 ## API documentation
 
-Every handler carries a `// Name godoc` swag block (summary, description including
-possible error codes, params, success/failure responses, route); the global
-annotation and `BearerAuth` definition live on `main()` in `cmd/api/main.go`.
-`internal/api/swagger/` holds documentation-only response shapes — never import it
-from runtime code. Don't put hand-written project docs in `docs/`; those belong
-under `documentation/`.
+Every handler carries a `// Name godoc` swag block with summary, description,
+params, success/failure responses, and route. Global Swagger annotations and
+`BearerAuth` live on `main()` in `cmd/api/main.go`.
+
+`internal/api/swagger/` contains documentation-only response shapes; never import
+it from runtime code.
+
+Generated Swagger belongs in `docs/`. Hand-written project documentation belongs
+in `documentation/`.
 
 ## Testing
 
-- Unit tests are colocated with source as `_test.go`, named after the unit under
-  test (`*_service_test.go`, `*_helpers_test.go`). Use `testify` and
-  `go.uber.org/mock`; mock the consumer interface from `types.go` and regenerate
-  mocks rather than editing them.
-- Integration tests live in `internal/integration/`. A shared `TestMain` starts one
-  Postgres 18 testcontainer, applies the baseline schema, builds the real app via
-  `testutil.NewApp`, then tears down. One shared database means tests must not collide
-  on data. **Docker is required.**
-- Prefer asserting error codes over error strings, and service/repository tests
-  over handler plumbing.
+- Unit tests are colocated with source as `_test.go`, following existing naming
+  conventions such as `*_service_test.go` and `*_helpers_test.go`.
+- Use `testify` and `go.uber.org/mock`. Mock consumer interfaces from `types.go`
+  and regenerate mocks rather than editing them.
+- Integration tests live in `internal/integration/`. The shared `TestMain`
+  starts one Postgres testcontainer, applies the baseline schema, builds the real
+  app via `testutil.NewApp`, then tears it down. **Docker is required.**
+- Because the integration database is shared, tests must not collide on data.
+- Prefer asserting error codes over error strings and testing business behavior
+  at the service/repository level rather than testing handler plumbing.
 
 ## Verify changes
+
+For normal backend changes:
 
 ```sh
 go build ./...
@@ -247,12 +250,21 @@ go vet ./...
 go test ./...
 ```
 
-Report which verification commands you ran and whether they passed or failed.
-**Never claim tests pass unless they were actually run.** If Docker is unavailable,
-state that plainly when integration tests cannot run.
+If generated sources changed, run the relevant generators as well.
+
+Report which verification commands were actually run and whether they passed or
+failed. **Never claim tests pass unless they were actually run.** If Docker is
+unavailable, state that plainly when integration tests cannot run.
 
 ## Rules
 
 - Inspect the code rather than guessing; prefer existing patterns over new ones.
-- Don't change architecture, add dependencies, or alter API contracts or
-  auth/session behavior without explicit instruction.
+- Keep changes scoped to the requested task.
+- Do not perform unrelated refactors.
+- Do not add dependencies without explicit instruction.
+- Do not change architecture, public API contracts, or auth/session behavior
+  without explicit instruction.
+- Never manually edit generated files.
+- Never apply database migrations without explicit instruction.
+- If a requested change conflicts with an existing architectural or security
+  invariant, stop and explain the conflict before implementing a workaround.

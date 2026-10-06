@@ -1667,6 +1667,65 @@
                 }
             }
         },
+        "/saved-items/{id}/enrich": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the page at the saved item's URL and stores the metadata it exposes, such as title, platform, description and preview image.\nThis acts on exactly one saved item. It is not a batch operation and never touches other saved items.\nA page is not required to expose every field. Whatever is found is stored and the rest stay null, so an item with only a title is still enriched successfully.\nIf the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nEnrichment never changes which collection the item is in.\nPossible error codes:\n- SAVED_ITEM_NOT_FOUND\n- BAD_REQUEST\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Enrich one saved item's metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/enrichment.EnrichSavedItemAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid saved item ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/search": {
             "get": {
                 "security": [
@@ -1822,6 +1881,81 @@
                 "updated_at": {
                     "type": "string",
                     "example": "2026-10-02T10:30:00Z"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "enrichment.EnrichSavedItemAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/enrichment.EnrichSavedItemResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item enriched successfully"
+                }
+            }
+        },
+        "enrichment.EnrichSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "saved_item": {
+                    "$ref": "#/definitions/enrichment.SavedItemResponse"
+                }
+            }
+        },
+        "enrichment.SavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "A short summary of the page"
+                },
+                "domain": {
+                    "type": "string",
+                    "example": "example.com"
+                },
+                "enrichment_status": {
+                    "description": "EnrichmentStatus is pending, completed or failed. It is completed when the\nenrichment process succeeded, which is not the same as every metadata field\nbeing present.",
+                    "type": "string",
+                    "example": "completed"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "image_url": {
+                    "type": "string",
+                    "example": "https://example.com/og.png"
+                },
+                "last_enriched_at": {
+                    "description": "LastEnrichedAt is null until an enrichment has succeeded at least once. A\nfailed attempt does not set it, because nothing was refreshed.",
+                    "type": "string",
+                    "example": "2026-10-02T10:31:00Z"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "youtube"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "An interesting article"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:31:00Z"
                 },
                 "url": {
                     "type": "string",

@@ -14,14 +14,17 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
+	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/email"
+	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
+	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -112,6 +115,25 @@ func main() {
 		app,
 		pool,
 		cfg,
+	)
+
+	// Enrichment fetches a URL the user supplied, so it goes through the guarded
+	// outbound HTTP client. The client is the SSRF boundary and the policy is
+	// passed alongside it because the response body limit is applied by
+	// enrichment, which is the component that reads the body.
+	outboundFetchPolicy := security.DefaultOutboundFetchPolicy()
+
+	metadataEnricher := enrichmentcore.NewEnricher(
+		security.NewGuardedHTTPClient(outboundFetchPolicy),
+		outboundFetchPolicy,
+	)
+
+	enrichment.RegisterModule(
+		app,
+		pool,
+		cfg,
+		metadataEnricher,
+		log,
 	)
 
 	fmt.Println("Database connected")

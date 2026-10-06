@@ -82,8 +82,9 @@ before any of it arrives, and it stays one when none of it does.
 - `title` stays NULL until enrichment.
 - `collection_id` is required and points to the item's current collection.
   Newly saved items go to the user's `Unsorted` collection.
-- `enrichment_status` starts at `pending` and is advanced by the later background
-  enrichment process, which does not exist yet.
+- `enrichment_status` starts at `pending` and is advanced by enrichment. Today,
+  enrichment can be requested explicitly for one item; automatic background
+  enrichment does not exist yet.
 
 `X-Platform` describes the client/device platform (web/android/ios) and is a
 session concern. It must never be used for `saved_items.platform`.
@@ -97,8 +98,18 @@ Enrichment adds what the original source can tell us about a Saved Item, so the
 item reads as a preview of what the user saved rather than a bare link. It is an
 enhancement to the core loop, never a condition of it.
 
-- **It is best effort.** Enrichment happens after the save, or not at all. A user
-  who never comes back is no worse off than before it existed.
+- **It is best effort.** Enrichment never blocks the initial save. It can happen
+  when a user asks for it, or later through background processing. A user who
+  never comes back is no worse off than before it existed.
+- **A user can ask for one item to be enriched.** Enrichment is available on
+  demand for an individual Saved Item, and only for Saved Items the user owns.
+  There is no bulk or whole-inbox version: asking for one item does one item's
+  worth of work, because enrichment reaches out to the source and that should not
+  be something a single action does to many things at once.
+- **Asking again is normal.** Enrichment is not restricted to items that have
+  never been enriched, or to items whose last attempt failed. Asking again
+  refreshes whatever the source says now, and an item whose source has changed
+  since it was saved is exactly the case worth asking about again.
 - **`domain` is not enrichment.** The domain is derived locally from the saved URL
   the moment the item is saved. `title`, `platform`, `description` and `image_url`
   are enrichment metadata, because they are facts about the page at its source
@@ -179,18 +190,20 @@ Saved item detail and delete were built during Phase A to complete the core loop
 Collections and Basic Search complete Phase B.
 
 The database foundation is in place: `collections`, `saved_items.collection_id`,
-and the saved item enrichment state columns. The columns exist and the
-capability to read metadata from a page exists, but a user cannot yet trigger or
-observe enrichment: nothing is fetched on a user's behalf yet. Metadata extraction
-is the current phase and is not finished.
+and the saved item enrichment state columns. Enrichment is also reachable now: a
+user can ask for one of their own saved items to be enriched and see the result
+straight away. The extraction capability is in place; automatic background
+enrichment is the unfinished part. For now, enrichment happens only when a user
+asks for it.
 
 ### Metadata extraction
 
 How a Saved Item's metadata is obtained, without exposing how it is stored or
 scheduled.
 
-- Retrieval is a separate, later step. Saving a URL never fetches the page, so a
-  slow or unreachable source can never delay or break a save.
+- Retrieval never happens during a save. Saving a URL does not fetch the page, so
+  a slow or unreachable source can never delay or break a save. Metadata arrives
+  only afterwards, and only when something asks for it.
 - A page is read as a document, and its own declarations are preferred in order of
   specificity: a description written for sharing beats a generic one, and a title
   declared for the page beats one padded with a site name.
@@ -294,7 +307,7 @@ for the core loop.
 
 1. Share → Save → Inbox _(done)_
 2. Collections + Search _(done)_
-3. Background metadata extraction _(in progress)_
+3. Metadata enrichment _(on-demand done; background processing pending)_
 4. Reminder / return loop
 5. Product metadata enrichment
 6. Comparison
