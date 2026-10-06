@@ -65,14 +65,19 @@ func (s *service) Create(
 		return CreateResult{}, err
 	}
 
-	// platform here is the content/source platform (youtube, tiktok, instagram,
-	// ...). It is NOT the client platform that sessions.platform records from
-	// X-Platform, so no client header is read. It stays NULL in Phase A:
-	// detection belongs to the future metadata/enrichment phase, which runs after
-	// the save and must never block it.
+	// platform here is the semantic identity of the content, such as the video
+	// platform an item was saved from. It is NOT the client platform that
+	// sessions.platform records from X-Platform, so no client header is read.
 	//
-	// title is likewise not client supplied and stays NULL until background
-	// metadata extraction populates it.
+	// Unlike domain, which is technical URL data known locally from the
+	// submitted URL alone, platform is metadata about what the page actually is.
+	// It is therefore not determined here and stays NULL until the background
+	// enrichment process reads it off the remote page. Deriving a guess from the
+	// hostname here would be neither reliable nor the product's definition of the
+	// field, so no attempt is made to fill it in.
+	//
+	// title is left NULL for the same reason: it is not client supplied and does
+	// not exist locally.
 	//
 	// Every saved item belongs to exactly one collection, and a newly saved item
 	// belongs to the authenticated user's Unsorted collection. It is resolved from
@@ -90,6 +95,8 @@ func (s *service) Create(
 			UserID:       userID,
 			Url:          rawURL,
 			Domain:       optionalText(domain),
+			// platform is deliberately left unset for enrichment to populate.
+			// An empty pgtype.Text is SQL NULL, which is the intended state.
 			Platform:     pgtype.Text{},
 			Title:        pgtype.Text{},
 			CollectionID: collectionID,

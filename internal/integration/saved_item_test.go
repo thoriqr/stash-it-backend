@@ -225,7 +225,9 @@ func TestSavedItem_Create(t *testing.T) {
 			{rawURL: "https://www.tiktok.com/@user/video/1", expected: "tiktok.com"},
 			{rawURL: "https://m.youtube.com/watch?v=abc", expected: "m.youtube.com"},
 			{rawURL: "https://WWW.YouTube.COM/watch?v=abc", expected: "youtube.com"},
+			{rawURL: "https://youtu.be/abc", expected: "youtu.be"},
 			{rawURL: "https://www.pinterest.com/pin/1", expected: "pinterest.com"},
+			{rawURL: "https://notyoutube.com/watch?v=abc", expected: "notyoutube.com"},
 		}
 
 		for i, tc := range cases {
@@ -244,9 +246,10 @@ func TestSavedItem_Create(t *testing.T) {
 			var body struct {
 				Data struct {
 					SavedItem struct {
-						ID     string  `json:"id"`
-						URL    string  `json:"url"`
-						Domain *string `json:"domain"`
+						ID       string  `json:"id"`
+						URL      string  `json:"url"`
+						Domain   *string `json:"domain"`
+						Platform *string `json:"platform"`
 					} `json:"saved_item"`
 				} `json:"data"`
 			}
@@ -261,13 +264,17 @@ func TestSavedItem_Create(t *testing.T) {
 				tc.rawURL,
 			)
 
+			// platform is not derived at save time: nothing infers it from
+			// the hostname, so it is null until enrichment runs.
+			require.Nil(t, body.Data.SavedItem.Platform, tc.rawURL)
+
 			state, err := db.GetSavedItemState(
 				ctx,
 				mustParseUUID(t, body.Data.SavedItem.ID),
 			)
 			require.NoError(t, err)
 			require.Equal(t, tc.expected, state.Domain.String)
-			require.False(t, state.Platform.Valid)
+			require.False(t, state.Platform.Valid, tc.rawURL)
 			require.Equal(
 				t,
 				int64(i+1),
@@ -335,7 +342,7 @@ func TestSavedItem_Create(t *testing.T) {
 		require.False(
 			t,
 			state.Platform.Valid,
-			"saved_items.platform must stay null in Phase A",
+			"saved_items.platform must stay null until enrichment",
 		)
 	})
 

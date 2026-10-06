@@ -88,10 +88,12 @@ func TestService_Create(t *testing.T) {
 						"youtube.com",
 						params.Domain.String,
 					)
+					// platform is semantic metadata about the remote page, so
+					// nothing is inferred from the hostname at save time.
 					require.False(
 						t,
 						params.Platform.Valid,
-						"platform must stay null in Phase A",
+						"platform must stay null until enrichment",
 					)
 					require.False(t, params.Title.Valid)
 
