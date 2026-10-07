@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -30,7 +31,41 @@ type WorkerConfig struct {
 	// database fields, so the same value works for local Docker, Cloud Run, and
 	// a VPS without the worker knowing which environment it is in.
 	RedisURL string
+
+	// WorkerConcurrency is how many tasks the worker processes at once.
+	//
+	// It is optional in the sense that an unset value is not an error: the default
+	// applies. A value that is present but outside the allowed range is an error,
+	// because silently replacing it would leave a deployment running at a
+	// concurrency nobody asked for and nothing in the logs to say so.
+	WorkerConcurrency int
 }
+
+// Worker concurrency bounds.
+//
+// Enrichment is network-bound: nearly all of an attempt is waiting on somebody
+// else's server, bounded by the outbound fetch timeout. A small number of
+// attempts at once therefore overlaps mostly waiting, while a large number only
+// multiplies concurrent outbound requests and database connections against
+// origins that are already slow.
+//
+// The range is a policy, not a safety limit, so it is stated here in one place
+// and enforced by the loader rather than by the worker at startup.
+const (
+	// DefaultWorkerConcurrency is how many tasks run at once when the environment
+	// does not say.
+	DefaultWorkerConcurrency = 5
+
+	// MinWorkerConcurrency is the smallest value that does any work. Asynq would
+	// treat a non-positive value as "use the CPU count", which is the opposite of
+	// what somebody asking for zero concurrency meant.
+	MinWorkerConcurrency = 1
+
+	// MaxWorkerConcurrency is the largest value that will be accepted. Beyond
+	// this a worker is not doing more useful work; it is holding more outbound
+	// requests and database connections open while the attempts behind them wait.
+	MaxWorkerConcurrency = 20
+)
 
 // LoadWorker reads the worker configuration from the environment.
 //
@@ -59,6 +94,11 @@ func LoadWorker() (WorkerConfig, error) {
 		)
 	}
 
+	workerConcurrency, err := loadWorkerConcurrency()
+	if err != nil {
+		return WorkerConfig{}, err
+	}
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return WorkerConfig{}, fmt.Errorf("DATABASE_URL is required")
@@ -70,8 +110,43 @@ func LoadWorker() (WorkerConfig, error) {
 	}
 
 	return WorkerConfig{
-		AppEnv:      appEnv,
-		DatabaseURL: databaseURL,
-		RedisURL:    redisURL,
+		AppEnv:            appEnv,
+		DatabaseURL:       databaseURL,
+		RedisURL:          redisURL,
+		WorkerConcurrency: workerConcurrency,
 	}, nil
+}
+
+// loadWorkerConcurrency reads the concurrency setting from the environment.
+//
+// An unset value is not a mistake, so it resolves to DefaultWorkerConcurrency. A
+// value that is present and wrong is a mistake, and it is reported as one rather
+// than corrected: a typo, a zero where one was meant, or a number past the
+// ceiling all mean the deployment says something the worker is not going to do.
+// Failing here makes that visible instead of leaving a worker running at a
+// concurrency nobody chose and nothing in the logs to explain it.
+func loadWorkerConcurrency() (int, error) {
+	raw := os.Getenv("WORKER_CONCURRENCY")
+	if raw == "" {
+		return DefaultWorkerConcurrency, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"WORKER_CONCURRENCY must be a whole number: %w",
+			err,
+		)
+	}
+
+	if value < MinWorkerConcurrency || value > MaxWorkerConcurrency {
+		return 0, fmt.Errorf(
+			"WORKER_CONCURRENCY must be between %d and %d, got %d",
+			MinWorkerConcurrency,
+			MaxWorkerConcurrency,
+			value,
+		)
+	}
+
+	return value, nil
 }

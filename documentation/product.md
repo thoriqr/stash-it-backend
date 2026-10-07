@@ -82,9 +82,12 @@ before any of it arrives, and it stays one when none of it does.
 - `title` stays NULL until enrichment.
 - `collection_id` is required and points to the item's current collection.
   Newly saved items go to the user's `Unsorted` collection.
-- `enrichment_status` starts at `pending` and is advanced by enrichment. Today,
-  enrichment can be requested explicitly for one item; automatic background
-  enrichment does not exist yet.
+- `enrichment_status` starts at `pending` and is advanced by enrichment. It has
+  exactly three values: `pending`, `completed`, and `failed`. Enrichment can be
+  requested explicitly for one item, and it also happens automatically after a
+  save, in the background. There is no `processing` or `retrying` state: whether
+  the background process will try again is not a property of the Saved Item, so
+  it is never recorded on one.
 
 `X-Platform` describes the client/device platform (web/android/ios) and is a
 session concern. It must never be used for `saved_items.platform`.
@@ -101,6 +104,18 @@ enhancement to the core loop, never a condition of it.
 - **It is best effort.** Enrichment never blocks the initial save. It can happen
   when a user asks for it, or later through background processing. A user who
   never comes back is no worse off than before it existed.
+- **Saving schedules enrichment automatically.** A save records the Saved Item
+  first, then queues it for background enrichment, so the user gets their Saved
+  Item back immediately and the metadata arrives afterwards. If that background
+  step cannot be scheduled, the save still succeeds and the item simply waits in
+  `pending` until someone asks for it. Enrichment is never a condition of saving,
+  and a Saved Item is never rejected because its page could not be fetched.
+- **Background enrichment is limited, not endless.** An unreachable page or a
+  temporarily broken origin is retried a bounded number of times with growing
+  delays. A page that has been deleted, or that is not an HTML document, is not
+  retried at all, because asking again cannot change the answer. Either way the
+  item ends up `completed` or `failed`, and the same thing a user-triggered
+  enrichment would have produced.
 - **A user can ask for one item to be enriched.** Enrichment is available on
   demand for an individual Saved Item, and only for Saved Items the user owns.
   There is no bulk or whole-inbox version: asking for one item does one item's
@@ -132,7 +147,15 @@ enhancement to the core loop, never a condition of it.
 - **Enrichment does not organize.** It never decides a collection and never moves
   an item between collections. An item stays in the collection the user chose, or
   in `Unsorted`, regardless of enrichment state. Automatically filing items into
-  collections is a separate concern and is not implied by enrichment.
+  collections is a separate concern, driven by what enrichment found rather than
+  by enrichment itself.
+- **A successful enrichment may file the item, as a separate later step.**
+  When enrichment completes and reports a platform, a background step may move the
+  Saved Item into a collection named after that platform. It is a distinct step
+  with its own rules, and it never changes what enrichment recorded: an item whose
+  organization failed, was skipped, or was never needed is still `completed`.
+  Organization also only ever moves an item that is still in `Unsorted`, so it
+  can never undo where the user filed something.
 - **Where metadata comes from.** Titles, descriptions and images come from what
   the page declares about itself, and where a page offers several such statements
   the more specific one wins. `platform` is only ever taken from what the page
@@ -171,6 +194,32 @@ are organized. An item may remain in `Unsorted` indefinitely.
 - Organizing never waits on or alters metadata enrichment; an item can be moved
   in any enrichment state.
 
+### Automatic organization
+
+After a background enrichment completes and reports a platform, a separate
+background step may file the Saved Item into a collection named after that
+platform. It is automatic, not invisible, and it is deliberately narrow. It is
+also the only thing that decides a Saved Item's collection automatically; a user
+filing an item is always a separate, deliberate act.
+
+- **It only acts on what is true when it runs.** If a collection named like the
+  platform already exists, the item goes there, whether the user named it or an
+  earlier item created it. Nothing is created beside it, and nothing is renamed.
+- **It only files items that are still in `Unsorted`.** An item the user has
+  already filed into a collection of their own is left exactly where it is, even
+  if the step runs long after the enrichment that could have filed it. The user's
+  choice is the newer decision, and automatic organization never undoes it.
+- **A collection it creates belongs to that user.** "Created automatically" says
+  where it came from, not who owns it: it belongs to one user, like any other, and
+  is never shared between users.
+- **It can be best-effort without the user ever noticing a problem.** A Saved Item
+  whose organization was skipped or never ran keeps its URL, its enrichment, and
+  its collection, and is exactly as valid as one that was filed. Nothing about
+  organization appears in the enrichment state, so a Saved Item reads as
+  `completed` whether or not it was ever organized.
+- **Repeating it does nothing.** A second attempt on an already-organized item
+  changes no collection and creates no second one.
+
 ## Current phase: Phase B — basic organization and return
 
 Phase A established authentication, saving a URL, and the Inbox. Phase B makes
@@ -190,11 +239,10 @@ Saved item detail and delete were built during Phase A to complete the core loop
 Collections and Basic Search complete Phase B.
 
 The database foundation is in place: `collections`, `saved_items.collection_id`,
-and the saved item enrichment state columns. Enrichment is also reachable now: a
+and the saved item enrichment state columns. Enrichment is reachable both ways: a
 user can ask for one of their own saved items to be enriched and see the result
-straight away. The extraction capability is in place; automatic background
-enrichment is the unfinished part. For now, enrichment happens only when a user
-asks for it.
+straight away, and every save is enriched automatically afterwards in the
+background.
 
 ### Metadata extraction
 
@@ -203,7 +251,7 @@ scheduled.
 
 - Retrieval never happens during a save. Saving a URL does not fetch the page, so
   a slow or unreachable source can never delay or break a save. Metadata arrives
-  only afterwards, and only when something asks for it.
+  only afterwards, either because the save scheduled it or because a user asked.
 - A page is read as a document, and its own declarations are preferred in order of
   specificity: a description written for sharing beats a generic one, and a title
   declared for the page beats one padded with a site name.
@@ -307,7 +355,8 @@ for the core loop.
 
 1. Share → Save → Inbox _(done)_
 2. Collections + Search _(done)_
-3. Metadata enrichment _(on-demand done; background processing pending)_
+3. Metadata enrichment + automatic organization _(done: on-demand and automatic
+   background)_
 4. Reminder / return loop
 5. Product metadata enrichment
 6. Comparison

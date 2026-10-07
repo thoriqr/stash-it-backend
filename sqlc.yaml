@@ -119,6 +119,34 @@ sql:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
 
+  # Worker-scoped queries for background saved item enrichment
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/worker/enrichment/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "enrichmentdb"
+        out: "internal/worker/enrichment/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Worker-scoped queries for automatic saved item organization
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/worker/organization/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "organizationdb"
+        out: "internal/worker/organization/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
   # Integration test queries for registration
   - engine: "postgresql"
     schema: "internal/database/baseline/schema.sql"
@@ -226,6 +254,34 @@ sql:
         omit_unused_structs: true
         package: "enrichmentdbtest"
         out: "internal/testutil/db/enrichment/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for worker background enrichment
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/worker_enrichment/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "workerenrichmentdbtest"
+        out: "internal/testutil/db/worker_enrichment/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for automatic saved item organization
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/worker_organization/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "workerorganizationdbtest"
+        out: "internal/testutil/db/worker_organization/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"

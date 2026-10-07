@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	saveditemmocks "github.com/thoriqr/stash-it-backend/internal/api/saved_item/mocks"
@@ -22,7 +23,7 @@ func TestService_Get(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -58,7 +59,7 @@ func TestService_Get(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -100,7 +101,7 @@ func TestService_Get(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		repo.EXPECT().
 			GetSavedItemByIDForUser(
@@ -132,7 +133,7 @@ func TestService_Get(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		repoErr := apperror.Internal(errors.New("query failed"))
 

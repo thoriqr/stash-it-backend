@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
@@ -21,7 +22,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		collectionID := uuid.New()
@@ -65,7 +66,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 
@@ -114,7 +115,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 
@@ -204,7 +205,7 @@ func TestService_Create(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				repo := saveditemmocks.NewMockRepository(ctrl)
 
-				svc := saved_item.NewService(repo)
+				svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 				userID := uuid.New()
 				collectionID := uuid.New()
@@ -253,7 +254,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		_, err := svc.Create(
 			context.Background(),
@@ -273,7 +274,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		_, err := svc.Create(
 			context.Background(),
@@ -293,7 +294,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 
@@ -320,7 +321,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		collectionID := uuid.New()
@@ -358,7 +359,7 @@ func TestService_Create(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo)
+		svc := saved_item.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 

@@ -178,22 +178,37 @@ func TestEnrich_ClosesTheBodyOnFailure(t *testing.T) {
 	require.True(t, stub.body.closed, "the response body must be closed on failure")
 }
 
+// Every non-success status is a failure with the same sentinel. What differs is
+// the classification, and it differs for exactly one reason: whether the origin
+// could plausibly answer differently later.
 func TestEnrich_NonSuccessStatus(t *testing.T) {
-	for _, status := range []int{
-		http.StatusBadRequest,
-		http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusNotFound,
-		http.StatusGone,
-		http.StatusInternalServerError,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-	} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	cases := []struct {
+		status int
+		kind   FailureKind
+	}{
+		// Terminal client statuses describe the resource itself, so asking again
+		// produces the same answer.
+		{http.StatusBadRequest, FailureContent},
+		{http.StatusUnauthorized, FailureContent},
+		{http.StatusForbidden, FailureContent},
+		{http.StatusNotFound, FailureContent},
+		{http.StatusGone, FailureContent},
+
+		// Rate limiting and server-side errors describe the origin at that
+		// moment, which is the case a bounded retry exists for.
+		{http.StatusTooManyRequests, FailureFetch},
+		{http.StatusInternalServerError, FailureFetch},
+		{http.StatusBadGateway, FailureFetch},
+		{http.StatusServiceUnavailable, FailureFetch},
+		{http.StatusGatewayTimeout, FailureFetch},
+	}
+
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			server := httptest.NewServer(
 				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "text/html")
-					w.WriteHeader(status)
+					w.WriteHeader(tc.status)
 					_, _ = io.WriteString(w, testPage)
 				}),
 			)
@@ -203,10 +218,12 @@ func TestEnrich_NonSuccessStatus(t *testing.T) {
 				Enrich(context.Background(), server.URL)
 
 			require.ErrorIs(t, err, ErrUnexpectedStatus)
-			require.Equal(t, FailureContent, Kind(err))
+			require.Equal(t, tc.kind, Kind(err))
 
 			// A non-success status is a failure, not an empty result. Returning
 			// the parsed body here would report an unenrichable page as enriched.
+			// This holds for both groups: retryability changes when the attempt
+			// happens again, never whether it is a failure.
 			require.True(t, metadata.IsEmpty())
 		})
 	}
@@ -690,6 +707,95 @@ func TestKind(t *testing.T) {
 	t.Run("wrapFailure passes nil through", func(t *testing.T) {
 		require.NoError(t, wrapFailure(FailureParse, nil))
 	})
+}
+
+// The status classification is the boundary a retry policy reads, so it is
+// asserted directly rather than only through Enrich. The rule it encodes is one
+// question: could the origin plausibly answer differently later?
+func TestStatusFailureKind(t *testing.T) {
+	cases := []struct {
+		status int
+		kind   FailureKind
+	}{
+		{http.StatusBadRequest, FailureContent},
+		{http.StatusUnauthorized, FailureContent},
+		{http.StatusForbidden, FailureContent},
+		{http.StatusNotFound, FailureContent},
+		{http.StatusGone, FailureContent},
+		{http.StatusUnsupportedMediaType, FailureContent},
+		{http.StatusUnprocessableEntity, FailureContent},
+
+		{http.StatusTooManyRequests, FailureFetch},
+		{http.StatusInternalServerError, FailureFetch},
+		{http.StatusNotImplemented, FailureFetch},
+		{http.StatusBadGateway, FailureFetch},
+		{http.StatusServiceUnavailable, FailureFetch},
+		{http.StatusGatewayTimeout, FailureFetch},
+
+		// A redirect that was not followed describes the request rather than the
+		// origin's state, and it is not a "not right now" signal either.
+		{http.StatusFound, FailureContent},
+		{http.StatusPermanentRedirect, FailureContent},
+	}
+
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			require.Equal(t, tc.kind, statusFailureKind(tc.status))
+		})
+	}
+}
+
+// A body that could not be read is a network failure, not a statement about the
+// page. Relabelling it as a content failure would make a mid-download
+// disconnect permanent and lose the retry that would have recovered it. It is
+// the one path where sniffing is involved, because a declared HTML type is
+// returned unread and only sniffing has to touch the body.
+func TestPrepareHTMLBody_ReadFailureIsAFetchFailure(t *testing.T) {
+	body := &trackedBody{
+		Reader: erroringReader{err: errors.New("connection reset by peer")},
+	}
+
+	_, err := prepareHTMLBody(body, "application/octet-stream")
+
+	require.ErrorIs(t, err, ErrFetchFailed)
+	require.Equal(
+		t,
+		FailureFetch,
+		Kind(err),
+		"an unreadable body must stay retryable",
+	)
+
+	// The classification the caller wraps it with must not override it, which is
+	// what wrapFailure exists to guarantee.
+	wrapped := wrapFailure(FailureContent, err)
+
+	require.Equal(t, FailureFetch, Kind(wrapped))
+}
+
+// A refused content type stays a permanent content failure through the same
+// wrapping the unreadable-body case goes through.
+func TestPrepareHTMLBody_RefusedContentTypeIsContentFailure(t *testing.T) {
+	body := &trackedBody{
+		Reader: strings.NewReader("%PDF-1.7\nbinary"),
+	}
+
+	_, err := prepareHTMLBody(body, "application/pdf")
+
+	require.ErrorIs(t, err, ErrUnsupportedContentType)
+
+	wrapped := wrapFailure(FailureContent, err)
+
+	require.Equal(t, FailureContent, Kind(wrapped))
+}
+
+// erroringReader fails every read, standing in for a connection that dropped
+// partway through the body.
+type erroringReader struct {
+	err error
+}
+
+func (r erroringReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestFailureSentinelsAreDistinct(t *testing.T) {

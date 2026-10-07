@@ -175,12 +175,13 @@ func (e *enricher) reader(
 	error,
 ) {
 	// A non-success status is a real answer from the origin. It is not a page to
-	// parse, so it is a failure rather than an empty result, and retrying it is
-	// unlikely to help.
+	// parse, so it is a failure rather than an empty result. Whether that failure
+	// is worth another attempt depends on which status it is, not on the fact
+	// that a status came back at all.
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		return nil, nil, newFailure(
-			FailureContent,
+			statusFailureKind(response.StatusCode),
 			fmt.Errorf(
 				"%w: status %d",
 				ErrUnexpectedStatus,
@@ -196,10 +197,35 @@ func (e *enricher) reader(
 		response.Header.Get("Content-Type"),
 	)
 	if err != nil {
-		return nil, nil, newFailure(FailureContent, err)
+		// A refused content type is a permanent content failure, but a body that
+		// could not be read has already been classified as a fetch failure by
+		// prepareHTMLBody, and that classification is the one that survives.
+		return nil, nil, wrapFailure(FailureContent, err)
 	}
 
 	return body, responseURL(response), nil
+}
+
+// statusFailureKind classifies a non-success status by whether the origin could
+// plausibly answer differently later.
+//
+// The two groups are separated because they have different consequences for a
+// caller that retries. A terminal client status (401, 403, 404, 410) and a
+// redirect that was not followed describe the resource itself, and asking again
+// produces the same answer. Rate limiting (429) and a server-side error (5xx)
+// describe the origin at that moment: they are the cases where a later attempt
+// genuinely can succeed, so they are classified as fetch failures and stay
+// eligible for a bounded retry.
+//
+// Every non-success status remains a failure either way. Only the classification
+// differs, and it decides retrying, never what is recorded.
+func statusFailureKind(statusCode int) FailureKind {
+	if statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError {
+		return FailureFetch
+	}
+
+	return FailureContent
 }
 
 // responseURL returns the URL the response actually came from.
@@ -254,12 +280,18 @@ func prepareHTMLBody(
 		return body, nil
 	}
 
+	// A body that cannot be read is a network failure rather than a statement
+	// about the page, so it carries the fetch classification from here and is not
+	// relabelled as a content failure by the caller.
 	prefix, err := readSniffPrefix(body)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"%w: %w",
-			ErrFetchFailed,
-			err,
+		return nil, newFailure(
+			FailureFetch,
+			fmt.Errorf(
+				"%w: %w",
+				ErrFetchFailed,
+				err,
+			),
 		)
 	}
 

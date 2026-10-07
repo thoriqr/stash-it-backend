@@ -64,6 +64,11 @@ func NewRepository(
 // unknown or foreign saved item fails before any collection row is created, and no
 // empty collection can be left behind by that failure. The collection is then
 // created or resolved, and the item is moved only if it is not already there.
+//
+// The ownership check here is application-level. Migration 000025's composite
+// foreign key makes the database enforce the same invariant independently, so this
+// scoped read is what produces a useful not-found error rather than what keeps
+// cross-user filings from happening.
 func (r *repository) PutSavedItemIntoUserCollection(
 	ctx context.Context,
 	params PutSavedItemIntoUserCollectionParams,

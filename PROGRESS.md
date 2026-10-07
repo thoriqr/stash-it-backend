@@ -7,6 +7,25 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Current Status
 
+### Saved Item lifecycle — end to end
+
+| Stage                                    | Status |
+| ---------------------------------------- | ------ |
+| Save (`POST /saved-items`)                | done   |
+| Background enrichment after save          | done   |
+| Background automatic organization         | done   |
+| On-demand enrichment (`POST /saved-items/:id/enrich`) | done |
+| Collection filing (`PUT /saved-items/:id/collection`)  | done |
+| Saved item ownership constraint (migration 000025) | applied |
+
+Migration 000025 is applied to the development database, and
+`internal/database/baseline/schema.sql` reflects it, so integration tests exercise
+the same ownership constraint production does.
+
+The full path — save, background enrichment, and the automatic organization the
+enrichment hands off to — was also verified end to end against the running stack
+with a manual request walkthrough. Automated tests cover the same flow.
+
 ### Saved Items — Phase A backend complete
 
 All four core Saved Item endpoints are implemented, wired into `main.go`
@@ -111,18 +130,24 @@ such as `sessiondb.Session`, remain generated.
 
 ---
 
-## Enrichment — synchronous per-item enrichment implemented
+## Enrichment — foundation and both application paths complete
 
-The enrichment foundation and synchronous application integration are complete.
+The enrichment foundation and both application integrations are complete. The
+background worker and automatic organization have their own section below.
 
-The current system has three relevant layers:
+The current system has these relevant layers:
 
 1. `internal/security` — guarded outbound HTTP and SSRF protection.
-2. `internal/enrichment` — reusable metadata fetching and extraction.
+2. `internal/enrichment` — reusable metadata fetching and extraction, shared by
+   every caller.
 3. `internal/api/enrichment` — synchronous Saved Item application integration.
+4. `internal/worker/enrichment` — background enrichment worker, driven by an Asynq
+   task.
+5. `internal/worker/organization` — background automatic organization, driven by an
+   Asynq task the enrichment worker produces.
 
-There is currently **no Asynq enrichment task and no background enrichment**.
-Enrichment only runs when explicitly requested for one saved item.
+Enrichment runs either on request for one saved item or in the background after a
+save. The two paths write the same rows.
 
 ### Enrichment schema
 
@@ -233,7 +258,7 @@ The feature has:
 - 8 service unit tests;
 - 15 integration tests;
 - 90.5% combined feature-package coverage;
-- 95% statement coverage in `internal/enrichment`;
+- 95.4% statement coverage in `internal/enrichment`;
 - 100% statement coverage for `internal/security/outbound_fetch.go`.
 
 Manual Postman verification was performed against real external URLs:
@@ -252,33 +277,247 @@ automated tests.
 
 ---
 
-## Worker infrastructure
+## Background enrichment worker — implemented
 
-The worker infrastructure exists, but background jobs are not implemented.
+Background Asynq enrichment is implemented and verified. The worker enriches a
+Saved Item after it has been committed, and the synchronous endpoint remains the
+per-item on-demand path.
 
-Current infrastructure includes:
+### What exists
+
+Infrastructure:
 
 - local Redis service in `docker-compose.dev.yml`;
-- `go-redis/v9`;
-- separate `WorkerConfig` / `LoadWorker`;
-- `cmd/worker` binary;
-- Redis connectivity check and graceful signal blocking.
+- `go-redis/v9` and `hibiken/asynq`;
+- separate `WorkerConfig` / `LoadWorker` — the worker reads only `DATABASE_URL`,
+  `REDIS_URL`, `APP_ENV`, and the optional `WORKER_CONCURRENCY`, which is range
+  checked when it is set;
+- `cmd/worker` binary with a Redis connectivity check and graceful signal
+  blocking;
+- `REDIS_URL` is now required by the API as well as the worker, since a task can
+  only be processed by a worker pointed at the same Redis.
 
-`cmd/worker` currently imports nothing from `internal/api` and does not perform
-enrichment or organization.
+Packages:
+
+- `internal/worker/queue` — the queue contract. Holds `TaskTypeEnrichSavedItem`,
+  `QueueEnrichment`, the task timeout and retry budget, the payload type, the
+  retry delay function, and the `Producer` the API enqueues through. The package
+  imports no Fiber, nothing from `internal/api`, and no persistence.
+- `internal/worker/enrichment` — the worker's own handler, service, repository and
+  narrow projections, plus its own sqlc target.
+- `internal/api/saved_item/enqueuer.go` — the one-method interface the save flow
+  depends on. It may be nil, which is how "this process schedules nothing" is
+  expressed.
+
+`cmd/worker` imports nothing from `internal/api`.
+
+### Save → enqueue flow
+
+1. The row is written. `domain` is derived locally and nothing contacts the
+   remote source.
+2. Only once that write has committed is enrichment queued, with the saved item's
+   id as the whole payload.
+
+Enqueueing before the write returned could put a task in Redis for an id the
+database never accepted. Enqueueing after it makes the worst case the opposite
+and smaller: a committed row whose task was never queued, which is a valid Saved
+Item that still says `pending` and can be enriched on demand.
+
+A failure to enqueue is logged and swallowed. The save succeeded, and reporting
+it as a failed request would report a failure for something that happened.
+
+### Task and consumer
+
+The payload carries the saved item's id and nothing else. The worker reads the
+URL from the row, so a queued copy can never disagree with what was stored.
+
+The worker reuses `internal/enrichment` and `internal/security`, constructing the
+same guarded outbound client the API uses. There is no second SSRF
+implementation and no second outbound client.
+
+### Queue and task naming
+
+Both areas name their task type `<area>:<thing>` after their queue, so a task and
+the queue it belongs to can be read off one string:
+
+| Queue         | Task type                |
+| ------------- | ------------------------ |
+| `enrichment`  | `enrichment:saved_item`  |
+| `organization`| `organization:saved_item`|
+
+Both are dedicated queues rather than Asynq's `default`, and both are declared
+explicitly in the worker's `Queues` map. Organization is not on the enrichment
+queue because its work is pure database: a burst of saves would otherwise delay
+filing behind its own page fetches.
+
+### Persistence semantics
+
+Identical to the synchronous endpoint, statement for statement:
+
+| Outcome                | `enrichment_status` | Metadata | `last_enriched_at` |
+| ---------------------- | ------------------- | -------- | ------------------ |
+| extraction succeeded   | `completed`         | written  | updated            |
+| extraction failed      | `failed`            | preserved| unchanged          |
+| page exposed nothing   | `completed`         | all NULL | updated            |
+
+`collection_id` and `domain` are never written by enrichment. There is no
+`processing` or `retrying` value and no intermediate state: how many more attempts
+the queue will make is execution mechanics, not the state of the Saved Item.
+
+A task for a deleted item is discarded rather than retried, and no outbound
+request is made for a row that is gone.
+
+### Retry classification
+
+The classification is read from `enrichment.Kind`, so the worker does not define a
+second opinion about what a page error means. It maps that classification onto one
+queue decision.
+
+Retryable:
+
+- DNS, connection, TLS, timeouts, too many redirects, policy refusals;
+- a body that could not be read;
+- `429` and `5xx`, which describe the origin at that moment;
+- any database error, which arrives unclassified and defaults to retryable.
+
+Permanent, and skipped immediately:
+
+- a terminal client status such as `401`, `403`, `404`, `410`;
+- a non-HTML content type;
+- an HTML document that could not be parsed.
+
+Retries are bounded by the queue's own budget: one attempt plus
+`EnrichmentMaxRetry` retries, with an exponentially increasing, jittered, capped
+delay. Once the budget is exhausted Asynq archives the task and the item already
+carries the durable `failed` record.
+
+### Concurrency and shutdown
+
+`WORKER_CONCURRENCY` remains the runtime configuration source, with an explicit
+range enforced by the loader:
+
+| Setting                  | Value                              |
+| ------------------------ | ---------------------------------- |
+| `DefaultWorkerConcurrency` | `5`                              |
+| `MinWorkerConcurrency`     | `1`                              |
+| `MaxWorkerConcurrency`     | `20`                             |
+
+An unset value resolves to the default. A value that is present but outside the
+range — zero, negative, above the maximum, or not a number — fails configuration
+and stops the worker from starting, rather than being silently replaced. A
+deployment that believes it asked for something it did not get is worse than one
+that refuses to start.
+
+Enrichment is network-bound, so a small number of concurrent attempts overlaps
+mostly waiting, while a large number only multiplies concurrent outbound requests
+and database connections against origins that are already slow.
+
+On SIGTERM the worker stops taking new tasks and waits for in-flight ones, bounded
+by `shutdownTimeout`. Anything still queued stays in Redis for whichever worker
+runs next.
+
+The startup log records the Redis address and database, never the full URL, which
+may carry credentials.
+
+### Automatic organization
+
+Background organization is implemented. It is a separate task type on its own
+queue, produced by the enrichment worker and consumed by the worker binary.
+
+Flow, with no scan or sweep anywhere in it:
+
+```
+save -> enrichment task -> enrichment worker
+     -> completed enrichment with a platform
+     -> one organization task (saved_item_id + user_id)
+     -> organization worker
+     -> re-read the item, locked
+     -> file it only if it is STILL in Unsorted
+```
+
+A failed enrichment records `failed` and queues nothing. A completed enrichment
+with no platform queues nothing. There is no persisted organization state, so a
+task that was never created is never created later: an item left in `Unsorted`
+stays there until a user asks for it to be enriched again.
+
+Package `internal/worker/organization` owns its own handler, service, repository,
+projection and sqlc target, mirroring the enrichment worker. It imports nothing
+from `internal/api` and nothing from the enrichment worker.
+
+The worker decides at execution time, against a locked row:
+
+| Condition                              | Outcome                            |
+| -------------------------------------- | ---------------------------------- |
+| item does not exist                     | discarded, like the enrichment worker |
+| item belongs to another user            | refused and archived                |
+| `enrichment_status` is not `completed`  | no-op                              |
+| `platform` is NULL                      | no-op                              |
+| item is no longer in `Unsorted`         | no-op, never moved back            |
+| a collection already matches the platform | reused, never renamed             |
+| no collection matches                    | created as `type = 'system'`       |
+
+The "still in Unsorted" rule is the one that matters: an item the user filed into
+their own collection while the task waited is left exactly where they put it.
+
+Ownership is enforced by migration 000025's composite foreign key, and the worker's
+statements are scoped to agree with it. A created collection belongs to that one
+user; `system` says who created it, not who owns it.
+
+`system_key` is the platform's own normalized identity — `lower(btrim(platform))` —
+so it agrees with the `collections_user_name_unique` comparison and the two indexes
+can never disagree. It is a derived identity, not a curated registry, which is the
+honest consequence of `platform` being free text published by the page.
 
 ### Still not implemented
 
-- Asynq queue configuration and task processing.
-- Enqueueing enrichment work when a Saved Item is created.
-- Worker-side enrichment execution and retry classification.
-- Worker graceful-shutdown coordination with the API process.
-- Automatic collection organization.
 - Endpoint rate limiting.
+- A possible one-off backfill of items enriched before automatic organization
+  existed, which are still in `Unsorted` with a platform. This is an open product
+  decision rather than a gap in the mechanism, and it would be a separate
+  operation — see decision 13a for why it is not part of the normal worker flow.
+- Cloud Run deployment specifics. The worker is a standalone binary with no HTTP
+  surface, and is intended to be deployable as-is.
 
-Worker architecture remains a future implementation concern. Do not redesign
-the current API enrichment package solely for the worker before that work
-actually begins.
+What is deliberately **not** implemented, and should not be read as missing:
+
+- **No organization reconciliation, scanner or sweep.** Organization is event-driven
+  from a successful enrichment that produced a platform, and there is no
+  alternative producer. With no persisted organization status there is nothing to
+  sweep *for*, and a query for "still in `Unsorted` with a platform" would also
+  match exactly the state a user may have chosen on purpose. If an event is never
+  produced, the system does not later discover it — deliberately, not by accident.
+- **No reconciliation for items left `pending` by a failed enqueue.** Also a
+  deliberate trade-off, recorded as decision 16.
+
+### Verification
+
+The worker has:
+
+- `internal/config` — the concurrency policy: the default, both range boundaries,
+  accepted values inside the range, and rejection of zero, negative,
+  above-maximum and non-numeric values, all through `LoadWorker`;
+- `internal/worker/enrichment` — the enrichment -> organization handoff: a completed
+  enrichment with a platform schedules one task, and a failed extraction, a
+  complete extraction with no platform, a failed write and an unreachable queue do
+  not;
+- `internal/worker/organization` — the eligibility guards, the system key derived
+  from a platform, and that organization writes no enrichment state;
+- `internal/worker/queue` — payload round trip, payload contents, backoff bounds,
+  and the relationship between the task timeout and the outbound fetch ceiling;
+- `internal/worker/enrichment` — handler classification for retryable, permanent,
+  unclassified and malformed-payload tasks, and service behavior for completion,
+  empty results, failures, missing items and write errors;
+- `internal/integration` — the whole path against real Postgres and real Redis:
+  a save enqueues, the worker consumes, the row is written; a deleted item is
+  discarded; a permanent failure is archived on the first attempt; a transient
+  failure is retried and then completes; an exhausted budget is archived; the
+  producer's task type, queue, timeout and retry budget round-trip for both task
+  types; the enrichment -> organization handoff runs end to end; and organization
+  creates, reuses, is skipped for, and refuses to undo a user's filing for, with
+  concurrent tasks producing exactly one collection per platform per user.
+
+Queue-facing tests read Asynq's own accounting through an `Inspector` rather than
+by counting Redis keys, so they cannot pass by reading nothing.
 
 ---
 
@@ -294,14 +533,25 @@ The current tree has been verified with:
 - `swag init -g cmd/api/main.go -parseInternal` — pass
 
 Integration tests require Docker and use the project's PostgreSQL test container.
+The queue-facing integration tests additionally start a Redis testcontainer,
+lazily and only when one is needed.
 
 The enrichment foundation was also separately verified with:
 
 - `internal/security` — 100% statement coverage
-- `internal/enrichment` — 95% statement coverage
+- `internal/enrichment` — 95.4% statement coverage
 
-The current worker binary itself has only been manually verified for Redis
-connectivity/startup. It has no queue processing yet.
+The worker's unit-level packages are verified by unit tests plus the integration
+suite above, which exercises their real behavior against Postgres and Redis.
+Statement coverage figures for `internal/worker/*` are not recorded here, since
+their meaningful behavior is in the integration path rather than in isolated
+calls.
+
+The worker binary's Redis connectivity and startup have been verified, and the
+full background path is covered by the integration tests above. Those tests replace
+only the extraction layer, for the same reason the synchronous enrichment tests do
+(the guarded outbound client correctly refuses loopback); the real extractor has
+been verified against live external origins by manual walkthrough instead.
 
 ---
 
@@ -331,30 +581,66 @@ Do not change these casually. Revisit only with an explicit decision.
 
 7. **Delete is a hard delete.** There is no soft-delete or `deleted_at`.
 
-8. **Enrichment is currently synchronous and user-triggered.**
-   `POST /saved-items/:id/enrich` enriches one specific item. Nothing is
-   automatically enqueued or processed in the background yet.
+8. **`POST /saved-items` enqueues enrichment, and the synchronous endpoint
+   remains available.** A save commits its row first and then queues the item's
+   id. `POST /saved-items/:id/enrich` still enriches one specific item on
+   demand, and enrichment is repeatable from either path.
 
-9. **The guarded HTTP client is the only outbound fetch path for user-supplied
-   URLs.** Do not add another client, transport, or SSRF implementation.
+   Both paths produce the same row for the same page, and neither changes
+   `collection_id` or `domain`.
 
-10. **Outbound ports are restricted to 80/443.** Widening this allowlist requires
+9. **Enrichment has exactly three persisted states: `pending`, `completed`,
+   `failed`.** There is deliberately no `processing` or `retrying` value. How
+   many more attempts the queue will make is execution mechanics, not the state
+   of the Saved Item, so it is never written. Adding a status value requires an
+   explicit decision and a migration.
+
+10. **The guarded HTTP client is the only outbound fetch path for user-supplied
+    URLs.** Do not add another client, transport, or SSRF implementation. The
+    worker constructs the same one and shares no other outbound path.
+
+11. **Outbound ports are restricted to 80/443.** Widening this allowlist requires
     an explicit decision.
 
-11. **`internal/enrichment` is reusable extraction logic, not persistence.**
-    It has no Fiber, SQLC, Asynq, or database responsibility.
+12. **`internal/enrichment` is reusable extraction logic, not persistence.**
+    It has no Fiber, SQLC, Asynq, or database responsibility. It is shared by
+    the synchronous endpoint and the worker, which is why neither path can
+    diverge on what a page error means.
 
-12. **Enrichment must not modify `collection_id`.** Metadata enrichment and
-    automatic collection organization are separate concerns.
+13. **Enrichment must not modify `collection_id`.** Metadata enrichment and
+    automatic collection organization are separate concerns. Organization writes
+    `collection_id` and nothing else.
 
-13. **The worker has a separate configuration boundary.** It uses
-    `WorkerConfig` / `LoadWorker` and does not depend on API-only secrets.
+13a. **Automatic organization is event-driven and never overrides a user.** A task
+    exists only because a successful enrichment produced a platform, and it may only
+    move an item that is still in `Unsorted`. Do not add a scan, a sweep, a periodic
+    query, or a persisted organization status to find items the event missed.
 
-14. **Canonical URLs are not automatically applied.** The extractor may report a
+13b. **`collections.type = 'system'` describes who created a collection, not who
+    owns it.** A system collection belongs to exactly one user through
+    `collections.user_id`, and migration 000025's composite foreign key is what makes
+    an item's collection and its owner have to agree.
+
+14. **The worker has a separate configuration boundary.** It uses
+    `WorkerConfig` / `LoadWorker` and does not depend on API-only secrets. It also
+    imports nothing from `internal/api`.
+
+15. **`FailureKind` separates a page that cannot be used from an origin that is
+    not answering.** Terminal client statuses, non-HTML content and unparseable
+    documents are permanent; network failures, unreadable bodies, `429` and `5xx`
+    are retryable within the bounded budget. Changing which group a failure falls
+    into changes retry behavior, so treat it as a product decision.
+
+16. **A save succeeds even when enqueueing fails.** A failed enqueue leaves the
+    item `pending`, and there is no reconciliation pass for it either. This is a
+    deliberate trade-off: the Saved Item is valid product data regardless of its
+    metadata, and the user can always ask on demand.
+
+17. **Canonical URLs are not automatically applied.** The extractor may report a
     canonical URL, but replacing the Saved Item's original URL is a separate
     product decision.
 
-15. **`Metadata.Author` and `Metadata.SiteName` are currently extraction-only
+18. **`Metadata.Author` and `Metadata.SiteName` are currently extraction-only
     fields.** Adding persistence for them requires an explicit product/schema
     decision.
 
@@ -362,30 +648,20 @@ Do not change these casually. Revisit only with an explicit decision.
 
 ## Next Step
 
-The synchronous Saved Item enrichment flow is complete and manually verified.
-
-The next phase is background processing.
+Enrichment and automatic organization are both implemented and verified: the
+synchronous per-item endpoint, the background enrichment worker, and the
+background organization worker it hands off to. Their architecture is settled —
+event-driven, no sweep, no persisted organization state — and is recorded in
+decisions 8, 9, 13, 13a and 13b rather than reopened here.
 
 Current order:
 
-1. Decide how and when saving a URL should enqueue enrichment work.
-2. Implement the Asynq task and consume side.
-3. Decide retry behavior using the existing enrichment failure classification.
-4. Integrate worker execution with the existing Saved Item enrichment
-   persistence behavior.
-5. Implement automatic collection organization as a separate worker concern.
-
-Before implementing the worker, explicitly settle:
-
-- whether `POST /saved-items` enqueues enrichment immediately;
-- worker concurrency;
-- retry policy;
-- whether per-user rate limiting is needed;
-- how the current API-side enrichment operation should be shared with the
-  worker without duplicating persistence/enrichment behavior.
-
-Do not solve those worker architecture questions by changing the current
-synchronous endpoint unless the worker implementation actually requires it.
+1. Endpoint rate limiting.
+2. Decide whether to run a one-off backfill of items enriched before automatic
+   organization existed. It is a product decision, not a mechanism gap, and it
+   would be a separate deliberate operation rather than anything the worker does
+   on its own.
+3. Cloud Run deployment specifics for the worker, when a target is chosen.
 
 Search pagination, autocomplete, search suggestions, collection CRUD, and Saved
 Item update/edit remain outside the current scope.
@@ -404,5 +680,9 @@ Item update/edit remain outside the current scope.
    report it instead of fixing it as a side effect.
 6. Never edit generated files manually. Change their source and regenerate.
 7. Never apply migrations or create commits unless explicitly instructed.
-8. Do not assume background enrichment exists. The current implemented enrichment
-   path is synchronous and explicitly triggered for one Saved Item.
+8. Both enrichment paths exist and both work. A save commits its row and queues
+   background enrichment, and a completed enrichment that produced a platform
+   hands off to background automatic organization. On-demand enrichment of one
+   Saved Item still exists as well, and both write the same rows. Read the
+   background worker and automatic organization sections above before changing
+   either; neither is an open question.

@@ -13,6 +13,15 @@ type Config struct {
 	VerificationCodeSecret string
 	AccessTokenSecret      string
 	GoogleClientID         string
+
+	// RedisURL is the queue connection the API enqueues background work on.
+	//
+	// It is the same value the worker reads and is required on both sides, because
+	// a task can only be processed by a worker pointed at the same Redis. It is
+	// loaded here rather than read from the environment at the composition root so
+	// that a missing value is a startup failure rather than a feature that quietly
+	// stops being wired.
+	RedisURL string
 }
 
 func Load() (Config, error) {
@@ -53,11 +62,17 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
 	}
 
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return Config{}, fmt.Errorf("REDIS_URL is required")
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
 		VerificationCodeSecret: verificationCodeSecret,
 		AccessTokenSecret:      accessTokenSecret,
 		GoogleClientID:         googleClientID,
+		RedisURL:               redisURL,
 	}, nil
 }

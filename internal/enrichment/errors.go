@@ -29,9 +29,13 @@ var (
 	ErrParseFailed = errors.New("reading the page failed")
 
 	// ErrUnexpectedStatus is returned when the response arrived but its status
-	// was not a success. A 404 or a 500 is a real answer from the origin and
-	// makes the item unenrichable, so it is a failure rather than a page with
-	// no metadata.
+	// was not a success. A 404 or a 500 is a real answer from the origin, so it
+	// is a failure rather than a page with no metadata.
+	//
+	// The sentinel describes the event and not its classification: the same
+	// sentinel covers both a terminal 404 and a temporary 503, which are treated
+	// differently by FailureKind. The status is in the message, so the log line
+	// that reports a failure still says which one it was.
 	ErrUnexpectedStatus = errors.New("page returned an unexpected status")
 
 	// ErrUnsupportedContentType is returned when the response is not something
@@ -47,11 +51,20 @@ type FailureKind string
 
 const (
 	// FailureFetch is a failure to obtain a parseable page at all. Retrying may
-	// succeed, because the cause was on the network.
+	// succeed, because the cause was the network or the origin at that moment:
+	// DNS, the connection, TLS, a timeout, too many redirects, a refusal by the
+	// outbound fetch policy, a body that could not be read, and the statuses an
+	// origin uses to say "not right now" (429 and 5xx).
 	FailureFetch FailureKind = "fetch"
 
-	// FailureContent is a page that was reached but cannot be used, such as a
-	// non-HTML resource or a non-success status. Retrying rarely helps.
+	// FailureContent is a page that was reached and cannot be used, such as a
+	// non-HTML resource or a terminal client status such as 401, 403, 404 or
+	// 410. Retrying will not help.
+	//
+	// The distinction from FailureFetch is the question a retry asks: whether
+	// the origin could plausibly answer differently. A page that was moved, is
+	// gone, or is not an HTML document cannot; a page whose origin was
+	// overloaded, rate limiting or temporarily broken can.
 	FailureContent FailureKind = "content"
 
 	// FailureParse is a page that was reached and is HTML, but could not be

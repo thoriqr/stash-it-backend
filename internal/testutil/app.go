@@ -109,6 +109,24 @@ func NewAppWithEnricher(
 	pool *pgxpool.Pool,
 	enricher enrichment.MetadataEnricher,
 ) (*fiber.App, *FakeEmailSender) {
+	return NewAppWithEnqueuer(pool, enricher, nil)
+}
+
+// NewAppWithEnqueuer builds the app with a caller-supplied enricher and enqueuer.
+//
+// Background enrichment is triggered by saving, so a test that cares about the
+// queue needs to supply the thing the app enqueues into: a fake to inspect what
+// was queued, or the real producer when the test wants the task to actually be
+// picked up by a worker. The interface is taken rather than the fake so both are
+// possible, and the caller keeps the reference it needs either way.
+//
+// A nil enqueuer is passed through to the module, which is the same as saying
+// "this process schedules nothing", so the tests that never save are unaffected.
+func NewAppWithEnqueuer(
+	pool *pgxpool.Pool,
+	enricher enrichment.MetadataEnricher,
+	enqueuer saveditem.SavedItemEnqueuer,
+) (*fiber.App, *FakeEmailSender) {
 	validate := validation.New()
 
 	log, err := logger.New("development")
@@ -154,6 +172,8 @@ func NewAppWithEnricher(
 		app,
 		pool,
 		cfg,
+		enqueuer,
+		log,
 	)
 
 	collection.RegisterModule(

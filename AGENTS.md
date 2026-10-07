@@ -19,6 +19,7 @@ wiring is explicit, by hand, in `module.go`.
 
 ```text
 cmd/api/main.go               bootstrap only; feature modules are registered here
+cmd/worker/main.go            bootstrap only; background task handlers are registered here
 internal/api/<module>/        routes.go handler.go service.go service_validation.go
                               repository.go mapper.go request.go response.go
                               error_codes.go constants.go types.go generated/ mocks/
@@ -26,8 +27,10 @@ internal/api/auth/module.go   composition root for auth sub-features
 internal/middleware/auth.go   JWT bearer guard
 internal/{apperror,httpx,validation,email,security,config,logger,health,database}/
 internal/enrichment/          reusable metadata extraction; no Fiber, sqlc, Asynq, persistence
+internal/worker/queue/        background task contract; no Fiber, internal/api, persistence
+internal/worker/<feature>/    worker handler, service, repository, generated/, mocks/
 internal/testutil/             testcontainers helpers, fakes, test-only sqlc output
-internal/integration/          end-to-end HTTP tests
+internal/integration/          end-to-end HTTP and worker tests
 migrations/                    production schema (source of truth)
 docs/                          GENERATED swagger
 documentation/                 hand-written project documentation
@@ -110,9 +113,10 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
 ## Outbound fetches and enrichment
 
 Security-critical. `internal/security` is the outbound-fetch boundary and
-`internal/enrichment` is reusable extraction logic. The current synchronous
-Saved Item integration lives under `internal/api/enrichment`. Background
-Asynq enrichment is not implemented yet.
+`internal/enrichment` is reusable extraction logic. The synchronous Saved Item
+integration lives under `internal/api/enrichment`; the background Asynq one lives
+under `internal/worker/enrichment` and consumes the same `internal/enrichment`
+capability, so the two paths cannot diverge on what a page error means.
 
 - `security.NewGuardedHTTPClient(policy)` is the only sanctioned way to fetch a
   user-supplied URL. Its `net.Dialer.ControlContext` validates the **resolved**
@@ -127,7 +131,9 @@ Asynq enrichment is not implemented yet.
   independent of Fiber, `internal/api`, sqlc, Asynq, and persistence.
 - Enrichment operates on one Saved Item at a time. Ownership is scoped by
   `id AND user_id`; missing and foreign items must have the same not-found
-  behavior.
+  behavior. Background tasks are the documented exception: a task names the row it
+  acts on, so the worker packages read by `id` alone and verify the owner against
+  the payload rather than by scoping the read.
 - Enrichment must not touch `collection_id` or move an item between collections.
   Automatic organization is a separate concern.
 - `platform` is derived from metadata the page publishes about itself, never
@@ -138,12 +144,89 @@ Asynq enrichment is not implemented yet.
 - A failed enrichment is represented by `enrichment_status`, not an HTTP 5xx.
   A failed attempt must preserve existing metadata and must not update
   `last_enriched_at`.
+- `enrichment_status` has exactly three values: `pending`, `completed`,
+  `failed`. Do not add a `processing` or `retrying` value to represent queue
+  execution mechanics.
 - Enrichment is repeatable and must not be gated on the current
   `enrichment_status`.
 - `Author` and `SiteName` are extraction-only unless persistence is explicitly
   changed.
 - Metadata URLs may be resolved to absolute form but are never fetched merely
   because they appear in metadata.
+
+## Background enrichment worker
+
+`cmd/worker` is a standalone binary with no HTTP surface. It imports nothing from
+`internal/api`, and its persistence and application code lives under
+`internal/worker`.
+
+- `internal/worker/queue` is the whole contract between the two binaries: the
+  task type, the queue name, the payload type, the task timeout and retry budget,
+  and the producer the API enqueues through. It must stay free of Fiber,
+  `internal/api`, and persistence, so the two sides cannot drift.
+- `internal/api/saved_item` depends on its own one-method enqueuer interface, not
+  on the queue package, and the enqueuer may be nil.
+- A save commits its row **before** queueing the item's id. Enqueueing earlier
+  could name an id the database never accepted; a failed enqueue leaves a valid
+  Saved Item that is still `pending`. There is no reconciliation pass. Treat both
+  as accepted trade-offs rather than defects.
+- The task payload carries the saved item id only. The worker reads the URL from
+  the row, so a queued copy can never disagree with what was stored.
+- The worker reuses `internal/enrichment` and `internal/security`. Do not give it
+  a second extraction layer or outbound client.
+- Retry classification is read from `enrichment.Kind`; the worker maps that
+  classification onto a queue decision and must not restate what a page error
+  means. Retries are bounded by the queue's own budget and capped backoff.
+- Never log a full Redis URL. It may carry credentials in its userinfo section;
+  log the parsed address and database instead.
+
+## Automatic organization
+
+`internal/worker/organization` files a Saved Item into a collection named by its
+enriched platform. It is a separate task type on its own queue, scheduled by the
+enrichment worker, not a phase of enrichment.
+
+- **Event-driven only.** A task is produced by a successful enrichment that
+  produced a platform, and by nothing else. Do not add a scan, a sweep, a periodic
+  query, or a "not yet organized" lookup: there is no persisted organization state,
+  so anything that needed one would be inventing a second source of truth.
+- **The decision is made at execution time, against a locked row.** The payload
+  says which item to look at, never where it goes. `enrichment_status`,
+  `platform` and the current collection are all re-read.
+- **Only an item still in `Unsorted` may be moved.** Being in `Unsorted` when
+  enrichment finished grants nothing. This is what keeps organization from
+  overriding a user's own filing, and it must not be relaxed to "organize unless
+  the target differs".
+- **Reuse a matching collection; never rename one.** Whether the user named it or
+  an earlier item created it, a match is a target. `system` describes who created
+  a collection, not who owns it: it still belongs to one user.
+- **`system_key` is the platform's own normalized identity**, derived from the
+  platform value, not a curated mapping. Deriving one from a hostname or a domain
+  table would contradict decision 3 above.
+- **Organization never writes enrichment state.** No `organization_status` column,
+  and `MoveSavedItemToCollectionForOrganization` touches `collection_id` alone. A
+  failed organization leaves the item `completed`.
+- **No-op conditions are successes.** A missing item, an incomplete enrichment, a
+  NULL platform and an item the user already filed are all finished tasks. An
+  ownership mismatch is the one condition that is reported and archived, because it
+  cannot happen through any real path and would otherwise hide a bug.
+
+## Ownership and collections
+
+- `collections.user_id` owns a collection and `saved_items.user_id` owns a Saved
+  Item. Migration 000025 enforces that a Saved Item may only reference a collection
+  its own owner owns, through a composite foreign key over `(collection_id,
+  user_id)`. Do not weaken or work around it, and do not write code that assumes
+  `collection_id` alone establishes ownership.
+- Scope reads and writes by `id AND user_id` wherever there is a user in scope. A
+  `NOT NULL` foreign key on `collection_id` is not an ownership check.
+- Enrichment must never write `collection_id`. Automatic organization under
+  `internal/worker/organization` is the only writer that does, and it only moves an
+  item that is still in `Unsorted`.
+- Collection names are compared and stored the way `lower(btrim(name))` and a
+  trimmed display name already define. Reuse that semantics rather than writing a
+  second normalization: a collection whose stored name disagrees with the name the
+  unique index matched cannot be found again.
 
 ## Data integrity
 
@@ -235,8 +318,10 @@ in `documentation/`.
   and regenerate mocks rather than editing them.
 - Integration tests live in `internal/integration/`. The shared `TestMain`
   starts one Postgres testcontainer, applies the baseline schema, builds the real
-  app via `testutil.NewApp`, then tears it down. **Docker is required.**
-- Because the integration database is shared, tests must not collide on data.
+  app via `testutil.NewApp`, then tears it down. Worker tests additionally start a
+  Redis testcontainer, lazily and only when one is needed. **Docker is required.**
+- Because the integration database and the Redis queue namespace are shared, tests
+  must not collide on either.
 - Prefer asserting error codes over error strings and testing business behavior
   at the service/repository level rather than testing handler plumbing.
 

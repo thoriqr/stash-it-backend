@@ -113,7 +113,15 @@ CREATE TABLE collections (
         CHECK (
             (type = 'system' AND system_key IS NOT NULL)
             OR (type = 'user' AND system_key IS NULL)
-        )
+        ),
+
+    -- Composite uniqueness required by the saved_items -> collections composite
+    -- ownership foreign key added in migration 000025. collections.id is already
+    -- the primary key, so this pair is unique by construction; the constraint
+    -- exists because the foreign key below needs a target of exactly this shape.
+    -- It is redundant for lookups by id alone and is kept deliberately: dropping
+    -- it breaks the foreign key rather than only slowing a query down.
+    CONSTRAINT collections_id_user_id_key UNIQUE (id, user_id)
 );
 
 
@@ -150,9 +158,17 @@ CREATE TABLE saved_items (
     enrichment_status TEXT NOT NULL DEFAULT 'pending',
     last_enriched_at TIMESTAMPTZ,
 
+    -- Composite ownership invariant, added in migration 000025. A saved item may
+    -- only reference a collection owned by the same user. Before this, the
+    -- foreign key referenced collections(id) alone, so the two user_id columns
+    -- were each correct but nothing tied them together and only application code
+    -- kept them in step. The constraint now carries it.
+    --
+    -- Collection ownership did not change: collections.user_id owns a
+    -- collection, saved_items.user_id owns a saved item, and both are unchanged.
     CONSTRAINT saved_items_collection_id_fkey
-        FOREIGN KEY (collection_id)
-        REFERENCES collections(id)
+        FOREIGN KEY (collection_id, user_id)
+        REFERENCES collections(id, user_id)
         ON DELETE RESTRICT,
 
     CONSTRAINT saved_items_enrichment_status_check
@@ -428,7 +444,7 @@ CREATE INDEX saved_items_user_created_at_idx
 
 -- Collection names are unique per user, compared case-insensitively and with
 -- surrounding whitespace trimmed. This reserves the display name for system
--- collections too, so a user cannot shadow the 'YouTube' system collection.
+-- collections too, so a user cannot shadow a system collection's name.
 CREATE UNIQUE INDEX collections_user_name_unique
     ON collections (user_id, lower(btrim(name)));
 

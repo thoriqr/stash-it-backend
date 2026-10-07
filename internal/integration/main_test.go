@@ -63,6 +63,14 @@ func TestMain(m *testing.M) {
 
 	pool.Close()
 
+	if err := testutil.TerminateRedisForTests(ctx); err != nil {
+		log.Printf("failed to terminate redis container: %v", err)
+
+		if code == 0 {
+			code = 1
+		}
+	}
+
 	if err := testutil.TerminatePostgres(ctx, container); err != nil {
 		log.Printf("failed to terminate postgres container: %v", err)
 
