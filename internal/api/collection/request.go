@@ -1,5 +1,39 @@
 package collection
 
+import "github.com/google/uuid"
+
+// DeleteCollectionRequest states what should happen to the saved items currently
+// in a collection that is being deleted.
+//
+// Both fields are always present and always mean the same thing. The shape does not
+// vary by action: the rule about which combination is valid is stated below and
+// enforced by the service, so a caller reading this type sees one contract rather
+// than two shapes they have to infer from each other.
+//
+// Neither field carries a `validate` constraint on purpose, for the same reason
+// PutSavedItemIntoCollectionRequest does not: the service owns these rules and
+// answers with INVALID_COLLECTION_DELETE_ACTION and INVALID_COLLECTION_DELETE_TARGET
+// so a caller can tell an incoherent request apart from a malformed one. Tags here
+// would pre-empt that and collapse every case into a generic VALIDATION_ERROR.
+type DeleteCollectionRequest struct {
+	// SavedItemsAction is what to do with the collection's saved items.
+	//
+	// "delete" removes them along with the collection. "move" files them into
+	// target_collection_id first, and then removes the collection. Both are
+	// required: the request must say which, because the two are not variants of a
+	// single outcome and one of them discards saved items.
+	SavedItemsAction SavedItemsAction `json:"saved_items_action" enums:"delete,move" example:"delete"`
+
+	// TargetCollectionID is where the saved items go when SavedItemsAction is
+	// "move".
+	//
+	// It must be a collection id and must be null when SavedItemsAction is
+	// "delete". Unsorted is a valid target and is named here by its id, like any
+	// other collection; there is no separate mode or flag for it, and no fallback
+	// to it. A target that does not exist is an error rather than a substitution.
+	TargetCollectionID *uuid.UUID `json:"target_collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+}
+
 type PutSavedItemIntoCollectionRequest struct {
 	// CollectionName is the display name of the user collection to file the saved
 	// item under. The collection is created if it does not exist yet. Names are

@@ -33,6 +33,71 @@ func newCollectionService(t *testing.T) collection.Service {
 	)
 }
 
+// createTestSystemCollection seeds a collection as automatic organization creates
+// it: type = 'system' with a key that is not Unsorted. Seeded directly so tests can
+// prove that a collection's type does not restrict whether the user may delete it.
+func createTestSystemCollection(
+	t *testing.T,
+	userID uuid.UUID,
+	name string,
+	systemKey string,
+) uuid.UUID {
+	t.Helper()
+
+	ctx := context.Background()
+	db := collectiondbtest.New(testPool)
+
+	collectionID, err := db.CreateTestSystemCollection(
+		ctx,
+		collectiondbtest.CreateTestSystemCollectionParams{
+			UserID:    userID,
+			Name:      name,
+			SystemKey: testText(systemKey),
+		},
+	)
+	require.NoError(t, err)
+
+	return collectionID
+}
+
+// createTestUserCollection seeds a collection the user created: type = 'user' with
+// a NULL system key. This is the shape a NULL-safe system_key guard has to handle,
+// since no user collection carries a key at all.
+func createTestUserCollection(
+	t *testing.T,
+	userID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+
+	ctx := context.Background()
+	db := collectiondbtest.New(testPool)
+
+	created, err := db.CreateTestUserCollection(
+		ctx,
+		collectiondbtest.CreateTestUserCollectionParams{
+			UserID: userID,
+			Name:   name,
+		},
+	)
+	require.NoError(t, err)
+
+	return created.ID
+}
+
+// newRealCollectionService builds the real collection service against the shared
+// test pool, so tests that need the repository's transaction drive it directly.
+func newRealCollectionService(t *testing.T) collection.Service {
+	t.Helper()
+
+	return collection.NewService(
+		collection.NewRepository(
+			testPool,
+			collectiondb.New(testPool),
+		),
+	)
+}
+
 func truncateCollectionData(t *testing.T) {
 	t.Helper()
 

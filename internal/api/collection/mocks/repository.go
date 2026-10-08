@@ -41,6 +41,44 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
 }
 
+// DeleteCollection mocks base method.
+func (m *MockRepository) DeleteCollection(ctx context.Context, params collection.DeleteCollectionParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteCollection", ctx, params)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteCollection indicates an expected call of DeleteCollection.
+func (mr *MockRepositoryMockRecorder) DeleteCollection(ctx, params any) *MockRepositoryDeleteCollectionCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteCollection", reflect.TypeOf((*MockRepository)(nil).DeleteCollection), ctx, params)
+	return &MockRepositoryDeleteCollectionCall{Call: call}
+}
+
+// MockRepositoryDeleteCollectionCall wrap *gomock.Call
+type MockRepositoryDeleteCollectionCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryDeleteCollectionCall) Return(arg0 error) *MockRepositoryDeleteCollectionCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryDeleteCollectionCall) Do(f func(context.Context, collection.DeleteCollectionParams) error) *MockRepositoryDeleteCollectionCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryDeleteCollectionCall) DoAndReturn(f func(context.Context, collection.DeleteCollectionParams) error) *MockRepositoryDeleteCollectionCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // PutSavedItemIntoUserCollection mocks base method.
 func (m *MockRepository) PutSavedItemIntoUserCollection(ctx context.Context, params collection.PutSavedItemIntoUserCollectionParams) (collection.PutSavedItemIntoUserCollectionResult, error) {
 	m.ctrl.T.Helper()

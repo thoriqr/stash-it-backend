@@ -33,6 +33,43 @@ func (q *Queries) CountCollectionsNamedForUser(ctx context.Context, arg CountCol
 	return count, err
 }
 
+const countSavedItemsInCollection = `-- name: CountSavedItemsInCollection :one
+SELECT COUNT(*)
+FROM saved_items
+WHERE collection_id = $1
+`
+
+// Counts what is filed in a collection, so a test can tell "still there" from
+// "emptied" from "removed" without inferring any of it from the operation's own
+// response.
+func (q *Queries) CountSavedItemsInCollection(ctx context.Context, collectionID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSavedItemsInCollection, collectionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countSavedItemsInCollectionForUser = `-- name: CountSavedItemsInCollectionForUser :one
+SELECT COUNT(*)
+FROM saved_items
+WHERE collection_id = $1
+  AND user_id = $2
+`
+
+type CountSavedItemsInCollectionForUserParams struct {
+	CollectionID uuid.UUID
+	UserID       uuid.UUID
+}
+
+// The same count scoped by user. Used where a test must prove one user's items
+// were not reachable through another user's collection.
+func (q *Queries) CountSavedItemsInCollectionForUser(ctx context.Context, arg CountSavedItemsInCollectionForUserParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSavedItemsInCollectionForUser, arg.CollectionID, arg.UserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSystemCollectionsByKey = `-- name: CountSystemCollectionsByKey :one
 SELECT COUNT(*)
 FROM collections
@@ -121,6 +158,37 @@ func (q *Queries) CreateTestSavedItemInCollection(ctx context.Context, arg Creat
 		arg.CollectionID,
 		arg.EnrichmentStatus,
 	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createTestSystemCollection = `-- name: CreateTestSystemCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    $1,
+    $2,
+    'system',
+    $3
+)
+RETURNING id
+`
+
+type CreateTestSystemCollectionParams struct {
+	UserID    uuid.UUID
+	Name      string
+	SystemKey pgtype.Text
+}
+
+// A collection as automatic organization creates it: type = 'system' with a key
+// that is not Unsorted. Seeded directly so tests can prove that a collection's
+// type does not restrict whether the user may delete it.
+func (q *Queries) CreateTestSystemCollection(ctx context.Context, arg CreateTestSystemCollectionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createTestSystemCollection, arg.UserID, arg.Name, arg.SystemKey)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -253,6 +321,35 @@ func (q *Queries) GetSavedItemCollectionState(ctx context.Context, id uuid.UUID)
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listSavedItemCollectionsInCollection = `-- name: ListSavedItemCollectionsInCollection :many
+SELECT DISTINCT collection_id
+FROM saved_items
+WHERE id = ANY($1::uuid[])
+`
+
+// Every distinct collection a set of saved items is filed in. Used to assert that
+// a batch move put all of a collection's items somewhere, rather than asserting
+// only that the source is empty.
+func (q *Queries) ListSavedItemCollectionsInCollection(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listSavedItemCollectionsInCollection, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var collection_id uuid.UUID
+		if err := rows.Scan(&collection_id); err != nil {
+			return nil, err
+		}
+		items = append(items, collection_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setTestSavedItemEnrichmentState = `-- name: SetTestSavedItemEnrichmentState :exec

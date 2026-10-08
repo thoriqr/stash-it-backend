@@ -82,6 +82,9 @@ before any of it arrives, and it stays one when none of it does.
 - `title` stays NULL until enrichment.
 - `collection_id` is required and points to the item's current collection.
   Newly saved items go to the user's `Unsorted` collection.
+- Deleting a saved item removes only that item. Its collection stays, and the
+  response reports whether that collection is now empty so a client can decide
+  whether to remove it as a separate step.
 - `enrichment_status` starts at `pending` and is advanced by enrichment. It has
   exactly three values: `pending`, `completed`, and `failed`. Enrichment can be
   requested explicitly for one item, and it also happens automatically after a
@@ -173,6 +176,8 @@ remain independent of organizing.
 - Every newly saved item belongs to the user's `Unsorted` collection.
 - `Unsorted` is allowed to stay empty; it is never required to hold anything,
   and it is never removed when its items move elsewhere.
+- `Unsorted` can never be deleted. Every save lands there, so removing it would
+  leave saving with nowhere to go.
 
 ### Collections
 
@@ -189,10 +194,46 @@ are organized. An item may remain in `Unsorted` indefinitely.
   producing near-duplicate piles. Surrounding whitespace is not stored.
 - Names already reserved by a system collection, such as `Unsorted`, cannot be
   used for a user collection.
+- A collection is always referred to by its ID, including when saved items are
+  moved into it. Names are for people to read, so they are not a way to address
+  one.
 - Filing an item that is already in that collection succeeds and changes nothing,
   so repeating the action — or retrying after a dropped connection — is harmless.
 - Organizing never waits on or alters metadata enrichment; an item can be moved
   in any enrichment state.
+
+### Deleting a collection
+
+A collection is deleted as its own deliberate action, separately from deleting the
+items in it.
+
+- **Deleting a saved item never deletes its collection.** Removing one item leaves
+  its collection exactly as it was, empty or not. That separation is deliberate:
+  a collection holding nothing is a perfectly good state, so quietly removing one
+  would take an action nobody asked for.
+- **The delete of a saved item reports what it left behind.** It says which
+  collection the item was in, whether that collection is now empty, and whether the
+  user may delete it. This is information for the caller to act on or ignore; it is
+  not a promise about what happens next, and another request may add or remove an
+  item immediately afterwards.
+- **Removing a collection is a separate, explicit action**, and it is
+  consequential: a collection cannot disappear while saved items still belong to
+  it, so the request has to say what should happen to them.
+- **When a collection still holds saved items, the caller chooses.** Deleting them
+  along with the collection discards them; moving them files them somewhere else
+  first. The choice is never made on the caller's behalf.
+- **Moving to a collection means naming that collection.** Unsorted is a valid
+  destination and is named by its ID like any other. There is no separate way to
+  say "send them back to the inbox", and if the named destination does not exist
+  the request fails rather than quietly going somewhere else.
+- **Any collection may be deleted except Unsorted.** Whether the user named it or
+  it was created automatically makes no difference: a collection's origin is not
+  what decides this. Unsorted is the single exception, and it is recognized as
+  Unsorted rather than by what it happens to be called.
+- **Everything happens together or not at all.** If the collection cannot be
+  removed after all — because something was filed into it while the request was
+  running — nothing changes: the collection and its saved items are exactly as
+  they were, and the caller is told why.
 
 ### Automatic organization
 
@@ -233,6 +274,7 @@ Implemented:
 - Saved item detail
 - Delete a saved item
 - Collections, including filing an item into a collection of the user's own
+  and deleting a collection along with a chosen fate for its saved items
 - Basic search, across saved items and collections
 
 Saved item detail and delete were built during Phase A to complete the core loop.

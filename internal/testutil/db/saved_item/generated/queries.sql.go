@@ -124,6 +124,67 @@ func (q *Queries) CreateTestSavedItem(ctx context.Context, arg CreateTestSavedIt
 	return i, err
 }
 
+const createTestSystemCollection = `-- name: CreateTestSystemCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    $1,
+    $2,
+    'system',
+    $3
+)
+RETURNING id
+`
+
+type CreateTestSystemCollectionParams struct {
+	UserID    uuid.UUID
+	Name      string
+	SystemKey pgtype.Text
+}
+
+// A collection created by automatic organization: type = 'system' with a system
+// key that is not Unsorted. Seeded directly so tests can prove that a system
+// collection is one the user may delete exactly like one of their own.
+func (q *Queries) CreateTestSystemCollection(ctx context.Context, arg CreateTestSystemCollectionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createTestSystemCollection, arg.UserID, arg.Name, arg.SystemKey)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createTestUserCollection = `-- name: CreateTestUserCollection :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    $1,
+    $2,
+    'user',
+    NULL
+)
+RETURNING id
+`
+
+type CreateTestUserCollectionParams struct {
+	UserID uuid.UUID
+	Name   string
+}
+
+// A collection the user created. type = 'user' and system_key = NULL, which
+// collections_system_key_check requires. This is the shape that a NULL-safe
+// system_key guard has to handle, since no user collection carries a key.
+func (q *Queries) CreateTestUserCollection(ctx context.Context, arg CreateTestUserCollectionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createTestUserCollection, arg.UserID, arg.Name)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createUnsortedCollection = `-- name: CreateUnsortedCollection :one
 INSERT INTO collections (
     user_id,

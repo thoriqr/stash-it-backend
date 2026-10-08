@@ -223,6 +223,52 @@ enrichment worker, not a phase of enrichment.
 - Enrichment must never write `collection_id`. Automatic organization under
   `internal/worker/organization` is the only writer that does, and it only moves an
   item that is still in `Unsorted`.
+- **Deleting a saved item must never delete or modify its collection.**
+  `DELETE /saved-items/:id` reports the item's collection, whether that collection
+  is now empty, and whether the user may delete it. Those are advisory values read
+  after the delete, not an action. Removing a collection is a separate endpoint that
+  the caller must invoke deliberately.
+- `collection_deletable` is the conjunction of the collection being empty and not
+  being Unsorted. It is a convenience for the caller, not an authorization decision:
+  the delete endpoint re-reads the database and validates again.
+- The count backing `collection_empty` is read **after** the delete, never before,
+  and it is scoped by `collection_id AND user_id`. There is deliberately no
+  transaction around the delete and its two reads: under READ COMMITTED each
+  statement takes its own snapshot either way, and there is no state to keep
+  consistent because nothing is being acted on.
+
+**Deleting a collection** is `DELETE /collections/:id`, mounted on its own
+`/collections` group rather than under `/saved-items`, so it cannot collide with
+`DELETE /saved-items/:id`.
+
+- It is owner-scoped by `id AND user_id`, and unknown and foreign collections
+  produce the same not-found error.
+- **Unsorted cannot be deleted, and `system_key` is the only test for it.** Never
+  use `type` or the display name. `type = 'system'` describes who created a
+  collection, not what it is, so a system collection is deletable like any other.
+- The request body is a stable two-field shape: `saved_items_action` is `delete` or
+  `move`, and `target_collection_id` must be null for `delete` and a collection id
+  for `move`. Both fields always exist and never change meaning. Nothing is
+  defaulted — the two actions have opposite consequences and one destroys content,
+  so an absent or contradictory action or target is a 400, never a guess.
+- Unsorted is an ordinary move target named by its id. There is no
+  `move_to_unsorted` flag, no fallback to Unsorted when a target is missing, and no
+  collection-name addressing.
+- **The repository owns the whole operation as one transaction:** load the source,
+  refuse Unsorted, resolve the target when moving, delete or move the children,
+  then delete the collection. The children must be disposed of first because
+  `saved_items.collection_id` is `NOT NULL`, so the collection cannot go first.
+- Nothing is taken `FOR UPDATE`. The move endpoint locks a saved item and then
+  touches a collection, so locking the collection first here would invert that order
+  and risk deadlock. Emptiness is decided by the foreign key at the final DELETE
+  rather than by a read, which is both race-free and cheaper.
+- `saved_items_collection_id_fkey` remains the final guard. When a saved item is
+  filed into the collection mid-operation the constraint refuses, the transaction
+  rolls back, and the caller is told `COLLECTION_NOT_EMPTY`. Map that violation by
+  `ConstraintName`; do not replace it with an application pre-check, and never
+  change it to `ON DELETE CASCADE`.
+- `MoveSavedItemsToCollection` exists only as the moving half of this operation.
+  It is not a general batch move and no endpoint exposes one on its own.
 - Collection names are compared and stored the way `lower(btrim(name))` and a
   trimmed display name already define. Reuse that semantics rather than writing a
   second normalization: a collection whose stored name disagrees with the name the
@@ -295,8 +341,13 @@ swag init -g cmd/api/main.go -parseInternal
 Features live under `internal/api/`. Follow the existing `sqlc.yaml` mapping for
 the relevant feature.
 
-`collection` mounts under the same `/saved-items` prefix as `saved_item`
-(`PUT /saved-items/:id/collection`); its module registers independently.
+`collection` registers two groups. Its saved-item-scoped endpoint mounts under the
+same `/saved-items` prefix as `saved_item` (`PUT /saved-items/:id/collection`), and
+its own resource mounts at `/collections` (`DELETE /collections/:id`). Fiber groups
+are additive, so neither registration touches the routes the other already
+registers. The split is deliberate: `DELETE /saved-items/:id` deletes a saved item
+and `DELETE /collections/:id` deletes a collection, and sharing one group would let
+one shadow the other.
 
 ## API documentation
 

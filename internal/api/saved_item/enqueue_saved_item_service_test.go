@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -209,12 +210,23 @@ func TestService_DoesNotEnqueueOnReadsOrDeletes(t *testing.T) {
 	_, err = svc.List(context.Background(), userID, 1, 20)
 	require.NoError(t, err)
 
+	// The delete now also reads the collection the item was in, to report whether
+	// it became empty. Those are reads: a delete still schedules no work at all.
 	repo.EXPECT().
 		DeleteSavedItemByIDForUser(gomock.Any(), userID, savedItemID).
-		Return(nil)
+		Return(saved_item.DeletedSavedItem{
+			ID:           savedItemID,
+			CollectionID: uuid.New(),
+		}, nil)
 
-	require.NoError(
-		t,
-		svc.Delete(context.Background(), userID, savedItemID),
-	)
+	repo.EXPECT().
+		CountSavedItemsInCollection(gomock.Any(), userID, gomock.Any()).
+		Return(int64(0), nil)
+
+	repo.EXPECT().
+		GetCollectionSystemKeyForUser(gomock.Any(), userID, gomock.Any()).
+		Return(pgtype.Text{}, nil)
+
+	_, err = svc.Delete(context.Background(), userID, savedItemID)
+	require.NoError(t, err)
 }

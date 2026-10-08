@@ -138,6 +138,16 @@ func (h *Handler) Get(c fiber.Ctx) error {
 // @Description Delete one of the current user's saved items by ID. A saved item
 // that does not exist and one owned by another user both return the same not
 // found response, so this endpoint never discloses whether an ID exists.
+// @Description Deleting a saved item never deletes its collection. The collection
+// the item was in is left exactly as it is, and the response reports what that
+// delete left behind so the caller can decide what to do next.
+// @Description The response returns the collection_id of the deleted saved item,
+// whether that collection is now empty (collection_empty), and whether the user may
+// delete it now (collection_deletable, which is collection_empty and the collection
+// not being Unsorted).
+// @Description These are advisory values, not a guarantee. Another request may add
+// or remove a saved item immediately afterwards. Deleting a collection is a
+// separate, explicit operation that re-reads the database and validates again.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - RESOURCE_NOT_FOUND
@@ -172,17 +182,21 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 		)
 	}
 
-	if err := h.service.Delete(
+	result, err := h.service.Delete(
 		c.Context(),
 		userID,
 		savedItemID,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 
-	return httpx.OKMessage(
+	response := mapDeleteSavedItemResponse(result)
+
+	return httpx.OK(
 		c,
 		"saved item deleted successfully",
+		&response,
 	)
 }
 

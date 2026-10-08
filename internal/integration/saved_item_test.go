@@ -3,10 +3,12 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -468,13 +470,13 @@ func TestSavedItem_Get(t *testing.T) {
 		var body struct {
 			Data struct {
 				SavedItem struct {
-					ID        string     `json:"id"`
-					URL       string     `json:"url"`
-					Domain    *string    `json:"domain"`
-					Platform  *string    `json:"platform"`
-					Title     *string    `json:"title"`
-					CreatedAt time.Time  `json:"created_at"`
-					UpdatedAt time.Time  `json:"updated_at"`
+					ID        string    `json:"id"`
+					URL       string    `json:"url"`
+					Domain    *string   `json:"domain"`
+					Platform  *string   `json:"platform"`
+					Title     *string   `json:"title"`
+					CreatedAt time.Time `json:"created_at"`
+					UpdatedAt time.Time `json:"updated_at"`
 				} `json:"saved_item"`
 			} `json:"data"`
 			Message string `json:"message"`
@@ -822,6 +824,166 @@ func detailBodyKeys(t *testing.T, raw map[string]any) []string {
 	return keys
 }
 
+// deleteSavedItemData is what DELETE /saved-items/:id reports about the
+// collection the deleted item was in. It is decoded here rather than reusing the
+// API response type so the integration suite asserts the wire shape itself.
+type deleteSavedItemData struct {
+	CollectionID        string `json:"collection_id"`
+	CollectionEmpty     bool   `json:"collection_empty"`
+	CollectionDeletable bool   `json:"collection_deletable"`
+}
+
+// deleteSavedItem calls the endpoint and returns the decoded collection report.
+func deleteSavedItem(
+	t *testing.T,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+) (int, deleteSavedItemData) {
+	t.Helper()
+
+	accessToken := newTestAccessToken(t, userID)
+
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/saved-items/"+savedItemID.String(),
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+
+	var body struct {
+		Data    deleteSavedItemData `json:"data"`
+		Message string              `json:"message"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	return resp.StatusCode, body.Data
+}
+
+// seedSavedItemInCollection files one saved item into a collection and returns
+// its id. Used to build collections with a known number of items before deleting
+// one of them.
+func seedSavedItemInCollection(
+	t *testing.T,
+	ctx context.Context,
+	db *saveditemdbtest.Queries,
+	userID uuid.UUID,
+	collectionID uuid.UUID,
+	url string,
+) uuid.UUID {
+	t.Helper()
+
+	created, err := db.CreateTestSavedItem(
+		ctx,
+		saveditemdbtest.CreateTestSavedItemParams{
+			UserID:       userID,
+			Url:          url,
+			Domain:       testText("example.com"),
+			CollectionID: collectionID,
+			CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	)
+	require.NoError(t, err)
+
+	return created.ID
+}
+
+// createUserCollection seeds a collection the user created: type = 'user' with a
+// NULL system key.
+func createUserCollection(
+	t *testing.T,
+	ctx context.Context,
+	db *saveditemdbtest.Queries,
+	userID uuid.UUID,
+	name string,
+) uuid.UUID {
+	t.Helper()
+
+	collectionID, err := db.CreateTestUserCollection(
+		ctx,
+		saveditemdbtest.CreateTestUserCollectionParams{
+			UserID: userID,
+			Name:   name,
+		},
+	)
+	require.NoError(t, err)
+
+	return collectionID
+}
+
+// createSystemCollection seeds a collection that automatic organization would
+// have created: type = 'system' with a key that is not Unsorted.
+func createSystemCollection(
+	t *testing.T,
+	ctx context.Context,
+	db *saveditemdbtest.Queries,
+	userID uuid.UUID,
+	name string,
+	systemKey string,
+) uuid.UUID {
+	t.Helper()
+
+	collectionID, err := db.CreateTestSystemCollection(
+		ctx,
+		saveditemdbtest.CreateTestSystemCollectionParams{
+			UserID:    userID,
+			Name:      name,
+			SystemKey: testText(systemKey),
+		},
+	)
+	require.NoError(t, err)
+
+	return collectionID
+}
+
+// collectionExists reports whether a collection row is still there, which is what
+// tells "emptied but kept" apart from "removed".
+func collectionExists(
+	t *testing.T,
+	collectionID uuid.UUID,
+) bool {
+	t.Helper()
+
+	var exists bool
+
+	err := testPool.QueryRow(
+		context.Background(),
+		"SELECT EXISTS(SELECT 1 FROM collections WHERE id = $1)",
+		collectionID,
+	).Scan(&exists)
+	require.NoError(t, err)
+
+	return exists
+}
+
+// savedItemCollectionID reads an item's current collection, or uuid.Nil when the
+// item is gone.
+func savedItemCollectionID(
+	t *testing.T,
+	savedItemID uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+
+	var collectionID uuid.UUID
+
+	err := testPool.QueryRow(
+		context.Background(),
+		"SELECT collection_id FROM saved_items WHERE id = $1",
+		savedItemID,
+	).Scan(&collectionID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil
+	}
+
+	require.NoError(t, err)
+
+	return collectionID
+}
+
 func TestSavedItem_Delete(t *testing.T) {
 	t.Run("deletes a saved item belonging to the authenticated user", func(t *testing.T) {
 		ctx := context.Background()
@@ -869,14 +1031,32 @@ func TestSavedItem_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		var body struct {
-			Data    any    `json:"data"`
-			Message string `json:"message"`
+			Data    deleteSavedItemData `json:"data"`
+			Message string              `json:"message"`
 		}
 
 		require.NoError(t, json.Unmarshal(raw, &body))
 		require.Equal(t, "saved item deleted successfully", body.Message)
-		require.Nil(t, body.Data)
-		require.JSONEq(t, `{"data":null,"message":"saved item deleted successfully"}`, string(raw))
+
+		// The item was in Unsorted, which had nothing else in it, so the
+		// collection is reported empty and explicitly not deletable: Unsorted is
+		// the one collection a user may never remove.
+		require.Equal(t, unsortedCollectionID, mustParseUUID(t, body.Data.CollectionID))
+		require.True(t, body.Data.CollectionEmpty)
+		require.False(t, body.Data.CollectionDeletable)
+
+		require.JSONEq(
+			t,
+			`{
+				"data": {
+					"collection_id": "`+unsortedCollectionID.String()+`",
+					"collection_empty": true,
+					"collection_deletable": false
+				},
+				"message": "saved item deleted successfully"
+			}`,
+			string(raw),
+		)
 
 		_, err = db.GetSavedItemState(ctx, created.ID)
 		require.Error(t, err)
@@ -885,6 +1065,10 @@ func TestSavedItem_Delete(t *testing.T) {
 		count, err := db.CountSavedItemsForUser(ctx, userID)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), count)
+
+		// The collection is reported, never removed. That separation is the whole
+		// point of this endpoint.
+		require.True(t, collectionExists(t, unsortedCollectionID))
 	})
 
 	t.Run("deleting the same item twice returns not found", func(t *testing.T) {
@@ -1266,6 +1450,488 @@ func TestSavedItem_Delete(t *testing.T) {
 	})
 }
 
+// Deleting one of several items reports a collection that is not empty and
+// therefore not deletable.
+func TestSavedItem_Delete_ReportsCollectionState(t *testing.T) {
+	t.Run("a collection with other items is reported not empty", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-multiple@example.com",
+				DisplayName: "Saved Item Delete Multiple User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, userID)
+
+		wishlistID := createUserCollection(t, ctx, db, userID, "Wishlist")
+
+		deleted := seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/wishlist/1",
+		)
+
+		// A second item is what makes this collection not empty afterwards.
+		seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/wishlist/2",
+		)
+
+		status, data := deleteSavedItem(t, userID, deleted)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, wishlistID, mustParseUUID(t, data.CollectionID))
+		require.False(t, data.CollectionEmpty)
+		require.False(t, data.CollectionDeletable)
+
+		require.True(t, collectionExists(t, wishlistID))
+		require.Equal(
+			t,
+			int64(1),
+			countSavedItemsInCollection(t, wishlistID),
+		)
+	})
+
+	t.Run("the last item of a user collection makes it empty and deletable", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-last-user@example.com",
+				DisplayName: "Saved Item Delete Last User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, userID)
+
+		wishlistID := createUserCollection(t, ctx, db, userID, "Wishlist")
+
+		only := seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/wishlist/only",
+		)
+
+		status, data := deleteSavedItem(t, userID, only)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, wishlistID, mustParseUUID(t, data.CollectionID))
+		require.True(t, data.CollectionEmpty)
+		require.True(
+			t,
+			data.CollectionDeletable,
+			"a user collection emptied by deleting its last item is one the user may delete",
+		)
+
+		// Reported, not removed.
+		require.True(t, collectionExists(t, wishlistID))
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, wishlistID))
+	})
+
+	// Type is not the criterion. A collection automatic organization created is
+	// one the user may delete exactly like one they named themselves, because
+	// 'system' says who created it, not what it is.
+	t.Run("the last item of a system collection is deletable too", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-system@example.com",
+				DisplayName: "Saved Item Delete System User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, userID)
+
+		youtubeID := createSystemCollection(
+			t, ctx, db, userID, "YouTube", "youtube",
+		)
+
+		only := seedSavedItemInCollection(
+			t, ctx, db, userID, youtubeID, "https://example.com/watch?v=1",
+		)
+
+		status, data := deleteSavedItem(t, userID, only)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, youtubeID, mustParseUUID(t, data.CollectionID))
+		require.True(t, data.CollectionEmpty)
+		require.True(t, data.CollectionDeletable)
+
+		require.True(t, collectionExists(t, youtubeID))
+	})
+
+	// Unsorted is the single exception, and it is recognised by its stable key.
+	t.Run("an emptied Unsorted collection is empty but never deletable", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-unsorted-only@example.com",
+				DisplayName: "Saved Item Delete Unsorted Only User",
+			},
+		)
+		require.NoError(t, err)
+
+		unsortedID := createUnsortedCollection(t, ctx, db, userID)
+
+		only := seedSavedItemInCollection(
+			t, ctx, db, userID, unsortedID, "https://example.com/only-in-inbox",
+		)
+
+		status, data := deleteSavedItem(t, userID, only)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, unsortedID, mustParseUUID(t, data.CollectionID))
+		require.True(t, data.CollectionEmpty)
+		require.False(
+			t,
+			data.CollectionDeletable,
+			"Unsorted is the one collection a user may never delete",
+		)
+
+		require.True(t, collectionExists(t, unsortedID))
+	})
+
+	t.Run("Unsorted with other items is reported not empty", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-unsorted-many@example.com",
+				DisplayName: "Saved Item Delete Unsorted Many User",
+			},
+		)
+		require.NoError(t, err)
+
+		unsortedID := createUnsortedCollection(t, ctx, db, userID)
+
+		deleted := seedSavedItemInCollection(
+			t, ctx, db, userID, unsortedID, "https://example.com/inbox/1",
+		)
+
+		seedSavedItemInCollection(
+			t, ctx, db, userID, unsortedID, "https://example.com/inbox/2",
+		)
+
+		status, data := deleteSavedItem(t, userID, deleted)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, unsortedID, mustParseUUID(t, data.CollectionID))
+		require.False(t, data.CollectionEmpty)
+		require.False(t, data.CollectionDeletable)
+
+		require.True(t, collectionExists(t, unsortedID))
+	})
+
+	// The reported collection must be the deleted item's own, not one read
+	// beforehand. An item filed into one collection after being created in
+	// another is the case where the two answers differ.
+	t.Run("the reported collection is the deleted item's own", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-moved@example.com",
+				DisplayName: "Saved Item Delete Moved User",
+			},
+		)
+		require.NoError(t, err)
+
+		unsortedID := createUnsortedCollection(t, ctx, db, userID)
+		wishlistID := createUserCollection(t, ctx, db, userID, "Wishlist")
+
+		item := seedSavedItemInCollection(
+			t, ctx, db, userID, unsortedID, "https://example.com/moved-then-deleted",
+		)
+
+		// File it through the real collection endpoint, so the item's collection is
+		// changed by the same path a user would change it.
+		svc := newCollectionService(t)
+
+		_, err = svc.PutSavedItem(ctx, userID, item, "Wishlist")
+		require.NoError(t, err)
+
+		require.Equal(t, wishlistID, savedItemCollectionID(t, item))
+
+		status, data := deleteSavedItem(t, userID, item)
+
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(
+			t,
+			wishlistID,
+			mustParseUUID(t, data.CollectionID),
+			"the report must name the collection the item was actually in",
+		)
+
+		// Unsorted was left empty by the move and is not what the report names.
+		require.True(t, collectionExists(t, unsortedID))
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, unsortedID))
+		require.True(t, collectionExists(t, wishlistID))
+	})
+
+	// A foreign item fails on the delete, so the collection is never read and the
+	// owner's collection is untouched.
+	t.Run("a foreign item reports nothing and leaves the collection alone", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		ownerID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-report-owner@example.com",
+				DisplayName: "Saved Item Delete Report Owner User",
+			},
+		)
+		require.NoError(t, err)
+
+		otherUserID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-report-other@example.com",
+				DisplayName: "Saved Item Delete Report Other User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, ownerID)
+		createUnsortedCollection(t, ctx, db, otherUserID)
+
+		ownerWishlistID := createUserCollection(t, ctx, db, ownerID, "Wishlist")
+
+		item := seedSavedItemInCollection(
+			t, ctx, db, ownerID, ownerWishlistID, "https://example.com/owners",
+		)
+
+		// Another user's collection with no items, which would be reported
+		// deletable if the ownership scoping on the collection reads were absent.
+		otherWishlistID := createUserCollection(t, ctx, db, otherUserID, "Wishlist")
+
+		status, data := deleteSavedItem(t, otherUserID, item)
+
+		require.Equal(t, http.StatusNotFound, status)
+		require.Equal(t, deleteSavedItemData{}, data)
+
+		require.Equal(t, ownerWishlistID, savedItemCollectionID(t, item))
+		require.Equal(t, int64(1), countSavedItemsInCollection(t, ownerWishlistID))
+		require.True(t, collectionExists(t, ownerWishlistID))
+		require.True(t, collectionExists(t, otherWishlistID))
+	})
+}
+
+// Concurrency coverage asserts invariants, because PostgreSQL decides the order
+// and no particular interleaving is guaranteed.
+func TestSavedItem_Delete_Concurrency(t *testing.T) {
+	// Two clients deleting the last two items of one collection must both succeed
+	// and must never corrupt the collection. Both may be told the collection is
+	// empty, because each count is its own snapshot and both deletes can commit
+	// first; the assertions below cover the invariants that hold either way.
+	t.Run("concurrent deletes of the last two items stay consistent", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-concurrent@example.com",
+				DisplayName: "Saved Item Delete Concurrent User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, userID)
+
+		wishlistID := createUserCollection(t, ctx, db, userID, "Wishlist")
+
+		first := seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/race/1",
+		)
+		second := seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/race/2",
+		)
+
+		const callers = 2
+
+		type outcome struct {
+			status int
+			data   deleteSavedItemData
+		}
+
+		results := make([]outcome, callers)
+
+		var wg sync.WaitGroup
+
+		for i, itemID := range []uuid.UUID{first, second} {
+			wg.Add(1)
+
+			go func(index int, id uuid.UUID) {
+				defer wg.Done()
+
+				status, data := deleteSavedItem(t, userID, id)
+				results[index] = outcome{status: status, data: data}
+			}(i, itemID)
+		}
+
+		wg.Wait()
+
+		for i, res := range results {
+			require.Equal(
+				t,
+				http.StatusOK,
+				res.status,
+				"caller %d must succeed",
+				i,
+			)
+
+			// Both reports name the one collection, which is the invariant that
+			// matters: no caller was told about a collection it did not delete from.
+			require.Equal(
+				t,
+				wishlistID,
+				mustParseUUID(t, res.data.CollectionID),
+				"caller %d was told about the wrong collection",
+				i,
+			)
+
+			// The report is a conjunction, so a caller can never be told a collection
+			// is deletable without also being told it is empty.
+			if res.data.CollectionDeletable {
+				require.True(
+					t,
+					res.data.CollectionEmpty,
+					"caller %d was told an emptier state that contradicts the other",
+					i,
+				)
+			}
+		}
+
+		// Both callers may report the collection empty, and that is correct rather
+		// than a race defect. Each count is a separate statement taking its own
+		// snapshot under READ COMMITTED, so when both deletes commit before either
+		// count runs, both observe zero and both are right.
+		//
+		// A caller reporting "not empty" is the only stale answer possible, and it
+		// merely means that caller skips an optional cleanup. No interleaving can
+		// produce a wrong collection id, a lost delete, or a collection that is not
+		// really in the state reported.
+		require.Equal(
+			t,
+			int64(0),
+			countSavedItemsInCollection(t, wishlistID),
+			"the collection really is empty, whatever the reports said",
+		)
+
+		// Both rows are gone, the collection is intact and empty, and the report
+		// never touched it.
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, wishlistID))
+		require.True(t, collectionExists(t, wishlistID))
+		require.Equal(t, int64(0), countSavedItemsForUser(t, ctx, db, userID))
+	})
+
+	// The same item deleted twice concurrently is one success and one not found,
+	// exactly as deleting it twice in sequence is. The delete statement itself
+	// serializes the two, so the loser finds no row.
+	t.Run("concurrent duplicate deletes give one success and one not found", func(t *testing.T) {
+		ctx := context.Background()
+		db := saveditemdbtest.New(testPool)
+
+		require.NoError(t, db.TruncateSavedItemData(ctx))
+
+		userID, err := db.CreateSavedItemUser(
+			ctx,
+			saveditemdbtest.CreateSavedItemUserParams{
+				Email:       "saved-item-delete-duplicate@example.com",
+				DisplayName: "Saved Item Delete Duplicate User",
+			},
+		)
+		require.NoError(t, err)
+
+		createUnsortedCollection(t, ctx, db, userID)
+
+		wishlistID := createUserCollection(t, ctx, db, userID, "Wishlist")
+
+		item := seedSavedItemInCollection(
+			t, ctx, db, userID, wishlistID, "https://example.com/duplicate",
+		)
+
+		const callers = 2
+
+		statuses := make([]int, callers)
+		reports := make([]deleteSavedItemData, callers)
+
+		var wg sync.WaitGroup
+
+		for i := range callers {
+			wg.Add(1)
+
+			go func(index int) {
+				defer wg.Done()
+
+				status, data := deleteSavedItem(t, userID, item)
+				statuses[index] = status
+				reports[index] = data
+			}(i)
+		}
+
+		wg.Wait()
+
+		successes := 0
+		notFounds := 0
+
+		for i, status := range statuses {
+			switch status {
+			case http.StatusOK:
+				successes++
+
+				// Exactly the caller that deleted the row is told anything at all.
+				require.Equal(t, wishlistID, mustParseUUID(t, reports[i].CollectionID))
+			case http.StatusNotFound:
+				notFounds++
+
+				// The loser must report nothing: it deleted no row, so it has no
+				// collection to describe.
+				require.Equal(t, deleteSavedItemData{}, reports[i])
+			default:
+				t.Fatalf("caller %d returned unexpected status %d", i, status)
+			}
+		}
+
+		require.Equal(t, 1, successes)
+		require.Equal(t, 1, notFounds)
+
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, wishlistID))
+		require.True(t, collectionExists(t, wishlistID))
+	})
+}
+
 func TestSavedItem_List(t *testing.T) {
 	t.Run("returns the current user's items newest first", func(t *testing.T) {
 		ctx := context.Background()
@@ -1526,4 +2192,3 @@ func TestSavedItem_List(t *testing.T) {
 		require.Equal(t, "INVALID_AUTHORIZATION_HEADER", body.Error.Code)
 	})
 }
-

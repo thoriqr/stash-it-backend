@@ -5,6 +5,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// SavedItemsAction is what a collection deletion should do with the saved items
+// currently filed in the collection being removed.
+//
+// It is an explicit choice rather than a default, and there is deliberately no
+// third option. A collection holding saved items cannot simply disappear, because
+// saved_items.collection_id is NOT NULL and the foreign key protects those items;
+// so a deletion must state where they go. Staying silent would leave the backend to
+// choose between destroying a user's saved items and losing them some other way.
+type SavedItemsAction string
+
+const (
+	// SavedItemsActionDelete deletes the collection's saved items along with the
+	// collection. The caller's choice: the items are being discarded deliberately.
+	SavedItemsActionDelete SavedItemsAction = "delete"
+
+	// SavedItemsActionMove files the collection's saved items into another
+	// collection, named by id, and then deletes the collection.
+	//
+	// Unsorted is a valid target and is referred to by its id like any other
+	// collection. There is no separate mode for it, because there is nothing about
+	// it that needs different handling.
+	SavedItemsActionMove SavedItemsAction = "move"
+)
+
+// DeleteCollectionParams is one validated request to delete a collection.
+type DeleteCollectionParams struct {
+	UserID       uuid.UUID
+	CollectionID uuid.UUID
+
+	// Action is what happens to the saved items in the collection. It is always
+	// one of the two values above: the service rejects anything else rather than
+	// choosing on the caller's behalf.
+	Action SavedItemsAction
+
+	// TargetCollectionID is where the saved items go when Action is
+	// SavedItemsActionMove, and is unused otherwise. The service requires it for
+	// 'move' and refuses it for 'delete', so this field always carries a decision
+	// rather than a default.
+	TargetCollectionID uuid.UUID
+}
+
 type CollectionType string
 
 const (

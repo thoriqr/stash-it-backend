@@ -33,7 +33,19 @@ type Repository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
-	) error
+	) (DeletedSavedItem, error)
+
+	CountSavedItemsInCollection(
+		ctx context.Context,
+		userID uuid.UUID,
+		collectionID uuid.UUID,
+	) (int64, error)
+
+	GetCollectionSystemKeyForUser(
+		ctx context.Context,
+		userID uuid.UUID,
+		collectionID uuid.UUID,
+	) (pgtype.Text, error)
 
 	ListSavedItems(
 		ctx context.Context,
@@ -144,8 +156,8 @@ func (r *repository) DeleteSavedItemByIDForUser(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
-) error {
-	_, err := r.queries.DeleteSavedItemByIDForUser(
+) (DeletedSavedItem, error) {
+	row, err := r.queries.DeleteSavedItemByIDForUser(
 		ctx,
 		saveditemdb.DeleteSavedItemByIDForUserParams{
 			ID:     savedItemID,
@@ -157,13 +169,75 @@ func (r *repository) DeleteSavedItemByIDForUser(
 		// item and an item owned by another user both return no row, so both
 		// surface as the same not found error.
 		if errors.Is(err, pgx.ErrNoRows) {
-			return apperror.NotFound(err)
+			return DeletedSavedItem{}, apperror.NotFound(err)
 		}
 
-		return internalError(err)
+		return DeletedSavedItem{}, internalError(err)
 	}
 
-	return nil
+	return DeletedSavedItem{
+		ID:           row.ID,
+		CollectionID: row.CollectionID,
+	}, nil
+}
+
+// CountSavedItemsInCollection reports how many saved items a collection still
+// holds.
+//
+// The caller runs this after the delete has committed, so the row that was just
+// removed is already gone and is never counted. The answer is a fresh
+// observation rather than a promise: another request may add or remove an item
+// immediately afterwards, and anything that acts on this count re-reads the
+// database before committing to a change.
+func (r *repository) CountSavedItemsInCollection(
+	ctx context.Context,
+	userID uuid.UUID,
+	collectionID uuid.UUID,
+) (int64, error) {
+	count, err := r.queries.CountSavedItemsInCollection(
+		ctx,
+		saveditemdb.CountSavedItemsInCollectionParams{
+			CollectionID: collectionID,
+			UserID:       userID,
+		},
+	)
+	if err != nil {
+		return 0, internalError(err)
+	}
+
+	return count, nil
+}
+
+// GetCollectionSystemKeyForUser returns the stable identity of one of the user's
+// collections.
+//
+// A collection that does not exist, or belongs to another user, returns an unset
+// value rather than an error. That is deliberate and not a swallowed failure:
+// the only question this answers is whether the collection is the protected
+// Unsorted one, and a collection that is not there is not it. Turning it into an
+// error would make an ordinary outcome, a collection another request removed in
+// between, read as a server fault.
+func (r *repository) GetCollectionSystemKeyForUser(
+	ctx context.Context,
+	userID uuid.UUID,
+	collectionID uuid.UUID,
+) (pgtype.Text, error) {
+	systemKey, err := r.queries.GetCollectionSystemKeyForUser(
+		ctx,
+		saveditemdb.GetCollectionSystemKeyForUserParams{
+			ID:     collectionID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return pgtype.Text{}, nil
+		}
+
+		return pgtype.Text{}, internalError(err)
+	}
+
+	return systemKey, nil
 }
 
 func (r *repository) ListSavedItems(

@@ -18,6 +18,42 @@ definitions:
         example: "2026-10-02T10:30:00Z"
         type: string
     type: object
+  collection.DeleteCollectionAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: collection deleted successfully
+        type: string
+    type: object
+  collection.DeleteCollectionRequest:
+    properties:
+      saved_items_action:
+        allOf:
+        - $ref: '#/definitions/collection.SavedItemsAction'
+        description: |-
+          SavedItemsAction is what to do with the collection's saved items.
+
+          "delete" removes them along with the collection. "move" files them into
+          target_collection_id first, and then removes the collection. Both are
+          required: the request must say which, because the two are not variants of a
+          single outcome and one of them discards saved items.
+        enum:
+        - delete
+        - move
+        example: delete
+      target_collection_id:
+        description: |-
+          TargetCollectionID is where the saved items go when SavedItemsAction is
+          "move".
+
+          It must be a collection id and must be null when SavedItemsAction is
+          "delete". Unsorted is a valid target and is named here by its id, like any
+          other collection; there is no separate mode or flag for it, and no fallback
+          to it. A target that does not exist is an error rather than a substitution.
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
   collection.PutSavedItemIntoCollectionAPIResponse:
     properties:
       data:
@@ -89,6 +125,14 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  collection.SavedItemsAction:
+    enum:
+    - delete
+    - move
+    type: string
+    x-enum-varnames:
+    - SavedItemsActionDelete
+    - SavedItemsActionMove
   enrichment.EnrichSavedItemAPIResponse:
     properties:
       data:
@@ -589,9 +633,27 @@ definitions:
   saved_item.DeleteSavedItemAPIResponse:
     properties:
       data:
-        type: object
+        $ref: '#/definitions/saved_item.DeleteSavedItemResponse'
       message:
         example: saved item deleted successfully
+        type: string
+    type: object
+  saved_item.DeleteSavedItemResponse:
+    properties:
+      collection_deletable:
+        description: |-
+          CollectionDeletable is true when the collection is now empty and is not the
+          Unsorted collection.
+        example: true
+        type: boolean
+      collection_empty:
+        description: |-
+          CollectionEmpty is true when the collection held no other saved item once
+          this one was gone.
+        example: true
+        type: boolean
+      collection_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
     type: object
   saved_item.GetSavedItemAPIResponse:
@@ -1940,6 +2002,75 @@ paths:
       summary: Revoke session
       tags:
       - Session
+  /collections/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Delete one of the current user's collections by ID. The request must
+        saved_items_action is required and must be "delete" or "move".
+        "delete" deletes those saved items along with the collection. "move"
+        target_collection_id must be null when saved_items_action is
+        Unsorted itself cannot be deleted. It is identified by its
+        The whole operation is atomic. The saved items are deleted or moved
+        The collection must belong to the authenticated user. A collection
+        Possible error codes:
+        - BAD_REQUEST
+        - INVALID_COLLECTION_DELETE_ACTION
+        - INVALID_COLLECTION_DELETE_TARGET
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - COLLECTION_NOT_FOUND
+        - COLLECTION_DELETE_TARGET_NOT_FOUND
+        - UNSORTED_COLLECTION_PROTECTED
+        - COLLECTION_NOT_EMPTY
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Collection ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Delete collection request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/collection.DeleteCollectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/collection.DeleteCollectionAPIResponse'
+        "400":
+          description: Invalid collection ID, action or target
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Collection or target collection not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Unsorted collection, or collection is not empty
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a collection
+      tags:
+      - Collection
   /saved-items:
     get:
       description: |-
@@ -2037,6 +2168,9 @@ paths:
     delete:
       description: |-
         Delete one of the current user's saved items by ID. A saved item
+        Deleting a saved item never deletes its collection. The collection
+        The response returns the collection_id of the deleted saved item,
+        These are advisory values, not a guarantee. Another request may add
         Possible error codes:
         - BAD_REQUEST
         - RESOURCE_NOT_FOUND

@@ -65,6 +65,110 @@ func (q *Queries) CreateUserCollection(ctx context.Context, arg CreateUserCollec
 	return i, err
 }
 
+const deleteCollectionByIDForUser = `-- name: DeleteCollectionByIDForUser :one
+DELETE FROM collections
+WHERE id = $1
+  AND user_id = $2
+RETURNING id
+`
+
+type DeleteCollectionByIDForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Removes one collection of the authenticated user.
+//
+// This is the last step of the delete and it is still protected by
+// saved_items_collection_id_fkey, which is ON DELETE RESTRICT. By this point the
+// operation has either deleted or moved every saved item out of this collection,
+// so the constraint has nothing left to block. If something was filed into the
+// collection after that and before this statement, the constraint refuses and the
+// whole transaction rolls back, leaving the collection and its items as they were.
+// The database is the final authority here rather than an application check, so
+// there is no window for a race to slip through.
+//
+// collection_id alone would not establish ownership, so user_id is matched too.
+func (q *Queries) DeleteCollectionByIDForUser(ctx context.Context, arg DeleteCollectionByIDForUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteCollectionByIDForUser, arg.ID, arg.UserID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const deleteSavedItemsInCollection = `-- name: DeleteSavedItemsInCollection :exec
+DELETE FROM saved_items
+WHERE collection_id = $1
+  AND user_id = $2
+`
+
+type DeleteSavedItemsInCollectionParams struct {
+	CollectionID uuid.UUID
+	UserID       uuid.UUID
+}
+
+// Deletes every saved item of the authenticated user that is filed in this
+// collection. This is the 'delete' disposition of a collection deletion.
+//
+// Matched by collection_id AND user_id so no item belonging to anybody else can be
+// reached. Migration 000025's composite foreign key already guarantees that items
+// filed in this collection belong to this collection's owner, so the user_id
+// predicate cannot change the outcome; it states the intent.
+//
+// saved_items_collection_id_idx is the index behind this, the same one that backs
+// the ON DELETE RESTRICT check.
+func (q *Queries) DeleteSavedItemsInCollection(ctx context.Context, arg DeleteSavedItemsInCollectionParams) error {
+	_, err := q.db.Exec(ctx, deleteSavedItemsInCollection, arg.CollectionID, arg.UserID)
+	return err
+}
+
+const getCollectionByIDForUser = `-- name: GetCollectionByIDForUser :one
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE id = $1
+  AND user_id = $2
+`
+
+type GetCollectionByIDForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Reads one collection of the authenticated user.
+//
+// Matching id AND user_id means a collection that does not exist and one owned by
+// another user both return no row, so both surface as the same not found error and
+// the delete endpoint never discloses whether an id exists for somebody else.
+//
+// No row is taken FOR UPDATE. That is deliberate and it is what keeps this
+// operation deadlock-free against the move endpoint: PutSavedItemIntoUserCollection
+// locks a saved item first and then touches a collection, so taking the
+// collection's lock here, before the child rows, would invert that order and two
+// requests could wait on each other. Emptiness is not decided by this read anyway,
+// so nothing here needs to be held. The foreign key's own row locks serialise the
+// part that does.
+func (q *Queries) GetCollectionByIDForUser(ctx context.Context, arg GetCollectionByIDForUserParams) (Collection, error) {
+	row := q.db.QueryRow(ctx, getCollectionByIDForUser, arg.ID, arg.UserID)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Type,
+		&i.SystemKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserCollectionByNameForUser = `-- name: GetUserCollectionByNameForUser :one
 SELECT
     id,
@@ -230,4 +334,39 @@ func (q *Queries) MoveSavedItemToCollection(ctx context.Context, arg MoveSavedIt
 		&i.CollectionID,
 	)
 	return i, err
+}
+
+const moveSavedItemsToCollection = `-- name: MoveSavedItemsToCollection :exec
+UPDATE saved_items
+SET collection_id = $1
+WHERE collection_id = $2
+  AND user_id = $3
+`
+
+type MoveSavedItemsToCollectionParams struct {
+	TargetCollectionID uuid.UUID
+	CollectionID       uuid.UUID
+	UserID             uuid.UUID
+}
+
+// Reassigns every saved item of the authenticated user that is filed in the source
+// collection to an already-validated target collection. This is the 'move'
+// disposition of a collection deletion, and it exists only to give the items
+// somewhere to go while their collection is removed. It is not a general batch
+// move: there is no endpoint that calls it on its own, and no source and target
+// reach it without a collection deletion having already decided to remove the
+// source.
+//
+// Matched by collection_id AND user_id so the write cannot touch another user's
+// items. The target is not re-read here: it was resolved and verified in this same
+// transaction, and re-resolving it per row would be a second opinion that could
+// disagree with the one the decision was made on.
+//
+// Only collection_id is written. enrichment_status, last_enriched_at, description
+// and image_url are untouched, so removing a collection never disturbs what
+// enrichment recorded. The saved_items.updated_at trigger fires for each row,
+// which is intended: a move is a real change to that item.
+func (q *Queries) MoveSavedItemsToCollection(ctx context.Context, arg MoveSavedItemsToCollectionParams) error {
+	_, err := q.db.Exec(ctx, moveSavedItemsToCollection, arg.TargetCollectionID, arg.CollectionID, arg.UserID)
+	return err
 }

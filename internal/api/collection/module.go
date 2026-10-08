@@ -33,12 +33,23 @@ func RegisterModule(
 		[]byte(cfg.AccessTokenSecret),
 	)
 
-	// Mounted under the same prefix as saved_item, because the endpoint acts on a
+	// Mounted under the same prefix as saved_item, because these endpoints act on a
 	// saved item. Fiber groups are additive, so this adds
 	// PUT /saved-items/:id/collection without touching the routes saved_item
 	// already registers.
 	Routes(
 		app.Group("/saved-items"),
+		collectionHandler,
+		accessTokenVerifier,
+	)
+
+	// Mounted under its own prefix, because deleting a collection acts on a
+	// collection. It is deliberately not /saved-items/:id: that path is the saved
+	// item delete, which is a different resource and a different operation. The two
+	// stay separate endpoints rather than one calling the other, so a saved item
+	// delete can never remove a collection as a side effect.
+	CollectionRoutes(
+		app.Group("/collections"),
 		collectionHandler,
 		accessTokenVerifier,
 	)

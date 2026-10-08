@@ -1355,6 +1355,83 @@
                 }
             }
         },
+        "/collections/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Delete one of the current user's collections by ID. The request must\nsaved_items_action is required and must be \"delete\" or \"move\".\n\"delete\" deletes those saved items along with the collection. \"move\"\ntarget_collection_id must be null when saved_items_action is\nUnsorted itself cannot be deleted. It is identified by its\nThe whole operation is atomic. The saved items are deleted or moved\nThe collection must belong to the authenticated user. A collection\nPossible error codes:\n- BAD_REQUEST\n- INVALID_COLLECTION_DELETE_ACTION\n- INVALID_COLLECTION_DELETE_TARGET\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- COLLECTION_NOT_FOUND\n- COLLECTION_DELETE_TARGET_NOT_FOUND\n- UNSORTED_COLLECTION_PROTECTED\n- COLLECTION_NOT_EMPTY\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Collection"
+                ],
+                "summary": "Delete a collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Collection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Delete collection request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/collection.DeleteCollectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/collection.DeleteCollectionAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid collection ID, action or target",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Collection or target collection not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Unsorted collection, or collection is not empty",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/saved-items": {
             "get": {
                 "security": [
@@ -1538,7 +1615,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Delete one of the current user's saved items by ID. A saved item\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Delete one of the current user's saved items by ID. A saved item\nDeleting a saved item never deletes its collection. The collection\nThe response returns the collection_id of the deleted saved item,\nThese are advisory values, not a guarantee. Another request may add\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1808,6 +1885,41 @@
                 }
             }
         },
+        "collection.DeleteCollectionAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "collection deleted successfully"
+                }
+            }
+        },
+        "collection.DeleteCollectionRequest": {
+            "type": "object",
+            "properties": {
+                "saved_items_action": {
+                    "description": "SavedItemsAction is what to do with the collection's saved items.\n\n\"delete\" removes them along with the collection. \"move\" files them into\ntarget_collection_id first, and then removes the collection. Both are\nrequired: the request must say which, because the two are not variants of a\nsingle outcome and one of them discards saved items.",
+                    "enum": [
+                        "delete",
+                        "move"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/collection.SavedItemsAction"
+                        }
+                    ],
+                    "example": "delete"
+                },
+                "target_collection_id": {
+                    "description": "TargetCollectionID is where the saved items go when SavedItemsAction is\n\"move\".\n\nIt must be a collection id and must be null when SavedItemsAction is\n\"delete\". Unsorted is a valid target and is named here by its id, like any\nother collection; there is no separate mode or flag for it, and no fallback\nto it. A target that does not exist is an error rather than a substitution.",
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
         "collection.PutSavedItemIntoCollectionAPIResponse": {
             "type": "object",
             "properties": {
@@ -1887,6 +1999,17 @@
                     "example": "https://example.com/articles/1"
                 }
             }
+        },
+        "collection.SavedItemsAction": {
+            "type": "string",
+            "enum": [
+                "delete",
+                "move"
+            ],
+            "x-enum-varnames": [
+                "SavedItemsActionDelete",
+                "SavedItemsActionMove"
+            ]
         },
         "enrichment.EnrichSavedItemAPIResponse": {
             "type": "object",
@@ -2605,11 +2728,30 @@
             "type": "object",
             "properties": {
                 "data": {
-                    "type": "object"
+                    "$ref": "#/definitions/saved_item.DeleteSavedItemResponse"
                 },
                 "message": {
                     "type": "string",
                     "example": "saved item deleted successfully"
+                }
+            }
+        },
+        "saved_item.DeleteSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_deletable": {
+                    "description": "CollectionDeletable is true when the collection is now empty and is not the\nUnsorted collection.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "collection_empty": {
+                    "description": "CollectionEmpty is true when the collection held no other saved item once\nthis one was gone.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 }
             }
         },

@@ -95,6 +95,47 @@ SELECT
 FROM collections
 WHERE id = sqlc.arg(id);
 
+-- name: CreateTestSystemCollection :one
+-- A collection as automatic organization creates it: type = 'system' with a key
+-- that is not Unsorted. Seeded directly so tests can prove that a collection's
+-- type does not restrict whether the user may delete it.
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key
+) VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(name),
+    'system',
+    sqlc.arg(system_key)
+)
+RETURNING id;
+
+-- name: CountSavedItemsInCollection :one
+-- Counts what is filed in a collection, so a test can tell "still there" from
+-- "emptied" from "removed" without inferring any of it from the operation's own
+-- response.
+SELECT COUNT(*)
+FROM saved_items
+WHERE collection_id = sqlc.arg(collection_id);
+
+-- name: CountSavedItemsInCollectionForUser :one
+-- The same count scoped by user. Used where a test must prove one user's items
+-- were not reachable through another user's collection.
+SELECT COUNT(*)
+FROM saved_items
+WHERE collection_id = sqlc.arg(collection_id)
+  AND user_id = sqlc.arg(user_id);
+
+-- name: ListSavedItemCollectionsInCollection :many
+-- Every distinct collection a set of saved items is filed in. Used to assert that
+-- a batch move put all of a collection's items somewhere, rather than asserting
+-- only that the source is empty.
+SELECT DISTINCT collection_id
+FROM saved_items
+WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+
 -- name: CountCollectionsNamedForUser :one
 -- Counts by the same expression the unique index uses, so a test can prove that
 -- normalization collisions produced exactly one row.

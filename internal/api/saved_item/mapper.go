@@ -43,6 +43,14 @@ func mapListSavedItemsResponse(result ListResult) ListSavedItemsResponse {
 	}
 }
 
+func mapDeleteSavedItemResponse(result DeleteResult) DeleteSavedItemResponse {
+	return DeleteSavedItemResponse{
+		CollectionID:        result.CollectionID,
+		CollectionEmpty:     result.CollectionEmpty,
+		CollectionDeletable: result.CollectionDeletable,
+	}
+}
+
 func mapOptionalText(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil

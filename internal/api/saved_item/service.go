@@ -30,7 +30,7 @@ type SavedItemService interface {
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
-	) error
+	) (DeleteResult, error)
 
 	List(
 		ctx context.Context,
@@ -205,16 +205,104 @@ func (s *service) Get(
 	}, nil
 }
 
+// DeleteResult reports what the deletion left behind in the collection the saved
+// item was in.
+//
+// Every field is information for the caller and nothing more. The delete removed
+// exactly one saved item and this service never deletes or modifies a collection,
+// so a collection that became empty stays, empty, until the caller separately
+// decides to delete it.
+type DeleteResult struct {
+	// CollectionID is the collection the deleted saved item was actually in.
+	CollectionID uuid.UUID
+
+	// CollectionEmpty reports whether that collection held no other saved item
+	// once this one was gone. It is a fresh observation taken after the delete
+	// committed, not a guarantee about anything that happens next.
+	CollectionEmpty bool
+
+	// CollectionDeletable reports whether the user may now delete that
+	// collection, which is CollectionEmpty and the collection not being the
+	// protected Unsorted one.
+	//
+	// It is a convenience for the caller, not an authorization decision and not a
+	// concurrency guarantee. Deleting a collection is a separate explicit
+	// operation that re-reads the database and validates again, so this value
+	// being wrong costs at most a rejected or unnecessary request.
+	CollectionDeletable bool
+}
+
+// Delete removes one saved item of the authenticated user and reports what it
+// left behind in the collection the item was in.
+//
+// The collection is never touched. Deleting a saved item and deleting a
+// collection are separate operations with separate endpoints, and this one only
+// describes the collection so the caller can decide what to do about it. That is
+// why the answer is reported rather than acted on: the caller asked to remove an
+// item, and a collection holding nothing is a valid state this product already
+// has, so quietly removing one would take an action nobody requested.
+//
+// There is deliberately no transaction around the three statements below, and the
+// reason is that there is nothing to keep consistent. The delete is a single
+// autocommit statement, so by the time it returns the row is committed and gone.
+// The two statements after it only read what that delete left behind. Wrapping
+// them would not make the answer any more accurate, because under READ COMMITTED
+// each statement takes its own snapshot regardless of whether they share a
+// transaction, and it would add a pool and a transaction boundary to a feature
+// that currently has neither for one observation. List already composes a derived
+// count from a second statement the same way.
+//
+// Every statement is scoped by the user, so a saved item belonging to somebody
+// else fails on the delete and the collection is never read. A missing item and a
+// foreign one both return the same not found error, which is what keeps the
+// endpoint from disclosing whether an ID exists for someone else.
 func (s *service) Delete(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
-) error {
-	return s.repository.DeleteSavedItemByIDForUser(
+) (DeleteResult, error) {
+	deleted, err := s.repository.DeleteSavedItemByIDForUser(
 		ctx,
 		userID,
 		savedItemID,
 	)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	remaining, err := s.repository.CountSavedItemsInCollection(
+		ctx,
+		userID,
+		deleted.CollectionID,
+	)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	// Read after the delete rather than before it, and after the count, so the
+	// identity is the one belonging to the row that is actually gone.
+	systemKey, err := s.repository.GetCollectionSystemKeyForUser(
+		ctx,
+		userID,
+		deleted.CollectionID,
+	)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+
+	// Valid is checked before the value, so an absent key is never compared. A
+	// collection with no key is one the user created, and comparing an unset value
+	// would mean deciding what an empty identity is.
+	isUnsorted := systemKey.Valid &&
+		systemKey.String == CollectionSystemKeyUnsorted
+
+	collectionEmpty := remaining == 0
+
+	return DeleteResult{
+		CollectionID:        deleted.CollectionID,
+		CollectionEmpty:     collectionEmpty,
+		CollectionDeletable: collectionEmpty && !isUnsorted,
+	}, nil
 }
 
 type ListResult struct {

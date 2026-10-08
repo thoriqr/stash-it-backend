@@ -7,7 +7,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
-// Routes registers the collection endpoints.
+// Routes registers the saved-item-scoped collection endpoints.
 //
 // The path is nested under /saved-items because the resource being acted on is a
 // saved item: it is what gets filed into a collection. The router is supplied by
@@ -24,5 +24,30 @@ func Routes(
 		"/:id/collection",
 		middleware.Auth(verifier),
 		handler.PutSavedItem,
+	)
+}
+
+// CollectionRoutes registers the endpoints that act on a collection as its own
+// resource.
+//
+// This is a separate function rather than another path in Routes because the two
+// act on different resources and are mounted under different prefixes. Routes
+// belongs to the /saved-items group, where every path is about a saved item;
+// adding /:id there would collide with DELETE /saved-items/:id, which the saved
+// item feature already owns and which deletes a saved item rather than a
+// collection. Registering the collection delete here, on its own router, is what
+// keeps the two operations from shadowing each other and keeps each resource's
+// paths under one prefix.
+//
+// Auth is applied per route here too, never router.Use.
+func CollectionRoutes(
+	router fiber.Router,
+	handler *Handler,
+	verifier *security.AccessTokenVerifier,
+) {
+	router.Delete(
+		"/:id",
+		middleware.Auth(verifier),
+		handler.DeleteCollection,
 	)
 }

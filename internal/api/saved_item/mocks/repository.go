@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	uuid "github.com/google/uuid"
+	pgtype "github.com/jackc/pgx/v5/pgtype"
 	saved_item "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	gomock "go.uber.org/mock/gomock"
@@ -82,6 +83,45 @@ func (c *MockRepositoryCountSavedItemsCall) DoAndReturn(f func(context.Context, 
 	return c
 }
 
+// CountSavedItemsInCollection mocks base method.
+func (m *MockRepository) CountSavedItemsInCollection(ctx context.Context, userID, collectionID uuid.UUID) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountSavedItemsInCollection", ctx, userID, collectionID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountSavedItemsInCollection indicates an expected call of CountSavedItemsInCollection.
+func (mr *MockRepositoryMockRecorder) CountSavedItemsInCollection(ctx, userID, collectionID any) *MockRepositoryCountSavedItemsInCollectionCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountSavedItemsInCollection", reflect.TypeOf((*MockRepository)(nil).CountSavedItemsInCollection), ctx, userID, collectionID)
+	return &MockRepositoryCountSavedItemsInCollectionCall{Call: call}
+}
+
+// MockRepositoryCountSavedItemsInCollectionCall wrap *gomock.Call
+type MockRepositoryCountSavedItemsInCollectionCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryCountSavedItemsInCollectionCall) Return(arg0 int64, arg1 error) *MockRepositoryCountSavedItemsInCollectionCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryCountSavedItemsInCollectionCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (int64, error)) *MockRepositoryCountSavedItemsInCollectionCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryCountSavedItemsInCollectionCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (int64, error)) *MockRepositoryCountSavedItemsInCollectionCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // CreateSavedItem mocks base method.
 func (m *MockRepository) CreateSavedItem(ctx context.Context, params saveditemdb.CreateSavedItemParams) (saved_item.SavedItem, error) {
 	m.ctrl.T.Helper()
@@ -122,11 +162,12 @@ func (c *MockRepositoryCreateSavedItemCall) DoAndReturn(f func(context.Context, 
 }
 
 // DeleteSavedItemByIDForUser mocks base method.
-func (m *MockRepository) DeleteSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) error {
+func (m *MockRepository) DeleteSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) (saved_item.DeletedSavedItem, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteSavedItemByIDForUser", ctx, userID, savedItemID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(saved_item.DeletedSavedItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteSavedItemByIDForUser indicates an expected call of DeleteSavedItemByIDForUser.
@@ -142,19 +183,58 @@ type MockRepositoryDeleteSavedItemByIDForUserCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryDeleteSavedItemByIDForUserCall) Return(arg0 error) *MockRepositoryDeleteSavedItemByIDForUserCall {
-	c.Call = c.Call.Return(arg0)
+func (c *MockRepositoryDeleteSavedItemByIDForUserCall) Return(arg0 saved_item.DeletedSavedItem, arg1 error) *MockRepositoryDeleteSavedItemByIDForUserCall {
+	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryDeleteSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryDeleteSavedItemByIDForUserCall {
+func (c *MockRepositoryDeleteSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.DeletedSavedItem, error)) *MockRepositoryDeleteSavedItemByIDForUserCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryDeleteSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryDeleteSavedItemByIDForUserCall {
+func (c *MockRepositoryDeleteSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.DeletedSavedItem, error)) *MockRepositoryDeleteSavedItemByIDForUserCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// GetCollectionSystemKeyForUser mocks base method.
+func (m *MockRepository) GetCollectionSystemKeyForUser(ctx context.Context, userID, collectionID uuid.UUID) (pgtype.Text, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCollectionSystemKeyForUser", ctx, userID, collectionID)
+	ret0, _ := ret[0].(pgtype.Text)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCollectionSystemKeyForUser indicates an expected call of GetCollectionSystemKeyForUser.
+func (mr *MockRepositoryMockRecorder) GetCollectionSystemKeyForUser(ctx, userID, collectionID any) *MockRepositoryGetCollectionSystemKeyForUserCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCollectionSystemKeyForUser", reflect.TypeOf((*MockRepository)(nil).GetCollectionSystemKeyForUser), ctx, userID, collectionID)
+	return &MockRepositoryGetCollectionSystemKeyForUserCall{Call: call}
+}
+
+// MockRepositoryGetCollectionSystemKeyForUserCall wrap *gomock.Call
+type MockRepositoryGetCollectionSystemKeyForUserCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetCollectionSystemKeyForUserCall) Return(arg0 pgtype.Text, arg1 error) *MockRepositoryGetCollectionSystemKeyForUserCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetCollectionSystemKeyForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (pgtype.Text, error)) *MockRepositoryGetCollectionSystemKeyForUserCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetCollectionSystemKeyForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (pgtype.Text, error)) *MockRepositoryGetCollectionSystemKeyForUserCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

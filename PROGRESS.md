@@ -36,7 +36,7 @@ through `saved_item.RegisterModule`, and covered by tests.
 | `POST /saved-items`       | done   | 201, requires Bearer              |
 | `GET /saved-items`        | done   | 200, paginated, `created_at DESC` |
 | `GET /saved-items/:id`    | done   | 200, owner-scoped                 |
-| `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped    |
+| `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped, reports collection state |
 
 Update/edit (`PATCH` or `PUT`) is deliberately out of scope for now.
 
@@ -73,6 +73,7 @@ No public-suffix or registrable-domain detection is performed.
 | Endpoint                          | Status | Notes                              |
 | --------------------------------- | ------ | ---------------------------------- |
 | `PUT /saved-items/:id/collection` | done   | 200, owner-scoped, requires Bearer |
+| `DELETE /collections/:id`         | done   | 200, owner-scoped, requires Bearer |
 
 The endpoint accepts `{"collection_name": "..."}` and files one saved item
 into one user collection, creating that collection when necessary.
@@ -88,6 +89,78 @@ Important behavior:
 - Enrichment does not participate in collection movement.
 
 Committed as `1e85c5d feat: add saved item collection flow`.
+
+### Collection deletion
+
+`DELETE /collections/:id` is implemented. It is a separate explicit operation from
+deleting a saved item, and the two never invoke each other.
+
+Request body, a stable shape in both cases:
+
+```json
+{ "saved_items_action": "delete", "target_collection_id": null }
+{ "saved_items_action": "move",   "target_collection_id": "<uuid>" }
+```
+
+Behavior:
+
+- `saved_items_action` is required and is `delete` or `move`. Nothing is defaulted,
+  because the two actions have opposite consequences and one of them destroys saved
+  items.
+- `target_collection_id` must be null for `delete` and a collection id for `move`.
+  Both fields always exist and never change meaning.
+- `delete` removes the collection's saved items along with the collection. `move`
+  files them into the target collection first, then removes the collection.
+- The target must exist, belong to the authenticated user, and differ from the
+  source. A target that does not exist is an error; there is no fallback to any
+  collection, including Unsorted.
+- **Unsorted is a valid move target and is named by its id** like any other
+  collection. There is no `move_to_unsorted` flag and no special mode for it.
+- Any collection may be deleted regardless of `type`. Unsorted is the only exception,
+  identified by `system_key = 'unsorted'` and never by display name or type.
+- The whole operation is one repository-owned transaction: load the source, refuse
+  Unsorted, resolve the target when moving, dispose of the children, delete the
+  collection, commit. Anything failing rolls all of it back.
+- Nothing is taken `FOR UPDATE`, which keeps the lock order compatible with the move
+  endpoint and lets the foreign key decide emptiness.
+- The response is a plain `{"data": null, "message": "collection deleted
+  successfully"}`. The request already states the disposition, so the response adds
+  nothing by listing what was done.
+
+Error contract: `COLLECTION_NOT_FOUND`, `UNSORTED_COLLECTION_PROTECTED`,
+`INVALID_COLLECTION_DELETE_ACTION`, `INVALID_COLLECTION_DELETE_TARGET`,
+`COLLECTION_DELETE_TARGET_NOT_FOUND`, `COLLECTION_NOT_EMPTY`.
+
+### Saved item deletion reports collection state
+
+`DELETE /saved-items/:id` deletes the saved item and **never** touches its
+collection. The response reports what the delete left behind:
+
+```json
+{
+  "data": {
+    "collection_id": "01a0f359-093b-737a-963a-80f7ca6768ed",
+    "collection_empty": true,
+    "collection_deletable": true
+  },
+  "message": "saved item deleted successfully"
+}
+```
+
+- `collection_id` comes from the DELETE's own `RETURNING` clause, so it is the
+  deleted row's value and a concurrent move cannot make it disagree. No locking
+  read is needed to pin it.
+- `collection_empty` is counted after the delete, scoped by `collection_id AND
+  user_id`.
+- `collection_deletable` is `collection_empty` and the collection not being
+  Unsorted. It exists because Unsorted is where every save lands, so an empty inbox
+  is the most common "yes" here and a caller acting on `collection_empty` alone
+  would be turned away on almost every inbox deletion.
+- All three are advisory. The collection is untouched, and deleting it is a separate
+  request that validates the current state again.
+- There is deliberately no transaction around the delete and its two reads: nothing
+  is acted on, and under READ COMMITTED each statement snapshots separately anyway.
+- The previously `null` data body is replaced, which is a deliberate API change.
 
 ### Search
 
@@ -516,6 +589,25 @@ The worker has:
   creates, reuses, is skipped for, and refuses to undo a user's filing for, with
   concurrent tasks producing exactly one collection per platform per user.
 
+Deletion is verified against real Postgres, asserting database state rather than
+status codes alone:
+
+- `internal/api/saved_item` — the delete's reported collection, count scoping, the
+  empty and not-empty cases, Unsorted against a system collection and against a user
+  collection with no key, not-found leaving the collection unread, and error
+  propagation from all three repository calls.
+- `internal/integration` — reported collection state for user, system and Unsorted
+  collections; the reported id being the deleted item's own after a real move;
+  concurrent deletes of the last two items and of the same item, asserting invariants
+  rather than an interleaving.
+- `internal/api/collection` — the request rules, both dispositions, Unsorted as an
+  ordinary target by id, and error pass-through.
+- `internal/integration` — both dispositions against real rows; Unsorted refused
+  while another system collection of the same user is deleted; the foreign key
+  proven to be the guard, asserted by `ConstraintName`; ownership isolation and
+  byte-identical not-found responses; and concurrency asserting that no saved item
+  ever references a missing collection.
+
 Queue-facing tests read Asynq's own accounting through an `Inspector` rather than
 by counting Redis keys, so they cannot pass by reading nothing.
 
@@ -644,6 +736,34 @@ Do not change these casually. Revisit only with an explicit decision.
     fields.** Adding persistence for them requires an explicit product/schema
     decision.
 
+19. **Deleting a saved item never deletes its collection.** The delete reports the
+    collection, whether it is now empty, and whether the user may delete it, and
+    those are advisory values for the caller. Removing a collection is a separate
+    endpoint the caller invokes deliberately. An empty collection is a valid state,
+    so removing one as a side effect would take an action nobody asked for.
+
+19a. **Deleting a collection is an explicit destructive operation whose caller
+    states the disposition of its saved items.** `saved_items_action` is `delete` or
+    `move` with no default, because the two have opposite consequences and one
+    destroys content. Nothing is inferred on the caller's behalf, and a missing
+    target is an error rather than a substitution.
+
+19b. **Unsorted is identified by `system_key` and is the only protected
+    collection.** Collection type is not the criterion: `type = 'system'` says who
+    created a collection, not what it is, so an automatically created collection is
+    deletable like one the user named. Unsorted as a *move target* is ordinary and is
+    named by its id; there is no `move_to_unsorted` mode and no fallback to it.
+
+19c. **`saved_items_collection_id_fkey` remains the final guard on collection
+    deletion.** The children are disposed of first because `collection_id` is
+    `NOT NULL`, and the FK decides emptiness at the final DELETE rather than an
+    application pre-check. A violation rolls the transaction back and is reported as
+    `COLLECTION_NOT_EMPTY`. Never change it to `ON DELETE CASCADE`.
+
+19d. **The move-all-items behavior exists only as part of collection deletion.**
+    `MoveSavedItemsToCollection` has no endpoint of its own. A general batch-move
+    feature is a separate product decision and is deliberately not implemented here.
+
 ---
 
 ## Next Step
@@ -663,8 +783,11 @@ Current order:
    on its own.
 3. Cloud Run deployment specifics for the worker, when a target is chosen.
 
-Search pagination, autocomplete, search suggestions, collection CRUD, and Saved
-Item update/edit remain outside the current scope.
+Search pagination, autocomplete, search suggestions, and Saved Item update/edit
+remain outside the current scope. Collection *deletion* now exists, but only as the
+explicit `DELETE /collections/:id`; collection listing and creation as standalone
+operations, a general batch move of saved items, and collection rename remain
+outside the current scope.
 
 ---
 

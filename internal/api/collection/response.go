@@ -54,3 +54,15 @@ type PutSavedItemIntoCollectionAPIResponse struct {
 	Data    *PutSavedItemIntoCollectionResponse `json:"data"`
 	Message string                              `json:"message" example:"saved item moved into collection successfully"`
 }
+
+// DeleteCollectionAPIResponse is a plain success with no body.
+//
+// The request already states what should happen to the collection's saved items,
+// so the response adds nothing by listing what was done, and returning the removed
+// items would report a set the caller already chose to destroy or move. What is
+// returned here matches how the saved item delete answered before it began
+// reporting collection state: the outcome, not a receipt.
+type DeleteCollectionAPIResponse struct {
+	Data    *struct{} `json:"data"`
+	Message string    `json:"message" example:"collection deleted successfully"`
+}
