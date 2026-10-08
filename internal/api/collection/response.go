@@ -36,6 +36,42 @@ type PutSavedItemSavedItemResponse struct {
 	UpdatedAt    time.Time `json:"updated_at" example:"2026-10-02T10:30:00Z"`
 }
 
+// ListedCollectionResponse is a collection as it appears in the user's collection
+// list.
+//
+// It is separate from CollectionResponse rather than an extension of it, because
+// that type is also returned by the move endpoint and deliberately omits system_key:
+// that endpoint files into a user collection, where system_key is always NULL, and
+// including the field there would imply a system collection could be targeted. This
+// listing returns every collection a user has, so it needs the field.
+//
+// system_key is what lets a client recognize Unsorted. The alternative is matching
+// on the display name, which is free text and which collections_user_name_unique
+// already reserves for exactly this reason. It is also what lets the client know a
+// collection may not be deleted before offering to delete it.
+type ListedCollectionResponse struct {
+	ID        uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	Name      string    `json:"name" example:"Wishlist"`
+	Type      string    `json:"type" example:"user"`
+	SystemKey *string   `json:"system_key" example:"youtube"`
+	CreatedAt time.Time `json:"created_at" example:"2026-10-02T10:30:00Z"`
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T10:30:00Z"`
+}
+
+// ListCollectionsResponse is one page of the user's collections.
+//
+// Unsorted appears as the first entry of the first page under every sort, and never
+// again on a later page. Collections automatic organization created appear here
+// exactly like ones the user named themselves.
+type ListCollectionsResponse struct {
+	Collections []ListedCollectionResponse `json:"collections"`
+}
+
+type ListCollectionsAPIResponse struct {
+	Data    *ListCollectionsResponse `json:"data"`
+	Message string                   `json:"message" example:"collections retrieved successfully"`
+}
+
 type PutSavedItemIntoCollectionResponse struct {
 	Collection CollectionResponse            `json:"collection"`
 	SavedItem  PutSavedItemSavedItemResponse `json:"saved_item"`

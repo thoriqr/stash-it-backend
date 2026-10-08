@@ -269,6 +269,54 @@ enrichment worker, not a phase of enrichment.
   change it to `ON DELETE CASCADE`.
 - `MoveSavedItemsToCollection` exists only as the moving half of this operation.
   It is not a general batch move and no endpoint exposes one on its own.
+
+**Listing collections** is `GET /collections`, registered on the same
+`/collections` group as the delete. It is currently the only cursor-paginated
+endpoint.
+
+- **Unsorted is pinned first under every sort** by a rank over `system_key` in the
+  `ORDER BY`, not filtered out and not special-cased per sort, so every ordering
+  inherits the rule once. It must never reappear on a later page.
+- **Exclude the pinned row with `system_key IS DISTINCT FROM 'unsorted'`.** That is
+  NULL-safe as well as selective: `collections_system_key_check` gives every
+  `type = 'user'` collection a NULL key, so a plain `<>` evaluates to NULL for all of
+  them and a resumed page would return system collections only.
+- **Every ordering needs a unique tie-breaker.** `created_at` defaults to `NOW()`,
+  which is constant within a transaction, and migration 000022 inserts every user's
+  Unsorted collection in one statement, so equal timestamps are a real state.
+  `collections.id` is `uuidv7()` with no overriding trigger, so it is unique and
+  monotonic in creation order.
+- **`name` orders by `lower(btrim(name))`** — the expression `collections_user_name_unique`
+  is built on, so the ordering and the uniqueness constraint cannot disagree. A
+  cursor's name value must be that same normalized form, never the raw display name.
+- **A cursor is a position, not a row reference.** No resumed query may read the row a
+  cursor came from, so the position survives that row being deleted or renamed, and a
+  cursor pointing past the end returns an empty page rather than an error.
+- **`internal/pagination` owns the envelope only** — JSON over
+  `base64.RawURLEncoding`, plus a payload version. Cursor payload structs stay with
+  their feature: what a page must record differs per listing, and one shared struct
+  with optional fields would be a second source of truth.
+- **Payload fields that can be absent must be pointers.** A plain `int` group decodes
+  an omitted field to 0, which is itself a real group value, so a truncated cursor
+  would read as valid and silently skip the pinned collection.
+- **`httpx.CursorPage.NextCursor` carries no `omitempty`.** A nil pointer tagged
+  `omitempty` is dropped from the JSON, and a client must be able to read
+  `next_cursor` and find `null` rather than find the key missing. `Meta.Cursor` is a
+  pointer with `omitempty`, so endpoints that do not paginate by cursor leave the key
+  out entirely and their responses are unchanged.
+- **Fetch `limit + 1` and build the cursor from the last returned row**, never the
+  lookahead row: the lookahead row was never sent, so a cursor built from it resumes
+  past a collection the client never received.
+- Keyset predicates need **explicit casts** on row-comparison parameters. Without them
+  sqlc types every parameter from the row's leftmost element, which would give a
+  `timestamptz` type to an id parameter.
+- **The service validates and parses a cursor's position before any query runs.** A
+  cursor position arrives as a string, so the time-based sorts must check it really is
+  a timestamp and record the parsed `pgtype.Timestamptz` on the cursor. The repository
+  then passes the value on without reinterpreting it, so a caller-supplied token can
+  never turn into a server fault: an unusable one is `INVALID_CURSOR`, and only a real
+  driver error is `INTERNAL_SERVER_ERROR`. A derived field must be `json:"-"` so it
+  cannot become a second copy of the position that disagrees with the wire value.
 - Collection names are compared and stored the way `lower(btrim(name))` and a
   trimmed display name already define. Reuse that semantics rather than writing a
   second normalization: a collection whose stored name disagrees with the name the

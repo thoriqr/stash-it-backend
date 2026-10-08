@@ -1362,6 +1362,81 @@ const docTemplate = `{
                 }
             }
         },
+        "/collections": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the authenticated user's collections, one page at a time.\nThe Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is \"unsorted\"; the display name is not its identity and a collection's type never decides anything about it.\nCollections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.\nsort selects the order and defaults to \"newest\". \"newest\" and \"oldest\" order by when the collection was created; \"name\" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.\nPages are returned by cursor. Pass the next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted.\nmeta.cursor.next_cursor is explicitly null on the final page, where has_more is false. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall.\nSearch is not available here. GET /search already searches collections by name.\nPossible error codes:\n- INVALID_COLLECTION_SORT\n- INVALID_CURSOR\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Collection"
+                ],
+                "summary": "List collections",
+                "parameters": [
+                    {
+                        "enum": [
+                            "newest",
+                            "oldest",
+                            "name"
+                        ],
+                        "type": "string",
+                        "default": "newest",
+                        "example": "newest",
+                        "description": "Collection order",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 50,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "example": 20,
+                        "description": "Number of collections per page",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "eyJ2IjoxLCJzIjoibmV3ZXN0In0",
+                        "description": "Cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/collection.ListCollectionsAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid sort, limit or cursor",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/collections/{id}": {
             "delete": {
                 "security": [
@@ -1924,6 +1999,58 @@ const docTemplate = `{
                     "description": "TargetCollectionID is where the saved items go when SavedItemsAction is\n\"move\".\n\nIt must be a collection id and must be null when SavedItemsAction is\n\"delete\". Unsorted is a valid target and is named here by its id, like any\nother collection; there is no separate mode or flag for it, and no fallback\nto it. A target that does not exist is an error rather than a substitution.",
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                }
+            }
+        },
+        "collection.ListCollectionsAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/collection.ListCollectionsResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "collections retrieved successfully"
+                }
+            }
+        },
+        "collection.ListCollectionsResponse": {
+            "type": "object",
+            "properties": {
+                "collections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/collection.ListedCollectionResponse"
+                    }
+                }
+            }
+        },
+        "collection.ListedCollectionResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Wishlist"
+                },
+                "system_key": {
+                    "type": "string",
+                    "example": "youtube"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "user"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
                 }
             }
         },

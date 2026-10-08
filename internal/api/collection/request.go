@@ -15,6 +15,30 @@ import "github.com/google/uuid"
 // answers with INVALID_COLLECTION_DELETE_ACTION and INVALID_COLLECTION_DELETE_TARGET
 // so a caller can tell an incoherent request apart from a malformed one. Tags here
 // would pre-empt that and collapse every case into a generic VALIDATION_ERROR.
+// ListCollectionsRequest is the query for GET /collections.
+//
+// The cursor field carries no `validate` rule beyond its length. It is an opaque
+// token bound here and nowhere else: decoding it and deciding whether its contents
+// are meaningful belong to the service, which owns those rules for every cursor it
+// issues. A tag that tried to inspect the payload here would be a second
+// implementation of them, in a different place, that could disagree.
+//
+// max=512 is the one bound that matters on this field. It is what stops a client
+// making the server base64-decode an arbitrarily large string, and it matches the
+// bound internal/api/auth/session already applies to its opaque refresh token.
+type ListCollectionsRequest struct {
+	// Sort is the requested order. Absent means newest first.
+	Sort CollectionSort `query:"sort" validate:"omitempty,oneof=newest oldest name" example:"newest"`
+
+	// Limit is the number of collections to return. Absent means the default, and a
+	// value above the maximum is clamped rather than rejected.
+	Limit int `query:"limit" validate:"omitempty,min=1,max=50" example:"20"`
+
+	// Cursor resumes a listing from where the previous page ended. Absent starts at
+	// the beginning, with Unsorted first.
+	Cursor string `query:"cursor" validate:"omitempty,max=512" example:"eyJ2IjoxLCJzIjoibmV3ZXN0In0"`
+}
+
 type DeleteCollectionRequest struct {
 	// SavedItemsAction is what to do with the collection's saved items.
 	//

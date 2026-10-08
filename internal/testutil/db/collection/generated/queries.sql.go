@@ -114,6 +114,66 @@ func (q *Queries) CreateCollectionUser(ctx context.Context, arg CreateCollection
 	return id, err
 }
 
+const createTestCollectionAt = `-- name: CreateTestCollectionAt :one
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at
+) VALUES (
+    $1,
+    $2,
+    CASE WHEN $3::text IS NULL THEN 'user' ELSE 'system' END,
+    $3::text,
+    $4
+)
+RETURNING
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+`
+
+type CreateTestCollectionAtParams struct {
+	UserID    uuid.UUID
+	Name      string
+	SystemKey pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+// Creates one collection with an explicit created_at.
+//
+// Collections default to NOW(), which is transaction_timestamp() and therefore
+// constant inside one transaction, so several rows inserted together share a
+// timestamp. migrations/000022 inserts every user's Unsorted collection in exactly
+// that shape, so equal timestamps are a real state rather than a contrived one, and
+// the listing has to order them without skipping or repeating a row across a page
+// boundary. Setting the value explicitly is what lets a test place rows at chosen
+// positions in an ordering, and what lets a test create rows that genuinely tie.
+func (q *Queries) CreateTestCollectionAt(ctx context.Context, arg CreateTestCollectionAtParams) (Collection, error) {
+	row := q.db.QueryRow(ctx, createTestCollectionAt,
+		arg.UserID,
+		arg.Name,
+		arg.SystemKey,
+		arg.CreatedAt,
+	)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Type,
+		&i.SystemKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createTestSavedItemInCollection = `-- name: CreateTestSavedItemInCollection :one
 INSERT INTO saved_items (
     user_id,

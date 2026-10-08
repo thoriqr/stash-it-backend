@@ -202,6 +202,29 @@ are organized. An item may remain in `Unsorted` indefinitely.
 - Organizing never waits on or alters metadata enrichment; an item can be moved
   in any enrichment state.
 
+### Seeing your collections
+
+A user can see every collection they have, which is what the collection list is for.
+
+- **The list holds every collection the user has**, whether they named it or it
+  arrived on its own, and whether it holds anything.
+- **`Unsorted` is always at the top**, under any ordering. It is the one collection
+  every save lands in, so it is where a person looks first; it is recognized as
+  Unsorted by what it is rather than by what it happens to be called.
+- **The list can be ordered three ways**: most recently created first, which is the
+  default; earliest created first; or by name, alphabetically, ignoring capitalization
+  and surrounding spaces so that ordering agrees with the rule that treats `"Wishlist"`
+  and `" wishlist "` as one name.
+- **Collections created in the same instant still have a stable order**, so paging
+  through the list never repeats or skips one.
+- **The list is long enough to be worth paging through.** Continuing is done by
+  handing back a token the previous page gave, which records where that page ended
+  rather than pointing at a particular collection. That distinction matters: a
+  collection in the middle of the list can be deleted or renamed between pages, and
+  the walk still finishes correctly instead of skipping or repeating one.
+- **There is no search here.** Searching collections by name is a separate act that
+  already exists, and the list is not a second, worse version of it.
+
 ### Deleting a collection
 
 A collection is deleted as its own deliberate action, separately from deleting the
@@ -273,8 +296,9 @@ Implemented:
 - Inbox
 - Saved item detail
 - Delete a saved item
-- Collections, including filing an item into a collection of the user's own
-  and deleting a collection along with a chosen fate for its saved items
+- Collections, including filing an item into a collection of the user's own,
+  listing the collections a user has, and deleting a collection along with a
+  chosen fate for its saved items
 - Basic search, across saved items and collections
 
 Saved item detail and delete were built during Phase A to complete the core loop.

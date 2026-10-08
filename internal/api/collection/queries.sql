@@ -21,6 +21,262 @@ WHERE id = sqlc.arg(id)
   AND user_id = sqlc.arg(user_id)
 FOR UPDATE;
 
+-- name: ListCollectionsNewestFirst :many
+-- First page of the user's collections, newest first, with Unsorted pinned ahead of
+-- everything else.
+--
+-- The pinned row is a rank rather than a filter. system_key = 'unsorted' gives that
+-- collection 0 and every other collection 1, so it sorts first under whichever
+-- ordering the caller asked for. It is identified by system_key only: its display
+-- name is free text and its type says who created a collection, not what it is, so
+-- neither may decide this.
+--
+-- There is deliberately no type filter. A collection automatic organization created
+-- belongs to one user through collections.user_id and belongs in this list exactly
+-- like one they named themselves, which is the same reasoning SearchCollections
+-- documents.
+--
+-- created_at DESC, id DESC is a total order. The tie-break is not optional:
+-- created_at defaults to NOW(), which is transaction_timestamp() and therefore
+-- constant within a transaction, so one INSERT can produce many rows sharing a
+-- timestamp. migrations/000022 inserts every user's Unsorted collection in a single
+-- statement, so ties are guaranteed rather than hypothetical, and without the id a
+-- page boundary could skip or repeat a row. collections.id is uuidv7() and no
+-- trigger overrides it, so it is unique and monotonic in creation order.
+--
+-- Callers request limit + 1 rows so has_more is exact rather than inferred.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY
+    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    created_at DESC,
+    id DESC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsNewestAfterUnsorted :many
+-- Newest-first collections with Unsorted excluded, from the top of the ordering.
+--
+-- This is the page that follows one holding only Unsorted, so it takes no position
+-- parameter at all. There is deliberately nothing for a caller to pass: a zero
+-- timestamp would build a predicate against '-0001-01-01' and return the wrong rows,
+-- so keeping this a separate statement makes that mistake impossible rather than
+-- something to guard at runtime.
+--
+-- Unsorted is excluded with IS DISTINCT FROM, which is load-bearing twice. It
+-- removes the pinned row so it is never repeated, and it is NULL-safe, so user
+-- collections whose system_key is NULL are not dropped along with it.
+-- collections_system_key_check gives every type = 'user' collection a NULL key, so a
+-- plain <> would evaluate to NULL for all of them and this query would return system
+-- collections only.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+ORDER BY
+    created_at DESC,
+    id DESC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsNewestAfterRow :many
+-- Newest-first collections after the position a cursor carries.
+--
+-- The row comparison describes the same total order as the ORDER BY, which is what
+-- makes this keyset pagination rather than an offset in disguise: DESC ordering
+-- resumes with <. Row comparison short-circuits like the expanded form, so it needs
+-- only the leading index column and resolves ties without an OR chain.
+--
+-- The stored position comes from the cursor, never from a lookup of the row it came
+-- from. Nothing here reads collections by id, so a cursor keeps working after its
+-- anchor row is deleted: it resumes from the position it recorded. That is the
+-- property offset pagination cannot offer, since deleting a row shifts every later
+-- row down a slot and makes a client receive a duplicate.
+--
+-- cursor_value is the row's created_at and cursor_id its id, both as read from the
+-- database rather than re-derived.
+--
+-- The casts are load-bearing, not decoration. Without them sqlc infers the type of
+-- every row-comparison parameter from the row's leftmost element, which would give
+-- cursor_id a timestamptz type and let a caller pass a timestamp where a UUID
+-- belongs. Naming each type explicitly is what keeps the generated parameters honest.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+  AND (created_at, id) < (sqlc.arg(cursor_value)::timestamptz, sqlc.arg(cursor_id)::uuid)
+ORDER BY
+    created_at DESC,
+    id DESC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsOldestFirst :many
+-- First page of the user's collections, oldest first, with Unsorted pinned ahead of
+-- everything else.
+--
+-- The pinned rank and the absence of a type filter are the same as in the newest
+-- variant, and so is the reasoning: system_key identifies Unsorted, and a
+-- collection's type never restricts what the user may see or delete.
+--
+-- created_at ASC, id ASC keeps the ordering total for the same reason DESC does.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY
+    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    created_at ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsOldestAfterUnsorted :many
+-- Oldest-first collections with Unsorted excluded, from the top of the ordering.
+--
+-- See ListCollectionsNewestAfterUnsorted: IS DISTINCT FROM both removes the pinned
+-- row and keeps the NULL system_key of user collections, and there is no position
+-- parameter because this page always starts at the top of the ordering.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+ORDER BY
+    created_at ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsOldestAfterRow :many
+-- Oldest-first collections after the position a cursor carries.
+--
+-- ASC ordering resumes with >, which is the same ordering the ORDER BY describes.
+-- The anchor row is not read, so the position survives that row being deleted.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+  AND (created_at, id) > (sqlc.arg(cursor_value)::timestamptz, sqlc.arg(cursor_id)::uuid)
+ORDER BY
+    created_at ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsByNameFirst :many
+-- First page of the user's collections, alphabetically ascending, with Unsorted
+-- pinned ahead of everything else.
+--
+-- lower(btrim(name)) is the same expression collections_user_name_unique is built
+-- on, so sort order and name uniqueness can never disagree about what it means for
+-- two names to be the same. Sorting on the raw display name instead would let the
+-- ordering and the constraint each hold a different opinion about a name, which is
+-- the disagreement collection/service.go explicitly avoids when storing one.
+--
+-- The tie-break on id is belt and braces: the unique index already means two
+-- collections in one user cannot share a normalized name. It is kept so the ordering
+-- is total regardless of collation, since lower(btrim(name)) is not locale-stable
+-- for equal keys.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY
+    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    lower(btrim(name)) ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsByNameAfterUnsorted :many
+-- Alphabetically ascending collections with Unsorted excluded, from the top.
+--
+-- See the other AfterUnsorted variants for why the exclusion is IS DISTINCT FROM
+-- and why this page takes no position parameter.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+ORDER BY
+    lower(btrim(name)) ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
+-- name: ListCollectionsByNameAfterRow :many
+-- Alphabetically ascending collections after the position a cursor carries.
+--
+-- cursor_value must already be the normalized name, lower(btrim(name)), exactly as
+-- the ORDER BY and the unique index compute it. Passing the raw display name would
+-- compare against a value the index never produced and quietly return the wrong
+-- rows, so the service normalizes before it encodes.
+--
+-- The casts are load-bearing: without them sqlc would type cursor_id from the row's
+-- leftmost element. See ListCollectionsNewestAfterRow.
+SELECT
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at
+FROM collections
+WHERE user_id = sqlc.arg(user_id)
+  AND system_key IS DISTINCT FROM 'unsorted'
+  AND (lower(btrim(name)), id) > (sqlc.arg(cursor_value)::text, sqlc.arg(cursor_id)::uuid)
+ORDER BY
+    lower(btrim(name)) ASC,
+    id ASC
+LIMIT sqlc.arg(page_limit);
+
 -- name: GetCollectionByIDForUser :one
 -- Reads one collection of the authenticated user.
 --

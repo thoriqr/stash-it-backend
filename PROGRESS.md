@@ -70,10 +70,11 @@ No public-suffix or registrable-domain detection is performed.
 
 `internal/api/collection/` is implemented as a complete vertical slice.
 
-| Endpoint                          | Status | Notes                              |
-| --------------------------------- | ------ | ---------------------------------- |
-| `PUT /saved-items/:id/collection` | done   | 200, owner-scoped, requires Bearer |
-| `DELETE /collections/:id`         | done   | 200, owner-scoped, requires Bearer |
+| Endpoint                          | Status | Notes                                          |
+| --------------------------------- | ------ | ---------------------------------------------- |
+| `PUT /saved-items/:id/collection` | done   | 200, owner-scoped, requires Bearer             |
+| `GET /collections`                | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
+| `DELETE /collections/:id`         | done   | 200, owner-scoped, requires Bearer             |
 
 The endpoint accepts `{"collection_name": "..."}` and files one saved item
 into one user collection, creating that collection when necessary.
@@ -130,6 +131,67 @@ Behavior:
 Error contract: `COLLECTION_NOT_FOUND`, `UNSORTED_COLLECTION_PROTECTED`,
 `INVALID_COLLECTION_DELETE_ACTION`, `INVALID_COLLECTION_DELETE_TARGET`,
 `COLLECTION_DELETE_TARGET_NOT_FOUND`, `COLLECTION_NOT_EMPTY`.
+
+### Collection listing — `GET /collections`
+
+The user's collections, one page at a time, with Unsorted pinned to the front.
+
+Request:
+
+```http
+GET /collections?sort=newest&limit=20&cursor=<opaque>
+```
+
+| Param | Values | Default | Notes |
+| --- | --- | --- | --- |
+| `sort` | `newest`, `oldest`, `name` | `newest` | Unknown value is a 400, never guessed |
+| `limit` | 1–50 | 20 | Above the maximum is clamped by the service, as elsewhere |
+| `cursor` | opaque token | none | Resume where the previous page ended |
+
+Behavior:
+
+- **Unsorted is always first, under every sort**, and appears on no later page. It
+  is pinned by a rank over `system_key = 'unsorted'` in SQL, never by display name
+  and never by `type`. Pinning it by position rather than filtering means all three
+  sorts inherit it from one rule.
+- **Collections automatic organization created are listed**, unfiltered. A
+  collection belongs to one user either way.
+- **`name` sorts by `lower(btrim(name))`** — the same expression
+  `collections_user_name_unique` is built on, so the ordering and the uniqueness
+  constraint cannot disagree about what two names being the same means.
+- **Every order is broken by `id`.** `created_at` defaults to `NOW()`, which is
+  constant within a transaction, so equal timestamps are real: migration 000022
+  inserts every user's Unsorted collection in one statement. Without a unique
+  tie-break a page boundary can skip or repeat a row.
+- **Six named queries**, one per (sort × resume point). sqlc derives parameter types
+  per statement, so a runtime-selected `ORDER BY` would either collapse the types or
+  force a query framework this feature has no use for.
+- **The resumed queries exclude Unsorted with `IS DISTINCT FROM`.** That is
+  load-bearing twice: it removes the pinned row, and it is NULL-safe, so user
+  collections whose `system_key` is NULL are not dropped with it. A plain `<>` would
+  return system collections only.
+- **Row comparison in the keyset predicate, with explicit casts.** The casts are
+  load-bearing too: without them sqlc types every row-comparison parameter from the
+  row's leftmost element, which would give the `id` parameter a `timestamptz` type.
+
+Response:
+
+```json
+{ "data": { "collections": [ { "id": "…", "name": "Unsorted", "type": "system",
+    "system_key": "unsorted", "created_at": "…", "updated_at": "…" } ] },
+  "message": "collections retrieved successfully",
+  "meta": { "cursor": { "next_cursor": null, "has_more": false } } }
+```
+
+- `system_key` is included so a client recognizes Unsorted by identity rather than by
+  display name, and can know a collection may not be deleted before offering to
+  delete it.
+- **`next_cursor` has no `omitempty`**, so it serializes as an explicit `null` on the
+  final page. A nil pointer tagged `omitempty` would drop the key entirely, and a
+  missing key and a null are two different things to a client decoding it.
+- **No `total` or `total_pages`.** `has_more` comes from one extra fetched row rather
+  than a count, which is the work keyset pagination exists to avoid.
+- An empty page serializes `collections` as `[]`, never `null`.
 
 ### Saved item deletion reports collection state
 
@@ -763,6 +825,19 @@ Do not change these casually. Revisit only with an explicit decision.
 19d. **The move-all-items behavior exists only as part of collection deletion.**
     `MoveSavedItemsToCollection` has no endpoint of its own. A general batch-move
     feature is a separate product decision and is deliberately not implemented here.
+
+19e. **A cursor is a position, not a row.** It records where a page ended, and the
+    next query resumes from there without ever reading the row it came from. So a
+    cursor keeps working after that row is deleted or renamed, and a cursor pointing
+    past the end returns an empty page rather than an error. This is the property that
+    separates this from offset pagination, where a deleted row shifts everything after
+    it and the client silently receives a duplicate.
+
+19f. **`GET /collections` uses cursor pagination; the existing offset list endpoints
+    are unchanged.** `GET /saved-items` and `GET /auth/sessions` keep `page`/`limit`
+    and `meta.pagination`. `httpx.Meta` carries both, with `cursor` omitted entirely
+    where unset, so no existing response changes. Converting those endpoints is a
+    separate piece of work and needs its own decision.
 
 ---
 

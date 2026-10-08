@@ -95,6 +95,38 @@ SELECT
 FROM collections
 WHERE id = sqlc.arg(id);
 
+-- name: CreateTestCollectionAt :one
+-- Creates one collection with an explicit created_at.
+--
+-- Collections default to NOW(), which is transaction_timestamp() and therefore
+-- constant inside one transaction, so several rows inserted together share a
+-- timestamp. migrations/000022 inserts every user's Unsorted collection in exactly
+-- that shape, so equal timestamps are a real state rather than a contrived one, and
+-- the listing has to order them without skipping or repeating a row across a page
+-- boundary. Setting the value explicitly is what lets a test place rows at chosen
+-- positions in an ordering, and what lets a test create rows that genuinely tie.
+INSERT INTO collections (
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at
+) VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(name),
+    CASE WHEN sqlc.narg(system_key)::text IS NULL THEN 'user' ELSE 'system' END,
+    sqlc.narg(system_key)::text,
+    sqlc.arg(created_at)
+)
+RETURNING
+    id,
+    user_id,
+    name,
+    type,
+    system_key,
+    created_at,
+    updated_at;
+
 -- name: CreateTestSystemCollection :one
 -- A collection as automatic organization creates it: type = 'system' with a key
 -- that is not Unsorted. Seeded directly so tests can prove that a collection's

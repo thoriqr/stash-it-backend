@@ -45,6 +45,15 @@ func CollectionRoutes(
 	handler *Handler,
 	verifier *security.AccessTokenVerifier,
 ) {
+	// "/" rather than "": this group is mounted at /collections, so "/" is the
+	// collection list itself and "/:id" is one collection. Registering the root path
+	// as "" would leave the list unreachable.
+	router.Get(
+		"/",
+		middleware.Auth(verifier),
+		handler.ListCollections,
+	)
+
 	router.Delete(
 		"/:id",
 		middleware.Auth(verifier),

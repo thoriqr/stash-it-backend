@@ -79,6 +79,45 @@ func (c *MockRepositoryDeleteCollectionCall) DoAndReturn(f func(context.Context,
 	return c
 }
 
+// ListCollections mocks base method.
+func (m *MockRepository) ListCollections(ctx context.Context, params collection.ListCollectionsParams) (collection.ListCollectionsResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCollections", ctx, params)
+	ret0, _ := ret[0].(collection.ListCollectionsResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCollections indicates an expected call of ListCollections.
+func (mr *MockRepositoryMockRecorder) ListCollections(ctx, params any) *MockRepositoryListCollectionsCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCollections", reflect.TypeOf((*MockRepository)(nil).ListCollections), ctx, params)
+	return &MockRepositoryListCollectionsCall{Call: call}
+}
+
+// MockRepositoryListCollectionsCall wrap *gomock.Call
+type MockRepositoryListCollectionsCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryListCollectionsCall) Return(arg0 collection.ListCollectionsResult, arg1 error) *MockRepositoryListCollectionsCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryListCollectionsCall) Do(f func(context.Context, collection.ListCollectionsParams) (collection.ListCollectionsResult, error)) *MockRepositoryListCollectionsCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryListCollectionsCall) DoAndReturn(f func(context.Context, collection.ListCollectionsParams) (collection.ListCollectionsResult, error)) *MockRepositoryListCollectionsCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // PutSavedItemIntoUserCollection mocks base method.
 func (m *MockRepository) PutSavedItemIntoUserCollection(ctx context.Context, params collection.PutSavedItemIntoUserCollectionParams) (collection.PutSavedItemIntoUserCollectionResult, error) {
 	m.ctrl.T.Helper()

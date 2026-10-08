@@ -37,6 +37,18 @@ type Repository interface {
 		params PutSavedItemIntoUserCollectionParams,
 	) (PutSavedItemIntoUserCollectionResult, error)
 
+	// ListCollections returns one page of the user's collections in the requested
+	// order, plus whether more rows follow.
+	//
+	// The cursor arrives already decoded and validated, and the repository never sees
+	// a token: decoding is a service concern, and this deals in rows and positions.
+	// One row beyond Limit is requested so HasMore is exact rather than inferred from
+	// a count.
+	ListCollections(
+		ctx context.Context,
+		params ListCollectionsParams,
+	) (ListCollectionsResult, error)
+
 	// DeleteCollection removes one collection of the user and deals with the saved
 	// items in it according to the action the caller chose.
 	DeleteCollection(
@@ -359,6 +371,233 @@ func (r *repository) DeleteCollection(
 	return nil
 }
 
+// ListCollections returns one page of the user's collections.
+//
+// Six statements rather than one, and the count is the design rather than an
+// accident. The listing has three independent dimensions: which sort, and whether
+// the page starts at the pinned row or resumes from a position. Each combination
+// needs its own typed parameter set, because sqlc derives parameter types from the
+// statement and a runtime-selected ORDER BY would either collapse them into
+// untyped values or force a query-building abstraction this feature has no use for.
+// The collection feature already prefers explicit statements for the same reason:
+// CreateUserCollection and GetUserCollectionByNameForUser are separate rather than
+// one statement with a branch.
+//
+// No transaction is needed. A listing reads, so there is nothing to keep consistent,
+// and each page is a single statement with its own snapshot.
+//
+// The lookup is always limit + 1. HasMore is therefore a fact about rows that exist
+// rather than an inference from a count, and the extra row is dropped before the
+// page is returned. Deriving the next cursor from the last returned row, rather than
+// from this lookahead row, is what keeps a page boundary from skipping a collection:
+// the lookahead row was never sent, so a cursor built from it would resume past it.
+func (r *repository) ListCollections(
+	ctx context.Context,
+	params ListCollectionsParams,
+) (ListCollectionsResult, error) {
+	rows, err := r.listCollectionsRows(ctx, params)
+	if err != nil {
+		return ListCollectionsResult{}, err
+	}
+
+	hasMore := len(rows) > params.Limit
+	if hasMore {
+		rows = rows[:params.Limit]
+	}
+
+	result := ListCollectionsResult{
+		Collections: rows,
+		Limit:       params.Limit,
+		Sort:        params.Sort,
+		HasMore:     hasMore,
+	}
+
+	return result, nil
+}
+
+// listCollectionsRows dispatches to the statement matching the requested sort and
+// resume point.
+//
+// The after-Unsorted statements take no position at all. A cursor in that group
+// means the previous page ended on the pinned row, so this page starts at the top of
+// the regular ordering. There is deliberately nothing to pass: a zero timestamp
+// would build a predicate against '-0001-01-01' and return the wrong rows, and
+// keeping these separate makes that impossible rather than guarded at runtime.
+func (r *repository) listCollectionsRows(
+	ctx context.Context,
+	params ListCollectionsParams,
+) ([]collectiondb.Collection, error) {
+	// One row beyond the limit, so the caller can tell whether more exist.
+	pageLimit := int32(params.Limit + 1)
+
+	switch {
+	case params.Cursor == nil:
+		return r.listFirstPage(ctx, params, pageLimit)
+
+	case !params.Cursor.hasPosition():
+		return r.listAfterUnsorted(ctx, params, pageLimit)
+
+	default:
+		return r.listAfterPosition(ctx, params, pageLimit)
+	}
+}
+
+func (r *repository) listFirstPage(
+	ctx context.Context,
+	params ListCollectionsParams,
+	pageLimit int32,
+) ([]collectiondb.Collection, error) {
+	var (
+		rows []collectiondb.Collection
+		err  error
+	)
+
+	switch params.Sort {
+	case CollectionSortOldest:
+		rows, err = r.queries.ListCollectionsOldestFirst(
+			ctx,
+			collectiondb.ListCollectionsOldestFirstParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+
+	case CollectionSortName:
+		rows, err = r.queries.ListCollectionsByNameFirst(
+			ctx,
+			collectiondb.ListCollectionsByNameFirstParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+
+	default:
+		rows, err = r.queries.ListCollectionsNewestFirst(
+			ctx,
+			collectiondb.ListCollectionsNewestFirstParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+	}
+
+	if err != nil {
+		return nil, internalError(err)
+	}
+
+	return rows, nil
+}
+
+func (r *repository) listAfterUnsorted(
+	ctx context.Context,
+	params ListCollectionsParams,
+	pageLimit int32,
+) ([]collectiondb.Collection, error) {
+	var (
+		rows []collectiondb.Collection
+		err  error
+	)
+
+	switch params.Sort {
+	case CollectionSortOldest:
+		rows, err = r.queries.ListCollectionsOldestAfterUnsorted(
+			ctx,
+			collectiondb.ListCollectionsOldestAfterUnsortedParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+
+	case CollectionSortName:
+		rows, err = r.queries.ListCollectionsByNameAfterUnsorted(
+			ctx,
+			collectiondb.ListCollectionsByNameAfterUnsortedParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+
+	default:
+		rows, err = r.queries.ListCollectionsNewestAfterUnsorted(
+			ctx,
+			collectiondb.ListCollectionsNewestAfterUnsortedParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+	}
+
+	if err != nil {
+		return nil, internalError(err)
+	}
+
+	return rows, nil
+}
+
+func (r *repository) listAfterPosition(
+	ctx context.Context,
+	params ListCollectionsParams,
+	pageLimit int32,
+) ([]collectiondb.Collection, error) {
+	// Both halves of the position were validated and, for the time-based sorts,
+	// parsed by the service before this was called. The repository passes them on
+	// without reinterpreting them: CursorValue is already the type sqlc generated for
+	// a timestamptz column, and for the name sort it is already the normalized form
+	// the ordering and the unique index compute. A token that survived validation can
+	// therefore not become a query error here.
+	cursorID := *params.Cursor.ID
+
+	switch params.Sort {
+	case CollectionSortOldest:
+		rows, err := r.queries.ListCollectionsOldestAfterRow(
+			ctx,
+			collectiondb.ListCollectionsOldestAfterRowParams{
+				UserID:      params.UserID,
+				CursorValue: params.Cursor.Timestamp,
+				CursorID:    cursorID,
+				PageLimit:   pageLimit,
+			},
+		)
+		if err != nil {
+			return nil, internalError(err)
+		}
+
+		return rows, nil
+
+	case CollectionSortName:
+		rows, err := r.queries.ListCollectionsByNameAfterRow(
+			ctx,
+			collectiondb.ListCollectionsByNameAfterRowParams{
+				UserID:      params.UserID,
+				CursorValue: *params.Cursor.Value,
+				CursorID:    cursorID,
+				PageLimit:   pageLimit,
+			},
+		)
+		if err != nil {
+			return nil, internalError(err)
+		}
+
+		return rows, nil
+
+	default:
+		rows, err := r.queries.ListCollectionsNewestAfterRow(
+			ctx,
+			collectiondb.ListCollectionsNewestAfterRowParams{
+				UserID:      params.UserID,
+				CursorValue: params.Cursor.Timestamp,
+				CursorID:    cursorID,
+				PageLimit:   pageLimit,
+			},
+		)
+		if err != nil {
+			return nil, internalError(err)
+		}
+
+		return rows, nil
+	}
+}
+
 // isUnsorted reports whether a collection's system_key identifies the Unsorted
 // collection.
 //
@@ -490,6 +729,15 @@ func createOrGetUserCollection(
 	}
 
 	return existing, false, nil
+}
+
+// internalError turns a driver error into an application error this repository
+// cannot describe more specifically.
+//
+// It is defined here so the listing and the collection deletion share one
+// translation for the failures they have nothing further to say about.
+func internalError(err error) error {
+	return apperror.Internal(err)
 }
 
 func newSavedItem(

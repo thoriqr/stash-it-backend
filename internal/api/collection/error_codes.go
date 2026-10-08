@@ -45,6 +45,21 @@ const (
 	// executes that or reports that it cannot.
 	CodeCollectionDeleteTargetNotFound = "COLLECTION_DELETE_TARGET_NOT_FOUND"
 
+	// CodeInvalidCollectionSort is returned when the requested sort is not one of
+	// the supported orders. Nothing is defaulted beyond an absent sort: choosing an
+	// order on a caller's behalf would return rows in a sequence they did not ask
+	// for, which for a paged listing means a cursor that means something different
+	// from what they expected.
+	CodeInvalidCollectionSort = "INVALID_COLLECTION_SORT"
+
+	// CodeInvalidCursor is returned when a cursor cannot be used. That covers every
+	// way a token can fail: malformed base64 or JSON, an unsupported payload version,
+	// a missing or contradictory field, and a cursor issued for a different sort.
+	// They share one code because they all mean the same thing to a caller, start
+	// over without a cursor, and telling them apart in the message would only make
+	// the token's internal shape easier to probe.
+	CodeInvalidCursor = "INVALID_CURSOR"
+
 	// CodeCollectionNotEmpty is returned when the collection could not be removed
 	// because a saved item was filed into it after the operation had already dealt
 	// with the items it found. The database's ON DELETE RESTRICT constraint is what

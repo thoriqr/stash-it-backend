@@ -65,6 +65,8 @@ func validationMessage(err validator.FieldError) string {
 		return "is too small"
 	case "max":
 		return "is too large"
+	case "oneof":
+		return "is not one of the supported values"
 	default:
 		return "is invalid"
 	}

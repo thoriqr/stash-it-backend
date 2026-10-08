@@ -95,6 +95,76 @@ func (h *Handler) PutSavedItem(c fiber.Ctx) error {
 	)
 }
 
+// ListCollections godoc
+// @Summary List collections
+// @Description Get the authenticated user's collections, one page at a time.
+// @Description The Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is "unsorted"; the display name is not its identity and a collection's type never decides anything about it.
+// @Description Collections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.
+// @Description sort selects the order and defaults to "newest". "newest" and "oldest" order by when the collection was created; "name" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.
+// @Description Pages are returned by cursor. Pass the next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted.
+// @Description meta.cursor.next_cursor is explicitly null on the final page, where has_more is false. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall.
+// @Description Search is not available here. GET /search already searches collections by name.
+// @Description Possible error codes:
+// @Description - INVALID_COLLECTION_SORT
+// @Description - INVALID_CURSOR
+// @Description - VALIDATION_ERROR
+// @Description - INVALID_AUTHORIZATION_HEADER
+// @Description - INVALID_ACCESS_TOKEN
+// @Description - ACCESS_TOKEN_EXPIRED
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Collection
+// @Produce json
+// @Security BearerAuth
+// @Param sort query string false "Collection order" Enums(newest, oldest, name) default(newest) example(newest)
+// @Param limit query int false "Number of collections per page" minimum(1) maximum(50) default(20) example(20)
+// @Param cursor query string false "Cursor from the previous page" example(eyJ2IjoxLCJzIjoibmV3ZXN0In0)
+// @Success 200 {object} ListCollectionsAPIResponse
+// @Failure 400 {object} swagger.ValidationErrorResponse "Invalid sort, limit or cursor"
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /collections [get]
+func (h *Handler) ListCollections(c fiber.Ctx) error {
+	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
+
+	userID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+
+	var req ListCollectionsRequest
+
+	if err := httpx.BindQuery(c, &req); err != nil {
+		return err
+	}
+
+	result, err := h.service.ListCollections(
+		c.Context(),
+		userID,
+		req.Sort,
+		req.Limit,
+		req.Cursor,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := mapListCollectionsResponse(result)
+
+	meta := httpx.Meta{
+		Cursor: &httpx.CursorPage{
+			NextCursor: result.NextCursor,
+			HasMore:    result.HasMore,
+		},
+	}
+
+	return httpx.OKWithMeta(
+		c,
+		"collections retrieved successfully",
+		&response,
+		meta,
+	)
+}
+
 // DeleteCollection godoc
 // @Summary Delete a collection
 // @Description Delete one of the current user's collections by ID. The request must

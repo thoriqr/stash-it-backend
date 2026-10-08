@@ -54,6 +54,42 @@ definitions:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
     type: object
+  collection.ListCollectionsAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/collection.ListCollectionsResponse'
+      message:
+        example: collections retrieved successfully
+        type: string
+    type: object
+  collection.ListCollectionsResponse:
+    properties:
+      collections:
+        items:
+          $ref: '#/definitions/collection.ListedCollectionResponse'
+        type: array
+    type: object
+  collection.ListedCollectionResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      name:
+        example: Wishlist
+        type: string
+      system_key:
+        example: youtube
+        type: string
+      type:
+        example: user
+        type: string
+      updated_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+    type: object
   collection.PutSavedItemIntoCollectionAPIResponse:
     properties:
       data:
@@ -2002,6 +2038,72 @@ paths:
       summary: Revoke session
       tags:
       - Session
+  /collections:
+    get:
+      description: |-
+        Get the authenticated user's collections, one page at a time.
+        The Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is "unsorted"; the display name is not its identity and a collection's type never decides anything about it.
+        Collections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.
+        sort selects the order and defaults to "newest". "newest" and "oldest" order by when the collection was created; "name" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.
+        Pages are returned by cursor. Pass the next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted.
+        meta.cursor.next_cursor is explicitly null on the final page, where has_more is false. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall.
+        Search is not available here. GET /search already searches collections by name.
+        Possible error codes:
+        - INVALID_COLLECTION_SORT
+        - INVALID_CURSOR
+        - VALIDATION_ERROR
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - default: newest
+        description: Collection order
+        enum:
+        - newest
+        - oldest
+        - name
+        example: newest
+        in: query
+        name: sort
+        type: string
+      - default: 20
+        description: Number of collections per page
+        example: 20
+        in: query
+        maximum: 50
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Cursor from the previous page
+        example: eyJ2IjoxLCJzIjoibmV3ZXN0In0
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/collection.ListCollectionsAPIResponse'
+        "400":
+          description: Invalid sort, limit or cursor
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List collections
+      tags:
+      - Collection
   /collections/{id}:
     delete:
       consumes:
