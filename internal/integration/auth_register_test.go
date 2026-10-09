@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -150,6 +151,285 @@ func TestRegisterManual_AlreadyCompleted(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	require.Equal(t, registration.CodeRegistrationAlreadyCompleted, body.Error.Code)
+}
+
+// registerAndReturnVerificationID opens a manual registration and returns the
+// verification id its caller would use for the rest of the flow.
+func registerAndReturnVerificationID(
+	t *testing.T,
+	email string,
+) uuid.UUID {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/manual",
+		strings.NewReader(`{"email":"`+email+`"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body struct {
+		Data struct {
+			VerificationID uuid.UUID `json:"verification_id"`
+		} `json:"data"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.NotEqual(t, uuid.Nil, body.Data.VerificationID)
+
+	return body.Data.VerificationID
+}
+
+// requestCreatePIN calls the pin endpoint for a verification id.
+func requestCreatePIN(
+	t *testing.T,
+	verificationID uuid.UUID,
+) *http.Response {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+verificationID.String()+"/pin",
+		nil,
+	)
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+
+	return resp
+}
+
+// Issuing a PIN and immediately asking for another is the same act twice, and it
+// has to be refused: the endpoint is unauthenticated, so without the cooldown it
+// is a way to mail an address as fast as the endpoint can be called, and a way to
+// reset the per-code attempt limit by having a fresh code issued.
+func TestCreatePIN_Cooldown(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+	testEmailSender.Messages = nil
+
+	verificationID := registerAndReturnVerificationID(t, "pincooldown@example.com")
+
+	// The first issuance is the one a caller starting a registration expects and
+	// is never subject to a cooldown: nothing has been sent yet.
+	first := requestCreatePIN(t, verificationID)
+	require.Equal(t, http.StatusCreated, first.StatusCode)
+	require.Len(t, testEmailSender.Messages, 1)
+
+	// The second one is refused, and refused before anything is issued, so no
+	// second message goes out.
+	second := requestCreatePIN(t, verificationID)
+	require.Equal(t, http.StatusConflict, second.StatusCode)
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+
+	require.NoError(t, json.NewDecoder(second.Body).Decode(&body))
+	require.Equal(t, registration.CodeVerificationResendCooldown, body.Error.Code)
+
+	require.Len(
+		t,
+		testEmailSender.Messages,
+		1,
+		"a refused issuance must not send a second email",
+	)
+
+	// Exactly one code was ever issued for this verification, which is the same
+	// thing said about the database rather than about the mailer.
+	state, err := db.GetRegistrationState(ctx, "pincooldown@example.com")
+	require.NoError(t, err)
+	require.Equal(t, int32(1), state.PinIssuedCount)
+}
+
+// The cooldown has to expire on its own: a caller who lost a code must be able to
+// ask for another, and the refusal must not be permanent.
+func TestCreatePIN_SucceedsAfterCooldown(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+	testEmailSender.Messages = nil
+
+	verificationID := registerAndReturnVerificationID(t, "pinafter@example.com")
+
+	require.Equal(t, http.StatusCreated, requestCreatePIN(t, verificationID).StatusCode)
+	require.Len(t, testEmailSender.Messages, 1)
+
+	// Age the last send past the cooldown instead of waiting it out, so the test
+	// is about the rule rather than about the clock.
+	require.NoError(t, db.MakeVerificationResendable(ctx, verificationID))
+
+	third := requestCreatePIN(t, verificationID)
+	require.Equal(t, http.StatusCreated, third.StatusCode)
+
+	require.Len(t, testEmailSender.Messages, 2)
+
+	state, err := db.GetRegistrationState(ctx, "pinafter@example.com")
+	require.NoError(t, err)
+	require.Equal(t, int32(2), state.PinIssuedCount)
+}
+
+// Both issuance paths send the same kind of message to the same address, so they
+// obey the same rule. Resend is asserted here as well because the shared check
+// could otherwise pass this test while leaving resend broken.
+func TestCreatePIN_AndResendShareOneCooldown(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+	testEmailSender.Messages = nil
+
+	verificationID := registerAndReturnVerificationID(t, "pinafterresend@example.com")
+
+	require.Equal(t, http.StatusCreated, requestCreatePIN(t, verificationID).StatusCode)
+
+	// A pin issuance starts the same cooldown a resend does.
+	resendURL := "/auth/register/verification/" + verificationID.String() + "/resend"
+
+	resendResp, err := testApp.Test(
+		httptest.NewRequest(http.MethodPost, resendURL, nil),
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, resendResp.StatusCode)
+
+	// And a resend starts the same cooldown a pin issuance does.
+	require.NoError(t, db.MakeVerificationResendable(ctx, verificationID))
+
+	afterCooldownResp, err := testApp.Test(
+		httptest.NewRequest(http.MethodPost, resendURL, nil),
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, afterCooldownResp.StatusCode)
+
+	require.Equal(
+		t,
+		http.StatusConflict,
+		requestCreatePIN(t, verificationID).StatusCode,
+	)
+}
+
+// Several requests for the same address that has never registered must all come
+// back the same way. Only one of them can create the registration, so the rest
+// have to be answered the way the second sequential request would be answered,
+// rather than as a conflict that means something different to a caller.
+func TestRegisterManual_ConcurrentSameNewEmail(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	const attempts = 8
+
+	type outcome struct {
+		status         int
+		verificationID uuid.UUID
+	}
+
+	results := make([]outcome, attempts)
+
+	// The barrier is the synchronization: every request is built and parked
+	// before any of them is allowed to run, so they contend for the same window
+	// rather than being issued one after another.
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+
+	ready.Add(attempts)
+	done.Add(attempts)
+
+	for i := range attempts {
+		go func() {
+			defer done.Done()
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/auth/register/manual",
+				strings.NewReader(`{"email":"concurrent@example.com"}`),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			ready.Done()
+			<-start
+
+			resp, err := testApp.Test(req)
+			if err != nil {
+				return
+			}
+
+			var body struct {
+				Data struct {
+					VerificationID uuid.UUID `json:"verification_id"`
+				} `json:"data"`
+			}
+
+			if json.NewDecoder(resp.Body).Decode(&body) != nil {
+				return
+			}
+
+			results[i] = outcome{
+				status:         resp.StatusCode,
+				verificationID: body.Data.VerificationID,
+			}
+		}()
+	}
+
+	ready.Wait()
+	close(start)
+
+	done.Wait()
+
+	// Every caller sees the same thing: a successful registration pointing at one
+	// verification. There is no losing caller, and in particular none is told the
+	// address is already taken, which is what a caller cannot act on here.
+	var verificationID uuid.UUID
+
+	for i, result := range results {
+		require.Equal(
+			t,
+			http.StatusCreated,
+			result.status,
+			"request %d must be answered like the second sequential request",
+			i,
+		)
+
+		require.NotEqual(
+			t,
+			uuid.Nil,
+			result.verificationID,
+			"request %d returned no verification id",
+			i,
+		)
+
+		if verificationID == uuid.Nil {
+			verificationID = result.verificationID
+		}
+
+		require.Equal(
+			t,
+			verificationID,
+			result.verificationID,
+			"request %d was pointed at a different registration",
+			i,
+		)
+	}
+
+	// One registration, not several. The unique index is what guarantees this
+	// whatever the callers did, and it is asserted here rather than assumed.
+	history, err := db.GetRegistrationHistory(ctx, "concurrent@example.com")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+
+	require.Equal(t, "pending", history[0].Status)
+	require.Equal(t, verificationID, history[0].VerificationID)
 }
 
 func TestVerifyRegistration_InvalidPIN(t *testing.T) {

@@ -75,6 +75,19 @@ SELECT
 FROM refresh_tokens
 WHERE id = sqlc.arg(id);
 
+-- name: GetRefreshTokensForSession :many
+-- Every token issued for one session, used to check that none of them survived
+-- a revocation that raced with a rotation.
+SELECT
+    id,
+    session_id,
+    token_hash,
+    issued_at,
+    replaced_by
+FROM refresh_tokens
+WHERE session_id = sqlc.arg(session_id)
+ORDER BY issued_at, id;
+
 -- name: GetSessionState :one
 SELECT
     id,

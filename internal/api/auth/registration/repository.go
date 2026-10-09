@@ -118,7 +118,54 @@ type CreateManualRegistrationParams struct {
 	RegistrationExpiresAt pgtype.Timestamptz
 }
 
+// pendingRegistrationEmailIndex is the partial unique index that guarantees at
+// most one pending or completed registration per address. It is the authority on
+// that invariant; everything this repository does before the insert is an
+// optimization that avoids hitting it.
+const pendingRegistrationEmailIndex = "pending_registrations_email_idx"
+
+// CreateManualRegistration opens a registration for an address, or reports the one
+// that is already open.
+//
+// Two requests for an address with no registration yet cannot both be decided by
+// the lookup below, and they must not be: GetPendingRegistrationByEmailForUpdate
+// locks a row, and there is no row yet. Both proceed to the insert and one of them
+// loses on pending_registrations_email_idx. That loser is not an error the caller
+// should have to distinguish from the sequential case, so it simply runs again: by
+// then the winner has committed, the lookup finds its row, and the ordinary
+// already-pending path produces the same answer the second sequential request
+// would have got.
+//
+// The retry is a single re-run rather than a loop, and it only happens on that one
+// constraint. A second loss, or any other failure, is reported as it is.
 func (r *repository) CreateManualRegistration(
+	ctx context.Context,
+	params CreateManualRegistrationParams,
+) (CreateManualRegistrationResult, error) {
+	result, err := r.createManualRegistrationOnce(ctx, params)
+	if !isPendingRegistrationEmailConflict(err) {
+		return result, err
+	}
+
+	return r.createManualRegistrationOnce(ctx, params)
+}
+
+// isPendingRegistrationEmailConflict reports whether err is the unique violation
+// raised by the one-registration-per-address index.
+//
+// The error has already been mapped, but mapping keeps the driver error as the
+// cause, so the constraint can still be read off it.
+func isPendingRegistrationEmailConflict(err error) bool {
+	var pgErr *pgconn.PgError
+
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+
+	return pgErr.ConstraintName == pendingRegistrationEmailIndex
+}
+
+func (r *repository) createManualRegistrationOnce(
 	ctx context.Context,
 	params CreateManualRegistrationParams,
 ) (CreateManualRegistrationResult, error) {
@@ -787,7 +834,7 @@ func mapRegistrationDBError(err error) error {
 
 	if errors.As(err, &pgErr) {
 		switch pgErr.ConstraintName {
-		case "pending_registrations_email_idx":
+		case pendingRegistrationEmailIndex:
 			return apperror.ConflictWith(
 				CodeRegistrationAlreadyExists,
 				"registration already exists",

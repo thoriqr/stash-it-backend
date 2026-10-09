@@ -54,7 +54,13 @@ func (s *Service) LoginManual(
     password string,
     metadata session.SessionMetadata,
 ) (LoginResult, error) {
-    user, err := s.repository.GetUserForLogin(ctx, email)
+    // The same normalization registration stored the address with. Without it a
+    // user who registered as Alice@Example.com would be told their password was
+    // wrong when they typed the address they registered with.
+    user, err := s.repository.GetUserForLogin(
+        ctx,
+        registration.NormalizeEmail(email),
+    )
     if err != nil {
         return LoginResult{}, err
     }
@@ -123,6 +129,13 @@ func (s *Service) LoginGoogle(
 		return LoginGoogleResult{}, err
 	}
 
+	// Normalized once, here, because every use below compares against or writes
+	// the same column: the existing-user lookup, the link confirmation's snapshot
+	// and the registration handed to the registration feature. Normalizing only
+	// the lookup would leave the rest of the flow carrying a form of the address
+	// that no exact comparison will ever match again.
+	email := registration.NormalizeEmail(identity.Email)
+
 	authIdentity, err := s.repository.GetAuthIdentity(
 		ctx,
 		"google",
@@ -142,7 +155,7 @@ func (s *Service) LoginGoogle(
 
 	user, err := s.repository.GetUserByEmail(
 		ctx,
-		identity.Email,
+		email,
 	)
 	if err != nil {
 		return LoginGoogleResult{}, err
@@ -160,7 +173,7 @@ func (s *Service) LoginGoogle(
 				Provider:            "google",
 				ProviderSubject:     identity.Subject,
 				EmailSnapshot:       pgtype.Text{
-					String: identity.Email,
+					String: email,
 					Valid:  true,
 				},
 				DisplayNameSnapshot: pgtype.Text{
@@ -186,11 +199,11 @@ func (s *Service) LoginGoogle(
 	verificationID, err := s.registrationService.CreateSocialRegistration(
     	ctx,
     	registration.CreateSocialRegistrationInput{
-        	Email:               identity.Email,
+        	Email:               email,
         	Provider:            "google",
         	ProviderSubject:     identity.Subject,
         	EmailSnapshot:       pgtype.Text{
-            String: identity.Email,
+            String: email,
             Valid:  true,
         	},
         	DisplayNameSnapshot: pgtype.Text{

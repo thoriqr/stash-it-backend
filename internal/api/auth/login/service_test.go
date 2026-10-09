@@ -75,6 +75,127 @@ func newTestService(
 		passwordHasher
 }
 
+// The address login looks up is the one registration stored. The comparison is
+	// exact, so a mixed-case or padded address that is not normalized here finds
+	// no user and is reported as invalid credentials, which is indistinguishable
+	// from a wrong password.
+func TestService_LoginManual_NormalizesEmail(t *testing.T) {
+	submitted := map[string]string{
+		"mixed case":        "  Alice@Example.COM ",
+		"mixed case alone":  "Alice@Example.COM",
+		"surrounding space": "  alice@example.com  ",
+		"already stored":    "alice@example.com",
+	}
+
+	for name, submittedEmail := range submitted {
+		t.Run(name, func(t *testing.T) {
+			service, repository, sessionCreator, _, _, passwordHasher :=
+				newTestService(t)
+
+			ctx := context.Background()
+			userID := uuid.New()
+
+			passwordHash, err := passwordHasher.Hash("correct-password")
+			if err != nil {
+				t.Fatalf("failed to hash password: %v", err)
+			}
+
+			// The assertion is on the argument: gomock fails this test if the
+			// lookup is made with anything but the stored form.
+			repository.EXPECT().
+				GetUserForLogin(ctx, "alice@example.com").
+				Return(logindb.GetUserForLoginRow{
+					ID:           userID,
+					Email:        "alice@example.com",
+					DisplayName:  "Alice",
+					PasswordHash: passwordHash,
+				}, nil)
+
+			sessionCreator.EXPECT().
+				CreateSession(ctx, userID, session.SessionMetadata{}).
+				Return(session.CreateSessionResult{
+					Session:      sessiondb.Session{ID: uuid.New(), UserID: userID},
+					RefreshToken: "refresh-token",
+				}, nil)
+
+			result, err := service.LoginManual(
+				ctx,
+				submittedEmail,
+				"correct-password",
+				session.SessionMetadata{},
+			)
+
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+
+			if result.User.ID != userID {
+				t.Fatalf("expected user %s, got %+v", userID, result.User)
+			}
+		})
+	}
+}
+
+func TestService_LoginGoogle_NormalizesEmail(t *testing.T) {
+	service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+	ctx := context.Background()
+
+	// Google's claim is used exactly as issued, casing and all.
+	googleTokenVerifier.identity = login.GoogleIdentity{
+		Subject:       "google-subject-123",
+		Email:         "Alice@Example.com",
+		EmailVerified: true,
+		DisplayName:   "Alice",
+	}
+
+	// No linked Google identity yet, so the flow falls through to the email
+	// lookup, which is the call under test.
+	repository.EXPECT().
+		GetAuthIdentity(ctx, "google", "google-subject-123").
+		Return(logindb.GetAuthIdentityRow{}, nil)
+
+	// The lookup must be made against the form the address is stored in, so an
+	// existing user is found and offered account linking rather than being told
+	// to register again.
+	repository.EXPECT().
+		GetUserByEmail(ctx, "alice@example.com").
+		Return(logintestdbRowWithID(), nil)
+
+	// Reaching the account-link branch is the proof the user was found.
+	repository.EXPECT().
+		CreateAccountLinkConfirmation(ctx, gomock.Any()).
+		Return(logindb.AccountLinkConfirmation{ID: uuid.New()}, nil)
+
+	result, err := service.LoginGoogle(
+		ctx,
+		"id-token",
+		session.SessionMetadata{},
+	)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if result.Outcome != login.LoginOutcomeAccountLinkRequired {
+		t.Fatalf(
+			"expected outcome %q, got %q",
+			login.LoginOutcomeAccountLinkRequired,
+			result.Outcome,
+		)
+	}
+}
+
+// logintestdbRowWithID is a minimal existing-user row: a non-nil id is what tells
+// the service a user already holds the address.
+func logintestdbRowWithID() logindb.GetUserByEmailRow {
+	return logindb.GetUserByEmailRow{
+		ID:          uuid.New(),
+		Email:       "alice@example.com",
+		DisplayName: "Alice",
+	}
+}
+
 func TestService_LoginManual(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		service, repository, sessionCreator, _, _, passwordHasher := newTestService(t)

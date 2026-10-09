@@ -165,6 +165,46 @@ func (q *Queries) GetRefreshTokenState(ctx context.Context, id uuid.UUID) (Refre
 	return i, err
 }
 
+const getRefreshTokensForSession = `-- name: GetRefreshTokensForSession :many
+SELECT
+    id,
+    session_id,
+    token_hash,
+    issued_at,
+    replaced_by
+FROM refresh_tokens
+WHERE session_id = $1
+ORDER BY issued_at, id
+`
+
+// Every token issued for one session, used to check that none of them survived
+// a revocation that raced with a rotation.
+func (q *Queries) GetRefreshTokensForSession(ctx context.Context, sessionID uuid.UUID) ([]RefreshToken, error) {
+	rows, err := q.db.Query(ctx, getRefreshTokensForSession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RefreshToken
+	for rows.Next() {
+		var i RefreshToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.TokenHash,
+			&i.IssuedAt,
+			&i.ReplacedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSessionState = `-- name: GetSessionState :one
 SELECT
     id,

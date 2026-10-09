@@ -44,6 +44,37 @@ func validateVerificationPending(
 	return nil
 }
 
+// ensureVerificationCooldownElapsed rejects a verification code that was sent
+// too recently to send another.
+//
+// Both issuance paths go through here, because they send the same kind of message
+// to the same address and have the same cost: CreatePIN issues the first code,
+// ResendVerification issues a replacement. Only one of them enforcing the rule
+// would leave the other as the way around it.
+//
+// A verification that has never sent a code has no cooldown to observe, so the
+// first issuance is always allowed and this does not change what a caller
+// starting a registration can do.
+func ensureVerificationCooldownElapsed(
+	verification registrationdb.GetVerificationRow,
+) error {
+	if !verification.LastSentAt.Valid {
+		return nil
+	}
+
+	if time.Now().Before(
+		verification.LastSentAt.Time.Add(verificationResendCooldown),
+	) {
+		return apperror.ConflictWith(
+			CodeVerificationResendCooldown,
+			"verification code was sent too recently",
+			nil,
+		)
+	}
+
+	return nil
+}
+
 func validateRegistrationContinuation(
     continuation registrationdb.GetRegistrationContinuationRow,
 ) error {

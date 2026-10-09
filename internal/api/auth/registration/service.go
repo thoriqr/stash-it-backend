@@ -98,7 +98,20 @@ type RegisterManualResult struct {
 	AlreadyPending bool
 }
 
-func normalizeEmail(email string) string {
+// NormalizeEmail is the one definition of what an email address is, for every
+// feature that reads or writes one.
+//
+// Registration stores the normalized form, and the lookup side of login has to
+// agree with it, because the comparison is exact: PostgreSQL treats = on TEXT as
+// case sensitive, so an address stored as alice@example.com is not found by
+// Alice@Example.com. Normalizing on write without normalizing on read turns a
+// mixed-case login into an invalid-credentials response that the caller cannot
+// tell apart from a wrong password.
+//
+// It is exported because login depends on it. Sharing one definition is what
+// keeps the two features from drifting apart, which is the failure this rule
+// exists to prevent.
+func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
@@ -106,7 +119,7 @@ func (s *service) RegisterManual(
 	ctx context.Context,
 	email string,
 ) (RegisterManualResult, error) {
-	email = normalizeEmail(email)
+	email = NormalizeEmail(email)
 
 	registrationID, err :=
 		s.repository.GetCompletedRegistrationByEmail(
@@ -161,7 +174,7 @@ func (s *service) CreateSocialRegistration(
 	ctx context.Context,
 	params CreateSocialRegistrationInput,
 ) (uuid.UUID, error) {
-	email := normalizeEmail(params.Email)
+	email := NormalizeEmail(params.Email)
 
 	now := time.Now()
 
@@ -205,6 +218,16 @@ func (s *service) CreatePIN(
 	}
 
 	if err := validateVerificationPending(verification); err != nil {
+		return CreatePINResult{}, err
+	}
+
+	// This is the first issuance of a code only by accident of the caller: the
+	// endpoint is unauthenticated, and verification_id plus the emailed PIN are
+	// the credential, so anyone holding one can call it repeatedly. The cooldown
+	// is what stops that from becoming a way to mail an address as fast as the
+	// endpoint can be called, and to reset the per-code attempt limit by having a
+	// fresh code issued.
+	if err := ensureVerificationCooldownElapsed(verification); err != nil {
 		return CreatePINResult{}, err
 	}
 
@@ -304,22 +327,13 @@ func (s *service) ResendVerification(
 		return ResendVerificationResult{}, err
 	}
 
-	now := time.Now()
-
-	// Resend cooldown must have elapsed.
-	if verification.LastSentAt.Valid {
-		resendAt := verification.LastSentAt.Time.Add(
-			verificationResendCooldown,
-		)
-
-		if now.Before(resendAt) {
-			return ResendVerificationResult{}, apperror.ConflictWith(
-				CodeVerificationResendCooldown,
-				"verification code was sent too recently",
-				nil,
-			)
-		}
+	// The same check CreatePIN makes, called from the same helper: two issuance
+	// paths that each spelled this rule out would be two rules to keep in step.
+	if err := ensureVerificationCooldownElapsed(verification); err != nil {
+		return ResendVerificationResult{}, err
 	}
+
+	now := time.Now()
 
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {

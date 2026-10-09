@@ -162,6 +162,122 @@ func TestLoginManual_InvalidCredentials(t *testing.T) {
 	require.Equal(t, int64(0), sessionCount)
 }
 
+// The address registration stores is lowercased and trimmed, and the comparison
+// login makes against it is exact. This walks the whole way through, so the
+// normalization is pinned on both sides at once: a user who registered as
+// Alice@Example.com must be able to log in by typing exactly that.
+//
+// Case is the part that reaches the service. Surrounding whitespace is refused
+// earlier, by the email validation tag on the request, which is asserted below
+// rather than left to chance.
+func TestLoginManual_MixedCaseEmailRegisteredAddress(t *testing.T) {
+	ctx := context.Background()
+	db := logintestdb.New(testPool)
+
+	require.NoError(t, db.TruncateLoginData(ctx))
+
+	// The stored form is the normalized one; nothing below writes the casing the
+	// user typed, which is the whole reason this test exists.
+	const storedEmail = "alice@example.com"
+
+	userID, err := db.CreateLoginUser(
+		ctx,
+		logintestdb.CreateLoginUserParams{
+			Email:       storedEmail,
+			DisplayName: "Alice",
+		},
+	)
+	require.NoError(t, err)
+
+	passwordHasher := security.NewPasswordHasher()
+
+	passwordHash, err := passwordHasher.Hash("password123")
+	require.NoError(t, err)
+
+	require.NoError(
+		t,
+		db.CreatePasswordCredential(
+			ctx,
+			logintestdb.CreatePasswordCredentialParams{
+				UserID:       userID,
+				PasswordHash: passwordHash,
+			},
+		),
+	)
+
+	submitted := []string{
+		"Alice@Example.com",
+		"ALICE@EXAMPLE.COM",
+		"aLiCe@eXaMpLe.CoM",
+	}
+
+	for _, address := range submitted {
+		t.Run(address, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/auth/login",
+				strings.NewReader(`{
+					"email": "`+address+`",
+					"password": "password123"
+				}`),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Platform", "web")
+
+			resp, err := testApp.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body struct {
+				Data struct {
+					AccessToken  string `json:"access_token"`
+					RefreshToken string `json:"refresh_token"`
+					User         struct {
+						Email string `json:"email"`
+					} `json:"user"`
+				} `json:"data"`
+			}
+
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+			require.NotEmpty(t, body.Data.AccessToken)
+			require.NotEmpty(t, body.Data.RefreshToken)
+
+			// The address is reported as stored, not as submitted.
+			require.Equal(t, storedEmail, body.Data.User.Email)
+		})
+	}
+
+	// A padded address is refused as malformed input rather than reported as bad
+	// credentials, so a caller cannot confuse the two. The service still trims,
+	// which is what protects a caller that is not this endpoint.
+	t.Run("padded address is rejected as invalid input", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/auth/login",
+			strings.NewReader(`{
+				"email": "  alice@example.com  ",
+				"password": "password123"
+			}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := testApp.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+		require.Equal(t, "VALIDATION_ERROR", body.Error.Code)
+	})
+}
+
 func TestLoginManual_UnknownEmail(t *testing.T) {
 	ctx := context.Background()
 	db := logintestdb.New(testPool)
