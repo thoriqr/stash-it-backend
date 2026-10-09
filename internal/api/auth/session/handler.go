@@ -81,8 +81,17 @@ func (h *Handler) RefreshToken(c fiber.Ctx) error {
 func (h *Handler) Logout(c fiber.Ctx) error {
 	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
 
+	userID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+
+	// Both identifiers come from the token the verifier already accepted, never
+	// from the request. Passing the user id as well as the session id is what lets
+	// the repository refuse a session that belongs to somebody else.
 	if err := h.service.Logout(
 		c.Context(),
+		userID,
 		claims.SessionID,
 	); err != nil {
 		return err
@@ -211,7 +220,7 @@ func (h *Handler) RevokeSession(c fiber.Ctx) error {
 
 	sessionID, err := uuid.Parse(c.Params("session_id"))
 	if err != nil {
-			return apperror.BadRequestWith(
+		return apperror.BadRequestWith(
 			"",
 			"invalid session id",
 			err,

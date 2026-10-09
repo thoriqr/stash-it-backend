@@ -14,46 +14,41 @@ import (
 )
 
 type Repository interface {
-    GetUserForLogin(
-        ctx context.Context,
-        email string,
-    ) (logindb.GetUserForLoginRow, error)
+	GetUserForLogin(
+		ctx context.Context,
+		email string,
+	) (logindb.GetUserForLoginRow, error)
 
-    GetUserForLoginByID(
-        ctx context.Context,
-        userID uuid.UUID,
-    ) (logindb.GetUserForLoginByIDRow, error)
+	GetUserForLoginByID(
+		ctx context.Context,
+		userID uuid.UUID,
+	) (logindb.GetUserForLoginByIDRow, error)
 
-    GetAuthIdentity(
-        ctx context.Context,
-        provider string,
-        providerSubject string,
-    ) (logindb.GetAuthIdentityRow, error)
+	GetAuthIdentity(
+		ctx context.Context,
+		provider string,
+		providerSubject string,
+	) (logindb.GetAuthIdentityRow, error)
 
-    GetUserByEmail(
-        ctx context.Context,
-        email string,
-    ) (logindb.GetUserByEmailRow, error)
+	GetUserByEmail(
+		ctx context.Context,
+		email string,
+	) (logindb.GetUserByEmailRow, error)
 
-    GetActiveAccountLinkConfirmation(
-        ctx context.Context,
-        id uuid.UUID,
-    ) (logindb.GetActiveAccountLinkConfirmationRow, error)
+	GetActiveAccountLinkConfirmation(
+		ctx context.Context,
+		id uuid.UUID,
+	) (logindb.GetActiveAccountLinkConfirmationRow, error)
 
-    CreateAuthIdentity(
-        ctx context.Context,
-        params logindb.CreateAuthIdentityParams,
-    ) (logindb.CreateAuthIdentityRow, error)
+	CreateAccountLinkConfirmation(
+		ctx context.Context,
+		params logindb.CreateAccountLinkConfirmationParams,
+	) (logindb.AccountLinkConfirmation, error)
 
-    CreateAccountLinkConfirmation(
-        ctx context.Context,
-        params logindb.CreateAccountLinkConfirmationParams,
-    ) (logindb.AccountLinkConfirmation, error)
-
-		ConfirmAccountLink(
-			ctx context.Context,
-			confirmationID uuid.UUID,
-		) (logindb.CreateAuthIdentityRow, error)
+	ConfirmAccountLink(
+		ctx context.Context,
+		confirmationID uuid.UUID,
+	) (logindb.CreateAuthIdentityRow, error)
 }
 
 type repository struct {
@@ -92,22 +87,22 @@ func (r *repository) GetUserForLogin(
 }
 
 func (r *repository) GetUserForLoginByID(
-    ctx context.Context,
-    userID uuid.UUID,
+	ctx context.Context,
+	userID uuid.UUID,
 ) (logindb.GetUserForLoginByIDRow, error) {
-    user, err := r.queries.GetUserForLoginByID(
-        ctx,
-        userID,
-    )
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) {
-            return logindb.GetUserForLoginByIDRow{}, apperror.NotFound(err)
-        }
+	user, err := r.queries.GetUserForLoginByID(
+		ctx,
+		userID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return logindb.GetUserForLoginByIDRow{}, apperror.NotFound(err)
+		}
 
-        return logindb.GetUserForLoginByIDRow{}, apperror.Internal(err)
-    }
+		return logindb.GetUserForLoginByIDRow{}, apperror.Internal(err)
+	}
 
-    return user, nil
+	return user, nil
 }
 
 func (r *repository) GetAuthIdentity(
@@ -150,54 +145,48 @@ func (r *repository) GetUserByEmail(
 }
 
 func (r *repository) GetActiveAccountLinkConfirmation(
-    ctx context.Context,
-    id uuid.UUID,
+	ctx context.Context,
+	id uuid.UUID,
 ) (logindb.GetActiveAccountLinkConfirmationRow, error) {
-    confirmation, err := r.queries.GetActiveAccountLinkConfirmation(ctx, id)
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) {
-            return logindb.GetActiveAccountLinkConfirmationRow{},
-                apperror.ConflictWith(
-                    CodeAccountLinkConfirmationInvalid,
-                    "account link confirmation is invalid",
-                    err,
-                )
-        }
+	confirmation, err := r.queries.GetActiveAccountLinkConfirmation(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return logindb.GetActiveAccountLinkConfirmationRow{},
+				apperror.ConflictWith(
+					CodeAccountLinkConfirmationInvalid,
+					"account link confirmation is invalid",
+					err,
+				)
+		}
 
-        return logindb.GetActiveAccountLinkConfirmationRow{}, apperror.Internal(err)
-    }
+		return logindb.GetActiveAccountLinkConfirmationRow{}, apperror.Internal(err)
+	}
 
-    return confirmation, nil
+	return confirmation, nil
 }
 
-func (r *repository) CreateAuthIdentity(
+// There is deliberately no standalone CreateAuthIdentity.
+//
+// Linking an identity to a user is only correct while the confirmation that
+// authorizes it is held under a row lock, so ConfirmAccountLink does the insert
+// in the same transaction that locks and consumes the confirmation. A standalone
+// insert would be the same write without the lock that makes it safe, and nothing
+// in this feature needs one: registration creates identities in its own
+// transaction, from a pending registration rather than from a confirmation.
+
+func (r *repository) CreateAccountLinkConfirmation(
 	ctx context.Context,
-	params logindb.CreateAuthIdentityParams,
-) (logindb.CreateAuthIdentityRow, error) {
-	identity, err := r.queries.CreateAuthIdentity(
+	params logindb.CreateAccountLinkConfirmationParams,
+) (logindb.AccountLinkConfirmation, error) {
+	confirmation, err := r.queries.CreateAccountLinkConfirmation(
 		ctx,
 		params,
 	)
 	if err != nil {
-		return logindb.CreateAuthIdentityRow{}, mapLoginDBError(err)
+		return logindb.AccountLinkConfirmation{}, apperror.Internal(err)
 	}
 
-	return identity, nil
-}
-
-func (r *repository) CreateAccountLinkConfirmation(
-    ctx context.Context,
-    params logindb.CreateAccountLinkConfirmationParams,
-) (logindb.AccountLinkConfirmation, error) {
-    confirmation, err := r.queries.CreateAccountLinkConfirmation(
-        ctx,
-        params,
-    )
-    if err != nil {
-        return logindb.AccountLinkConfirmation{}, apperror.Internal(err)
-    }
-
-    return confirmation, nil
+	return confirmation, nil
 }
 
 func (r *repository) ConfirmAccountLink(

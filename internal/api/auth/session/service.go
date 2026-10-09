@@ -21,28 +21,29 @@ type SessionCreator interface {
 }
 
 type SessionService interface {
-    RefreshToken(
-        ctx context.Context,
-        refreshToken string,
-    ) (RefreshTokenResult, error)
+	RefreshToken(
+		ctx context.Context,
+		refreshToken string,
+	) (RefreshTokenResult, error)
 
-    Logout(
-        ctx context.Context,
-        sessionID uuid.UUID,
-    ) error
+	Logout(
+		ctx context.Context,
+		userID uuid.UUID,
+		sessionID uuid.UUID,
+	) error
 
-    ListSessions(
-        ctx context.Context,
-        userID uuid.UUID,
-        page int,
-        limit int,
-    ) (ListSessionsResult, error)
+	ListSessions(
+		ctx context.Context,
+		userID uuid.UUID,
+		page int,
+		limit int,
+	) (ListSessionsResult, error)
 
-		RevokeSessionForUser(
-			ctx context.Context,
-			userID uuid.UUID,
-			sessionID uuid.UUID,
-		) error
+	RevokeSessionForUser(
+		ctx context.Context,
+		userID uuid.UUID,
+		sessionID uuid.UUID,
+	) error
 }
 
 type service struct {
@@ -80,11 +81,11 @@ func (s *service) CreateSession(
 	sessionRecord, _, err := s.repository.CreateSession(
 		ctx,
 		sessiondb.CreateSessionParams{
-			UserID:           userID,
-			Platform:         metadata.Platform,
-			InstallationID:   metadata.InstallationID,
-			DeviceName:       metadata.DeviceName,
-			UserAgent:        metadata.UserAgent,
+			UserID:         userID,
+			Platform:       metadata.Platform,
+			InstallationID: metadata.InstallationID,
+			DeviceName:     metadata.DeviceName,
+			UserAgent:      metadata.UserAgent,
 			AbsoluteExpiresAt: pgtype.Timestamptz{
 				Time:  time.Now().Add(SessionAbsoluteLifetime),
 				Valid: true,
@@ -146,11 +147,22 @@ func (s *service) RefreshToken(
 	}, nil
 }
 
+// Logout ends the caller's own session.
+//
+// The user id is carried alongside the session id rather than looked up from it.
+// Both come from the verified access token, so neither is caller-supplied, and
+// the repository matches both: a session id that belongs to somebody else
+// matches nothing and leaves that session untouched.
+//
+// It stays idempotent. Logging out twice, or logging out of a session that has
+// already been revoked, is a success, because the caller's intent — that they
+// hold no usable session — already holds.
 func (s *service) Logout(
 	ctx context.Context,
+	userID uuid.UUID,
 	sessionID uuid.UUID,
 ) error {
-	return s.repository.RevokeSession(ctx, sessionID)
+	return s.repository.RevokeSession(ctx, sessionID, userID)
 }
 
 type ListSessionsResult struct {
@@ -215,9 +227,9 @@ func (s *service) RevokeSessionForUser(
 	userID uuid.UUID,
 	sessionID uuid.UUID,
 ) error {
-		return s.repository.RevokeSessionForUser(
-			ctx,
-			sessionID,
-			userID,
-		)
+	return s.repository.RevokeSessionForUser(
+		ctx,
+		sessionID,
+		userID,
+	)
 }

@@ -25,11 +25,6 @@ type Repository interface {
 		refreshTokenHash string,
 	) (sessiondb.Session, sessiondb.RefreshToken, error)
 
-	GetRefreshTokenWithSession(
-		ctx context.Context,
-		tokenHash string,
-	) (sessiondb.GetRefreshTokenWithSessionRow, error)
-
 	RefreshToken(
 		ctx context.Context,
 		tokenHash string,
@@ -44,6 +39,7 @@ type Repository interface {
 	RevokeSession(
 		ctx context.Context,
 		sessionID uuid.UUID,
+		userID uuid.UUID,
 	) error
 
 	ListSessions(
@@ -113,25 +109,30 @@ func (r *repository) CreateSession(
 	return session, refreshToken, nil
 }
 
-func (r *repository) GetRefreshTokenWithSession(
-	ctx context.Context,
-	tokenHash string,
-) (sessiondb.GetRefreshTokenWithSessionRow, error) {
-	record, err := r.queries.GetRefreshTokenWithSession(ctx, tokenHash)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return sessiondb.GetRefreshTokenWithSessionRow{}, apperror.UnauthorizedWith(
-				CodeRefreshTokenInvalid,
-				"invalid refresh token",
-				err,
-			)
-		}
-
-		return sessiondb.GetRefreshTokenWithSessionRow{}, apperror.Internal(err)
+// revokeOwnSessionParams names the session the refresh token belongs to, and the
+// user it belongs to.
+//
+// Both come from the same locked row: the session id and the user id were read
+// together by GetRefreshTokenWithSessionForUpdate while the lock was held. So the
+// revocation cannot be aimed at a session other than the one this token is for,
+// and the user predicate in RevokeSession is satisfied by construction rather
+// than by an argument chosen at the call site.
+func revokeOwnSessionParams(
+	token sessiondb.GetRefreshTokenWithSessionForUpdateRow,
+) sessiondb.RevokeSessionParams {
+	return sessiondb.RevokeSessionParams{
+		ID:     token.SessionID,
+		UserID: token.UserID,
 	}
-
-	return record, nil
 }
+
+// There is deliberately no unlocked read of a refresh token and its session.
+//
+// Every decision about a refresh token is made inside RefreshToken, holding a
+// row lock on both the token and its session for the whole decision. A read
+// without that lock cannot answer "is this token usable" safely, because rotation
+// may commit between the read and whatever the caller does with it, so exposing
+// one would only invite an authorization decision made outside the lock.
 
 func (r *repository) RefreshToken(
 	ctx context.Context,
@@ -173,7 +174,7 @@ func (r *repository) RefreshToken(
 	}
 
 	if currentToken.ReplacedBy.Valid {
-		if err := qtx.RevokeSession(ctx, currentToken.SessionID); err != nil {
+		if err := qtx.RevokeSession(ctx, revokeOwnSessionParams(currentToken)); err != nil {
 			return sessiondb.GetRefreshTokenWithSessionForUpdateRow{}, sessiondb.RefreshToken{}, apperror.Internal(err)
 		}
 
@@ -191,7 +192,7 @@ func (r *repository) RefreshToken(
 	now := time.Now()
 
 	if now.After(currentToken.AbsoluteExpiresAt.Time) {
-		if err := qtx.RevokeSession(ctx, currentToken.SessionID); err != nil {
+		if err := qtx.RevokeSession(ctx, revokeOwnSessionParams(currentToken)); err != nil {
 			return sessiondb.GetRefreshTokenWithSessionForUpdateRow{}, sessiondb.RefreshToken{}, apperror.Internal(err)
 		}
 
@@ -207,7 +208,7 @@ func (r *repository) RefreshToken(
 	}
 
 	if now.Sub(currentToken.LastActivityAt.Time) > policy.IdleLifetime {
-		if err := qtx.RevokeSession(ctx, currentToken.SessionID); err != nil {
+		if err := qtx.RevokeSession(ctx, revokeOwnSessionParams(currentToken)); err != nil {
 			return sessiondb.GetRefreshTokenWithSessionForUpdateRow{}, sessiondb.RefreshToken{}, apperror.Internal(err)
 		}
 
@@ -251,11 +252,28 @@ func (r *repository) RefreshToken(
 	return currentToken, newToken, nil
 }
 
+// RevokeSession revokes one session of one user.
+//
+// Both values are required. Matching on the session id alone would let a
+// revocation naming the wrong session id reach another user's session, so the
+// user id travels with it and the query matches both.
+//
+// It stays idempotent and silent: a session that is missing, already revoked, or
+// belongs to somebody else is not an error and produces no rows, so a caller
+// cannot tell those apart. That is what keeps logout from disclosing whether a
+// session id exists for another user.
 func (r *repository) RevokeSession(
 	ctx context.Context,
 	sessionID uuid.UUID,
+	userID uuid.UUID,
 ) error {
-	if err := r.queries.RevokeSession(ctx, sessionID); err != nil {
+	if err := r.queries.RevokeSession(
+		ctx,
+		sessiondb.RevokeSessionParams{
+			ID:     sessionID,
+			UserID: userID,
+		},
+	); err != nil {
 		return apperror.Internal(err)
 	}
 
@@ -304,7 +322,7 @@ func (r *repository) RevokeSessionForUser(
 		ctx,
 		sessiondb.RevokeSessionForUserParams{
 			SessionID: sessionID,
-			UserID: userID,
+			UserID:    userID,
 		},
 	)
 

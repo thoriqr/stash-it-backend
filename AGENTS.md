@@ -101,8 +101,16 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
   session** — never weaken or bypass this.
 - Sessions have both idle and absolute expiry; lifetimes are constants in
   `session/constants.go`.
-- Passwords are bcrypt. Verification codes are HMAC'd with a configured secret.
-  Never store or log plaintext secrets, tokens, passwords, or codes.
+- Passwords are hashed with **Argon2id**, not bcrypt, in
+  `internal/security/password.go`. The parameters, salt and hash are stored
+  together as a PHC string, so verification reconstructs the parameters the hash
+  was made with and existing hashes stay verifiable after the parameters are
+  strengthened. Do not introduce bcrypt. Verification codes are HMAC'd with a
+  configured secret. Never store or log plaintext secrets, tokens, passwords, or
+  codes.
+- Email is normalized once, by `registration.NormalizeEmail` (trim, then
+  lowercase). Registration stores the normalized form, so every read path has to
+  compare against it; PostgreSQL's `=` on `TEXT` is case sensitive.
 - Email flows are non-enumerating by design.
 - Keep Google ID-token verification behind `login.GoogleTokenVerifier` so tests
   can fake it.

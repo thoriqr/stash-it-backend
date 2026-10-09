@@ -42,7 +42,7 @@ func seedSessionWithToken(
 	t *testing.T,
 	email string,
 	rawToken string,
-) (session.SessionService, uuid.UUID, uuid.UUID, string) {
+) (session.SessionService, uuid.UUID, uuid.UUID, string, uuid.UUID) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -85,7 +85,7 @@ func seedSessionWithToken(
 		security.NewAccessTokenGenerator([]byte("concurrency-test-secret")),
 	)
 
-	return service, sessionRecord.ID, token.ID, rawToken
+	return service, sessionRecord.ID, token.ID, rawToken, userID
 }
 
 // runConcurrently releases every participant at once and waits for all of them,
@@ -147,7 +147,7 @@ func runConcurrently(t *testing.T, participants int, body func(index int)) {
 func TestSession_RefreshToken_ConcurrentSameTokenRevokesSession(t *testing.T) {
 	const rawToken = "concurrent-refresh-token"
 
-	service, sessionID, tokenID, token := seedSessionWithToken(
+	service, sessionID, tokenID, token, _ := seedSessionWithToken(
 		t,
 		"concurrent-refresh@test.com",
 		rawToken,
@@ -227,7 +227,7 @@ func TestSession_RefreshToken_ConcurrentSameTokenRevokesSession(t *testing.T) {
 func TestSession_RefreshToken_RacingRevocationCannotExtendSession(t *testing.T) {
 	const rawToken = "racing-revocation-token"
 
-	service, sessionID, _, token := seedSessionWithToken(
+	service, sessionID, _, token, userID := seedSessionWithToken(
 		t,
 		"racing-revocation@test.com",
 		rawToken,
@@ -251,7 +251,7 @@ func TestSession_RefreshToken_RacingRevocationCannotExtendSession(t *testing.T) 
 
 		// The error is recorded rather than asserted here: a participant runs on
 		// its own goroutine, and a failed assertion has to be made on the test's.
-		logoutErr = service.Logout(ctx, sessionID)
+		logoutErr = service.Logout(ctx, userID, sessionID)
 	})
 
 	require.NoError(t, logoutErr)

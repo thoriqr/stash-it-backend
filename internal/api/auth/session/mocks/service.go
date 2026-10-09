@@ -145,17 +145,17 @@ func (c *MockSessionServiceListSessionsCall) DoAndReturn(f func(context.Context,
 }
 
 // Logout mocks base method.
-func (m *MockSessionService) Logout(ctx context.Context, sessionID uuid.UUID) error {
+func (m *MockSessionService) Logout(ctx context.Context, userID, sessionID uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Logout", ctx, sessionID)
+	ret := m.ctrl.Call(m, "Logout", ctx, userID, sessionID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Logout indicates an expected call of Logout.
-func (mr *MockSessionServiceMockRecorder) Logout(ctx, sessionID any) *MockSessionServiceLogoutCall {
+func (mr *MockSessionServiceMockRecorder) Logout(ctx, userID, sessionID any) *MockSessionServiceLogoutCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Logout", reflect.TypeOf((*MockSessionService)(nil).Logout), ctx, sessionID)
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Logout", reflect.TypeOf((*MockSessionService)(nil).Logout), ctx, userID, sessionID)
 	return &MockSessionServiceLogoutCall{Call: call}
 }
 
@@ -171,13 +171,13 @@ func (c *MockSessionServiceLogoutCall) Return(arg0 error) *MockSessionServiceLog
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockSessionServiceLogoutCall) Do(f func(context.Context, uuid.UUID) error) *MockSessionServiceLogoutCall {
+func (c *MockSessionServiceLogoutCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockSessionServiceLogoutCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockSessionServiceLogoutCall) DoAndReturn(f func(context.Context, uuid.UUID) error) *MockSessionServiceLogoutCall {
+func (c *MockSessionServiceLogoutCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockSessionServiceLogoutCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

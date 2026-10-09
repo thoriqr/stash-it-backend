@@ -122,45 +122,6 @@ func (c *MockRepositoryCreateSessionCall) DoAndReturn(f func(context.Context, se
 	return c
 }
 
-// GetRefreshTokenWithSession mocks base method.
-func (m *MockRepository) GetRefreshTokenWithSession(ctx context.Context, tokenHash string) (sessiondb.GetRefreshTokenWithSessionRow, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRefreshTokenWithSession", ctx, tokenHash)
-	ret0, _ := ret[0].(sessiondb.GetRefreshTokenWithSessionRow)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetRefreshTokenWithSession indicates an expected call of GetRefreshTokenWithSession.
-func (mr *MockRepositoryMockRecorder) GetRefreshTokenWithSession(ctx, tokenHash any) *MockRepositoryGetRefreshTokenWithSessionCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRefreshTokenWithSession", reflect.TypeOf((*MockRepository)(nil).GetRefreshTokenWithSession), ctx, tokenHash)
-	return &MockRepositoryGetRefreshTokenWithSessionCall{Call: call}
-}
-
-// MockRepositoryGetRefreshTokenWithSessionCall wrap *gomock.Call
-type MockRepositoryGetRefreshTokenWithSessionCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockRepositoryGetRefreshTokenWithSessionCall) Return(arg0 sessiondb.GetRefreshTokenWithSessionRow, arg1 error) *MockRepositoryGetRefreshTokenWithSessionCall {
-	c.Call = c.Call.Return(arg0, arg1)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetRefreshTokenWithSessionCall) Do(f func(context.Context, string) (sessiondb.GetRefreshTokenWithSessionRow, error)) *MockRepositoryGetRefreshTokenWithSessionCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetRefreshTokenWithSessionCall) DoAndReturn(f func(context.Context, string) (sessiondb.GetRefreshTokenWithSessionRow, error)) *MockRepositoryGetRefreshTokenWithSessionCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
 // ListSessions mocks base method.
 func (m *MockRepository) ListSessions(ctx context.Context, userID uuid.UUID, offset, limit int32) ([]sessiondb.Session, error) {
 	m.ctrl.T.Helper()
@@ -241,17 +202,17 @@ func (c *MockRepositoryRefreshTokenCall) DoAndReturn(f func(context.Context, str
 }
 
 // RevokeSession mocks base method.
-func (m *MockRepository) RevokeSession(ctx context.Context, sessionID uuid.UUID) error {
+func (m *MockRepository) RevokeSession(ctx context.Context, sessionID, userID uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RevokeSession", ctx, sessionID)
+	ret := m.ctrl.Call(m, "RevokeSession", ctx, sessionID, userID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RevokeSession indicates an expected call of RevokeSession.
-func (mr *MockRepositoryMockRecorder) RevokeSession(ctx, sessionID any) *MockRepositoryRevokeSessionCall {
+func (mr *MockRepositoryMockRecorder) RevokeSession(ctx, sessionID, userID any) *MockRepositoryRevokeSessionCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeSession", reflect.TypeOf((*MockRepository)(nil).RevokeSession), ctx, sessionID)
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeSession", reflect.TypeOf((*MockRepository)(nil).RevokeSession), ctx, sessionID, userID)
 	return &MockRepositoryRevokeSessionCall{Call: call}
 }
 
@@ -267,13 +228,13 @@ func (c *MockRepositoryRevokeSessionCall) Return(arg0 error) *MockRepositoryRevo
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryRevokeSessionCall) Do(f func(context.Context, uuid.UUID) error) *MockRepositoryRevokeSessionCall {
+func (c *MockRepositoryRevokeSessionCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryRevokeSessionCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryRevokeSessionCall) DoAndReturn(f func(context.Context, uuid.UUID) error) *MockRepositoryRevokeSessionCall {
+func (c *MockRepositoryRevokeSessionCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryRevokeSessionCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

@@ -120,45 +120,6 @@ func (c *MockRepositoryCreateAccountLinkConfirmationCall) DoAndReturn(f func(con
 	return c
 }
 
-// CreateAuthIdentity mocks base method.
-func (m *MockRepository) CreateAuthIdentity(ctx context.Context, params logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateAuthIdentity", ctx, params)
-	ret0, _ := ret[0].(logindb.CreateAuthIdentityRow)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateAuthIdentity indicates an expected call of CreateAuthIdentity.
-func (mr *MockRepositoryMockRecorder) CreateAuthIdentity(ctx, params any) *MockRepositoryCreateAuthIdentityCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateAuthIdentity", reflect.TypeOf((*MockRepository)(nil).CreateAuthIdentity), ctx, params)
-	return &MockRepositoryCreateAuthIdentityCall{Call: call}
-}
-
-// MockRepositoryCreateAuthIdentityCall wrap *gomock.Call
-type MockRepositoryCreateAuthIdentityCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockRepositoryCreateAuthIdentityCall) Return(arg0 logindb.CreateAuthIdentityRow, arg1 error) *MockRepositoryCreateAuthIdentityCall {
-	c.Call = c.Call.Return(arg0, arg1)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockRepositoryCreateAuthIdentityCall) Do(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryCreateAuthIdentityCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryCreateAuthIdentityCall) DoAndReturn(f func(context.Context, logindb.CreateAuthIdentityParams) (logindb.CreateAuthIdentityRow, error)) *MockRepositoryCreateAuthIdentityCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
 // GetActiveAccountLinkConfirmation mocks base method.
 func (m *MockRepository) GetActiveAccountLinkConfirmation(ctx context.Context, id uuid.UUID) (logindb.GetActiveAccountLinkConfirmationRow, error) {
 	m.ctrl.T.Helper()

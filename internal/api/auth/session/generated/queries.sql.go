@@ -123,67 +123,6 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
-const getRefreshTokenWithSession = `-- name: GetRefreshTokenWithSession :one
-SELECT
-    rt.id,
-    rt.session_id,
-    rt.token_hash,
-    rt.issued_at,
-    rt.replaced_by,
-    s.user_id,
-    s.platform,
-    s.installation_id,
-    s.device_name,
-    s.user_agent,
-    s.created_at,
-    s.last_activity_at,
-    s.absolute_expires_at,
-    s.revoked_at
-FROM refresh_tokens rt
-JOIN sessions s
-    ON s.id = rt.session_id
-WHERE rt.token_hash = $1
-`
-
-type GetRefreshTokenWithSessionRow struct {
-	ID                uuid.UUID
-	SessionID         uuid.UUID
-	TokenHash         string
-	IssuedAt          pgtype.Timestamptz
-	ReplacedBy        pgtype.UUID
-	UserID            uuid.UUID
-	Platform          string
-	InstallationID    pgtype.UUID
-	DeviceName        pgtype.Text
-	UserAgent         pgtype.Text
-	CreatedAt         pgtype.Timestamptz
-	LastActivityAt    pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
-	RevokedAt         pgtype.Timestamptz
-}
-
-func (q *Queries) GetRefreshTokenWithSession(ctx context.Context, tokenHash string) (GetRefreshTokenWithSessionRow, error) {
-	row := q.db.QueryRow(ctx, getRefreshTokenWithSession, tokenHash)
-	var i GetRefreshTokenWithSessionRow
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.TokenHash,
-		&i.IssuedAt,
-		&i.ReplacedBy,
-		&i.UserID,
-		&i.Platform,
-		&i.InstallationID,
-		&i.DeviceName,
-		&i.UserAgent,
-		&i.CreatedAt,
-		&i.LastActivityAt,
-		&i.AbsoluteExpiresAt,
-		&i.RevokedAt,
-	)
-	return i, err
-}
-
 const getRefreshTokenWithSessionForUpdate = `-- name: GetRefreshTokenWithSessionForUpdate :one
 SELECT
     rt.id,
@@ -323,11 +262,35 @@ const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions
 SET revoked_at = NOW()
 WHERE id = $1
+  AND user_id = $2
   AND revoked_at IS NULL
 `
 
-func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, revokeSession, id)
+type RevokeSessionParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Revokes one session, scoped to the user it belongs to.
+//
+// user_id is matched rather than trusted from the caller. The session id alone
+// does not establish ownership, so matching only on it would let a revocation
+// that names the wrong session id reach another user's session. Every caller
+// already has both values: logout has them from the verified access token, and
+// the refresh path has them from the token row's own session.
+//
+// The predicate is not a permission check the caller could bypass by passing the
+// matching user id, because a caller that does not hold the session has no way to
+// present its owner. It is the last guard, in the same spirit as
+// saved_items_collection_id_fkey.
+//
+// revoked_at IS NULL keeps this idempotent: revoking twice is not an error, and
+// a session that is already revoked needs no write. Nothing is returned, so a
+// session that is missing, already revoked or another user's is indistinguishable
+// here. That is deliberate: logout must not disclose whether an id exists for
+// somebody else.
+func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) error {
+	_, err := q.db.Exec(ctx, revokeSession, arg.ID, arg.UserID)
 	return err
 }
 

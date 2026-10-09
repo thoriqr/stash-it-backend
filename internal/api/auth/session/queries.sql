@@ -41,27 +41,6 @@ RETURNING
     issued_at,
     replaced_by;
 
--- name: GetRefreshTokenWithSession :one
-SELECT
-    rt.id,
-    rt.session_id,
-    rt.token_hash,
-    rt.issued_at,
-    rt.replaced_by,
-    s.user_id,
-    s.platform,
-    s.installation_id,
-    s.device_name,
-    s.user_agent,
-    s.created_at,
-    s.last_activity_at,
-    s.absolute_expires_at,
-    s.revoked_at
-FROM refresh_tokens rt
-JOIN sessions s
-    ON s.id = rt.session_id
-WHERE rt.token_hash = sqlc.arg(token_hash);
-
 -- name: GetRefreshTokenWithSessionForUpdate :one
 SELECT
     rt.id,
@@ -95,9 +74,28 @@ SET last_activity_at = NOW()
 WHERE id = sqlc.arg(id);
 
 -- name: RevokeSession :exec
+-- Revokes one session, scoped to the user it belongs to.
+--
+-- user_id is matched rather than trusted from the caller. The session id alone
+-- does not establish ownership, so matching only on it would let a revocation
+-- that names the wrong session id reach another user's session. Every caller
+-- already has both values: logout has them from the verified access token, and
+-- the refresh path has them from the token row's own session.
+--
+-- The predicate is not a permission check the caller could bypass by passing the
+-- matching user id, because a caller that does not hold the session has no way to
+-- present its owner. It is the last guard, in the same spirit as
+-- saved_items_collection_id_fkey.
+--
+-- revoked_at IS NULL keeps this idempotent: revoking twice is not an error, and
+-- a session that is already revoked needs no write. Nothing is returned, so a
+-- session that is missing, already revoked or another user's is indistinguishable
+-- here. That is deliberate: logout must not disclose whether an id exists for
+-- somebody else.
 UPDATE sessions
 SET revoked_at = NOW()
 WHERE id = sqlc.arg(id)
+  AND user_id = sqlc.arg(user_id)
   AND revoked_at IS NULL;
 
 -- name: RevokeSessionForUser :one
