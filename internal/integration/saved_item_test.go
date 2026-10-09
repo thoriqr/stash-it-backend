@@ -122,11 +122,11 @@ func TestSavedItem_Create(t *testing.T) {
 		var body struct {
 			Data struct {
 				SavedItem struct {
-					ID       string  `json:"id"`
-					URL      string  `json:"url"`
-					Domain   *string `json:"domain"`
-					Platform *string `json:"platform"`
-					Title    *string `json:"title"`
+					ID       string `json:"id"`
+					URL      string `json:"url"`
+					Domain   *string
+					Platform *string
+					Title    *string
 				} `json:"saved_item"`
 			} `json:"data"`
 			Message string `json:"message"`
@@ -137,8 +137,12 @@ func TestSavedItem_Create(t *testing.T) {
 		require.Equal(t, "saved item created successfully", body.Message)
 		require.NotEmpty(t, body.Data.SavedItem.ID)
 		require.Equal(t, "https://example.com/articles/1", body.Data.SavedItem.URL)
-		require.NotNil(t, body.Data.SavedItem.Domain)
-		require.Equal(t, "example.com", *body.Data.SavedItem.Domain)
+
+		// The create response is minimal, so domain, platform and title are not
+		// reported. They are decoded here without a tag only to document the intent;
+		// the key-set assertion in the create contract test is what actually pins
+		// them out, since a decoder would silently leave these nil either way.
+		require.Nil(t, body.Data.SavedItem.Domain)
 		require.Nil(t, body.Data.SavedItem.Platform)
 		require.Nil(t, body.Data.SavedItem.Title)
 
@@ -150,6 +154,10 @@ func TestSavedItem_Create(t *testing.T) {
 
 		require.Equal(t, userID, state.UserID)
 		require.Equal(t, "https://example.com/articles/1", state.Url)
+
+		// domain is still derived and still stored; it is simply not reported by the
+		// create response. The normalisation rules themselves are covered by the test
+		// below.
 		require.Equal(t, "example.com", state.Domain.String)
 		require.True(t, state.Domain.Valid)
 		require.False(t, state.Platform.Valid)
@@ -248,35 +256,30 @@ func TestSavedItem_Create(t *testing.T) {
 			var body struct {
 				Data struct {
 					SavedItem struct {
-						ID       string  `json:"id"`
-						URL      string  `json:"url"`
-						Domain   *string `json:"domain"`
-						Platform *string `json:"platform"`
+						ID  string `json:"id"`
+						URL string `json:"url"`
 					} `json:"saved_item"`
 				} `json:"data"`
 			}
 
 			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 			require.Equal(t, tc.rawURL, body.Data.SavedItem.URL)
-			require.NotNil(t, body.Data.SavedItem.Domain)
-			require.Equal(
-				t,
-				tc.expected,
-				*body.Data.SavedItem.Domain,
-				tc.rawURL,
-			)
-
-			// platform is not derived at save time: nothing infers it from
-			// the hostname, so it is null until enrichment runs.
-			require.Nil(t, body.Data.SavedItem.Platform, tc.rawURL)
 
 			state, err := db.GetSavedItemState(
 				ctx,
 				mustParseUUID(t, body.Data.SavedItem.ID),
 			)
 			require.NoError(t, err)
+
+			// The normalisation is a property of what was stored, so it is asserted
+			// on the row. The create response no longer reports domain at all.
 			require.Equal(t, tc.expected, state.Domain.String)
+			require.True(t, state.Domain.Valid, tc.rawURL)
+
+			// platform is not derived at save time: nothing infers it from the
+			// hostname, so it is null until enrichment runs.
 			require.False(t, state.Platform.Valid, tc.rawURL)
+
 			require.Equal(
 				t,
 				int64(i+1),
@@ -324,23 +327,25 @@ func TestSavedItem_Create(t *testing.T) {
 		var body struct {
 			Data struct {
 				SavedItem struct {
-					ID       string  `json:"id"`
-					Domain   *string `json:"domain"`
-					Platform *string `json:"platform"`
+					ID  string `json:"id"`
+					URL string `json:"url"`
 				} `json:"saved_item"`
 			} `json:"data"`
 		}
 
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-		require.NotNil(t, body.Data.SavedItem.Domain)
-		require.Equal(t, "youtube.com", *body.Data.SavedItem.Domain)
-		require.Nil(t, body.Data.SavedItem.Platform)
 
 		state, err := db.GetSavedItemState(
 			ctx,
 			mustParseUUID(t, body.Data.SavedItem.ID),
 		)
 		require.NoError(t, err)
+
+		// domain is derived locally, so it is stored even though the create
+		// response no longer reports it. platform is still not derived from any
+		// client header or hostname.
+		require.Equal(t, "youtube.com", state.Domain.String)
+		require.True(t, state.Domain.Valid)
 		require.False(
 			t,
 			state.Platform.Valid,
@@ -505,7 +510,7 @@ func TestSavedItem_Get(t *testing.T) {
 		)
 	})
 
-	t.Run("returns the same shape as the list endpoint", func(t *testing.T) {
+	t.Run("returns the complete saved item representation", func(t *testing.T) {
 		ctx := context.Background()
 		db := saveditemdbtest.New(testPool)
 
@@ -566,13 +571,19 @@ func TestSavedItem_Get(t *testing.T) {
 
 		shapeKeys := detailBodyKeys(t, detailRaw)
 
-		for _, key := range []string{
-			"id", "url", "domain", "platform", "title",
-			"created_at", "updated_at",
-		} {
-			require.Contains(t, shapeKeys, key)
-		}
-		require.Equal(t, 7, len(shapeKeys))
+		// Every column a client needs to render the item. A shape missing
+		// enrichment_status could not tell "no title" from "not read yet", which is
+		// the whole reason this endpoint reports it.
+		require.ElementsMatch(
+			t,
+			[]string{
+				"id", "url", "domain", "platform", "title",
+				"description", "image_url", "collection_id",
+				"enrichment_status", "last_enriched_at",
+				"created_at", "updated_at",
+			},
+			shapeKeys,
+		)
 		require.NotContains(t, shapeKeys, "user_id")
 	})
 

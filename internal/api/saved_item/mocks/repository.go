@@ -201,12 +201,13 @@ func (c *MockRepositoryGetCollectionSystemKeyForUserCall) DoAndReturn(f func(con
 }
 
 // GetSavedItemByIDForUser mocks base method.
-func (m *MockRepository) GetSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) (saved_item.SavedItem, error) {
+func (m *MockRepository) GetSavedItemByIDForUser(ctx context.Context, userID, savedItemID uuid.UUID) (saved_item.SavedItem, saved_item.SavedItemCollection, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSavedItemByIDForUser", ctx, userID, savedItemID)
 	ret0, _ := ret[0].(saved_item.SavedItem)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(saved_item.SavedItemCollection)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // GetSavedItemByIDForUser indicates an expected call of GetSavedItemByIDForUser.
@@ -222,19 +223,19 @@ type MockRepositoryGetSavedItemByIDForUserCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRepositoryGetSavedItemByIDForUserCall) Return(arg0 saved_item.SavedItem, arg1 error) *MockRepositoryGetSavedItemByIDForUserCall {
-	c.Call = c.Call.Return(arg0, arg1)
+func (c *MockRepositoryGetSavedItemByIDForUserCall) Return(arg0 saved_item.SavedItem, arg1 saved_item.SavedItemCollection, arg2 error) *MockRepositoryGetSavedItemByIDForUserCall {
+	c.Call = c.Call.Return(arg0, arg1, arg2)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
+func (c *MockRepositoryGetSavedItemByIDForUserCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, saved_item.SavedItemCollection, error)) *MockRepositoryGetSavedItemByIDForUserCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, error)) *MockRepositoryGetSavedItemByIDForUserCall {
+func (c *MockRepositoryGetSavedItemByIDForUserCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) (saved_item.SavedItem, saved_item.SavedItemCollection, error)) *MockRepositoryGetSavedItemByIDForUserCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

@@ -215,6 +215,9 @@ SELECT
     domain,
     platform,
     title,
+    collection_id,
+    enrichment_status,
+    last_enriched_at,
     created_at,
     updated_at
 FROM saved_items
@@ -222,16 +225,25 @@ WHERE id = $1
 `
 
 type GetSavedItemStateRow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Url       string
-	Domain    pgtype.Text
-	Platform  pgtype.Text
-	Title     pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
+// Reads one saved item's stored state.
+//
+// collection_id and enrichment_status are selected so a test can assert that an
+// endpoint changed neither. Every endpoint that reads a saved item has to leave the
+// row alone, and without those two columns the only way to check that was to infer
+// it from the response, which is the thing under test.
 func (q *Queries) GetSavedItemState(ctx context.Context, id uuid.UUID) (GetSavedItemStateRow, error) {
 	row := q.db.QueryRow(ctx, getSavedItemState, id)
 	var i GetSavedItemStateRow
@@ -242,6 +254,9 @@ func (q *Queries) GetSavedItemState(ctx context.Context, id uuid.UUID) (GetSaved
 		&i.Domain,
 		&i.Platform,
 		&i.Title,
+		&i.CollectionID,
+		&i.EnrichmentStatus,
+		&i.LastEnrichedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

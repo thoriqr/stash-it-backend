@@ -211,6 +211,29 @@ enrichment worker, not a phase of enrichment.
   ownership mismatch is the one condition that is reported and archived, because it
   cannot happen through any real path and would otherwise hide a bug.
 
+**A saved item's create response and its detail response are deliberately different
+shapes.** Do not unify them into one DTO.
+
+- `POST /saved-items` reports **`id`, `url`, `collection_id` and `enrichment_status`
+  only**. A save commits before enrichment has run, so `domain` is the only metadata
+  column carrying a value and it was derived locally from the submitted URL rather
+  than read off the page. Reporting the rest would be unlooked-up nulls presented as
+  metadata, which reads as "this page has nothing" rather than "this page has not been
+  read yet".
+- `enrichment_status` is included because the `INSERT` returns it — it costs no
+  additional query, and reporting the stored value beats reporting a constant this
+  code assumes.
+- `GET /saved-items/:id` reports the **complete saved item**, the same twelve fields
+  `GET /collections/:id/saved-items` reports, plus a `collection` object carrying
+  `id` and `name`. Without `enrichment_status` a null title is ambiguous between "no
+  title" and "not read yet". `type` and `system_key` stay out: they belong to
+  `GET /collections`. Unsorted arrives through the same object as anything else.
+- **The collection costs no extra query.** `GetSavedItemByIDForUser` joins
+  `collections` in the same statement, owner-scoped on both sides. The join is `INNER`
+  because `collection_id` is `NOT NULL` and references an existing row.
+- `saved_item.collection_id` always equals `collection.id`; the redundancy makes the
+  item self-describing once it leaves the response.
+
 ## Ownership and collections
 
 - `collections.user_id` owns a collection and `saved_items.user_id` owns a Saved

@@ -98,6 +98,20 @@ session concern. It must never be used for `saved_items.platform`.
 Saving never contacts the remote source: domain derivation is local, and metadata
 enrichment happens later without blocking the initial save.
 
+**Saving answers "did it work", not "what does it look like".** It reports the new
+item's id, its URL, which collection it went to, and whether its details have been
+read yet. It deliberately does not report a title, a platform or an image: at that
+moment none of those have been looked up, and an empty-looking answer would be
+indistinguishable from a page that really has nothing. Opening the item is what shows
+the full picture.
+
+**Opening a saved item shows everything, including what is still unknown.** It
+reports the whole item — where it came from, what has been read from it, and which
+collection it is in, by name — so someone looking at one item can tell a missing
+title from a title that has not arrived yet, and knows which collection they are in.
+An item whose details could not be read is still shown in full. Looking at an item
+never fetches anything and never changes it.
+
 ### Metadata enrichment
 
 Enrichment adds what the original source can tell us about a Saved Item, so the

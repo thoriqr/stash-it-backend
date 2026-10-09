@@ -59,6 +59,13 @@ func NewService(
 	}
 }
 
+// CreateResult reports the saved item a save committed.
+//
+// The projection is the complete saved item, but the create response deliberately
+// reports only id, url, collection_id and enrichment_status. At this point in a
+// save's life domain is the only metadata column with a value, and it was derived
+// locally from the URL rather than read off the page, so returning the rest would
+// be a set of nulls presented as though they had been looked up.
 type CreateResult struct {
 	SavedItem SavedItem
 }
@@ -177,6 +184,11 @@ func (s *service) enqueueEnrichment(
 
 type GetResult struct {
 	SavedItem SavedItem
+
+	// Collection is the collection the item is filed in, named. It comes from the
+	// same statement that read the item, so reporting it costs nothing, and a caller
+	// opening one item can see where it lives without a second request.
+	Collection SavedItemCollection
 }
 
 func (s *service) Get(
@@ -184,7 +196,7 @@ func (s *service) Get(
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
 ) (GetResult, error) {
-	savedItem, err := s.repository.GetSavedItemByIDForUser(
+	savedItem, collection, err := s.repository.GetSavedItemByIDForUser(
 		ctx,
 		userID,
 		savedItemID,
@@ -193,8 +205,12 @@ func (s *service) Get(
 		return GetResult{}, err
 	}
 
+	// The item is returned whatever state its metadata is in. A pending or failed
+	// enrichment is an ordinary state of a saved item, not a reason to withhold it,
+	// so there is no branch here on enrichment_status.
 	return GetResult{
-		SavedItem: savedItem,
+		SavedItem:  savedItem,
+		Collection: collection,
 	}, nil
 }
 

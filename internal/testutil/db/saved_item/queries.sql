@@ -94,6 +94,12 @@ RETURNING
     updated_at;
 
 -- name: GetSavedItemState :one
+-- Reads one saved item's stored state.
+--
+-- collection_id and enrichment_status are selected so a test can assert that an
+-- endpoint changed neither. Every endpoint that reads a saved item has to leave the
+-- row alone, and without those two columns the only way to check that was to infer
+-- it from the response, which is the thing under test.
 SELECT
     id,
     user_id,
@@ -101,6 +107,9 @@ SELECT
     domain,
     platform,
     title,
+    collection_id,
+    enrichment_status,
+    last_enriched_at,
     created_at,
     updated_at
 FROM saved_items

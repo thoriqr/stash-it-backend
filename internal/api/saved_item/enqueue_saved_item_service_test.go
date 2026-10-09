@@ -198,7 +198,11 @@ func TestService_DoesNotEnqueueOnReadsOrDeletes(t *testing.T) {
 
 	repo.EXPECT().
 		GetSavedItemByIDForUser(gomock.Any(), userID, savedItemID).
-		Return(saved_item.SavedItem{ID: savedItemID}, nil)
+		Return(
+			saved_item.SavedItem{ID: savedItemID},
+			saved_item.SavedItemCollection{ID: uuid.New(), Name: "Unsorted"},
+			nil,
+		)
 
 	_, err := svc.Get(context.Background(), userID, savedItemID)
 	require.NoError(t, err)

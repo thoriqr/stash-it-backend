@@ -1,4 +1,22 @@
 -- name: CreateSavedItem :one
+-- Writes one saved item and reports the row as persisted.
+--
+-- collection_id and enrichment_status are returned even though the create response
+-- reports only a minimal representation. They come back from this same INSERT, so
+-- reading them costs no additional statement: the alternative would be a second
+-- query per save purely to learn what the database already wrote. enrichment_status
+-- is the column's DEFAULT, so reporting it here reports what was actually stored
+-- rather than a constant this code assumes.
+--
+-- domain is derived locally from the submitted URL and platform and title are left
+-- NULL for enrichment to fill in, so none of the metadata columns carry anything
+-- meaningful yet. That is why the create response does not report them.
+--
+-- description and image_url are returned even though this INSERT never sets them.
+-- They are always NULL here, and returning them keeps the projection genuinely
+-- complete: the shared SavedItem type is documented as the whole row, and filling
+-- those two fields from a literal rather than from the row would have the mapper
+-- asserting something this statement never read.
 INSERT INTO saved_items (
     user_id,
     url,
@@ -21,6 +39,11 @@ RETURNING
     domain,
     platform,
     title,
+    description,
+    image_url,
+    collection_id,
+    enrichment_status,
+    last_enriched_at,
     created_at,
     updated_at;
 
@@ -37,18 +60,44 @@ WHERE user_id = sqlc.arg(user_id)
 LIMIT 1;
 
 -- name: GetSavedItemByIDForUser :one
+-- Reads one saved item of the authenticated user, with the collection it is filed in.
+--
+-- The detail response reports the full saved item plus the collection's id and name,
+-- and both come from this one statement. Fetching the collection separately would be
+-- a second round trip to read a row this join already had in hand.
+--
+-- The join is owner-scoped on the collection as well as on the saved item. Migration
+-- 000025's composite foreign key over (collection_id, user_id) already guarantees an
+-- item's collection belongs to the item's owner, so c.user_id = si.user_id cannot
+-- change the result; it states the intent rather than leaving it to the constraint,
+-- and it means no other user's collection is reachable even if that constraint were
+-- ever relaxed. An INNER JOIN is therefore correct and not lossy: every saved item has
+-- a NOT NULL collection_id that references an existing row.
+--
+-- Matching si.id AND si.user_id means an item that does not exist and an item owned by
+-- another user both return no row, so both surface as the same not found error and the
+-- endpoint never discloses whether an ID exists.
 SELECT
-    id,
-    user_id,
-    url,
-    domain,
-    platform,
-    title,
-    created_at,
-    updated_at
-FROM saved_items
-WHERE id = sqlc.arg(id)
-  AND user_id = sqlc.arg(user_id);
+    si.id,
+    si.user_id,
+    si.url,
+    si.domain,
+    si.platform,
+    si.title,
+    si.description,
+    si.image_url,
+    si.collection_id,
+    si.enrichment_status,
+    si.last_enriched_at,
+    si.created_at,
+    si.updated_at,
+    c.name AS collection_name
+FROM saved_items si
+JOIN collections c
+  ON c.id = si.collection_id
+ AND c.user_id = si.user_id
+WHERE si.id = sqlc.arg(id)
+  AND si.user_id = sqlc.arg(user_id);
 
 -- name: DeleteSavedItemByIDForUser :one
 -- Deletes one saved item of the authenticated user and reports the collection it

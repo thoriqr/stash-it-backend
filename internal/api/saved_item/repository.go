@@ -27,7 +27,7 @@ type Repository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
-	) (SavedItem, error)
+	) (SavedItem, SavedItemCollection, error)
 
 	DeleteSavedItemByIDForUser(
 		ctx context.Context,
@@ -80,6 +80,11 @@ func (r *repository) CreateSavedItem(
 		row.Domain,
 		row.Platform,
 		row.Title,
+		row.Description,
+		row.ImageUrl,
+		row.CollectionID,
+		row.EnrichmentStatus,
+		row.LastEnrichedAt,
 		row.CreatedAt,
 		row.UpdatedAt,
 	), nil
@@ -105,11 +110,19 @@ func (r *repository) GetUnsortedCollectionByUser(
 	return collectionID, nil
 }
 
+// GetSavedItemByIDForUser reads one saved item of the authenticated user together
+// with the collection it is filed in.
+//
+// Both come from one statement. The collection is joined rather than read
+// afterwards, so reporting the item's collection costs no second round trip.
+//
+// The non-disclosure guarantee is unchanged: a missing item and an item owned by
+// another user both return no row, so both surface as the same not found error.
 func (r *repository) GetSavedItemByIDForUser(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
-) (SavedItem, error) {
+) (SavedItem, SavedItemCollection, error) {
 	row, err := r.queries.GetSavedItemByIDForUser(
 		ctx,
 		saveditemdb.GetSavedItemByIDForUserParams{
@@ -122,10 +135,10 @@ func (r *repository) GetSavedItemByIDForUser(
 		// here, so both surface as the same not found error. That avoids
 		// disclosing whether a given ID exists for someone else.
 		if errors.Is(err, pgx.ErrNoRows) {
-			return SavedItem{}, apperror.NotFound(err)
+			return SavedItem{}, SavedItemCollection{}, apperror.NotFound(err)
 		}
 
-		return SavedItem{}, internalError(err)
+		return SavedItem{}, SavedItemCollection{}, internalError(err)
 	}
 
 	return newSavedItem(
@@ -135,9 +148,17 @@ func (r *repository) GetSavedItemByIDForUser(
 		row.Domain,
 		row.Platform,
 		row.Title,
+		row.Description,
+		row.ImageUrl,
+		row.CollectionID,
+		row.EnrichmentStatus,
+		row.LastEnrichedAt,
 		row.CreatedAt,
 		row.UpdatedAt,
-	), nil
+	), SavedItemCollection{
+		ID:   row.CollectionID,
+		Name: row.CollectionName,
+	}, nil
 }
 
 func (r *repository) DeleteSavedItemByIDForUser(
@@ -234,10 +255,10 @@ func (r *repository) GetCollectionSystemKeyForUser(
 // per query instead of reusing a table model. Mapping the projected columns back
 // here keeps the Repository interface, the service and the API on one type.
 //
-// collection_id and the enrichment columns are not projected by these queries, so
-// SavedItem has no field for them and nothing can read a zero value by accident.
-// The collection feature carries its own projection, which does include
-// collection_id.
+// Every field is taken from the row rather than derived. description and image_url
+// are passed through as they were stored, including when they are still NULL, and
+// enrichment_status is the column's own value: a create response reporting it is
+// reporting what the database wrote, not what this code expected to write.
 func newSavedItem(
 	id uuid.UUID,
 	userID uuid.UUID,
@@ -245,18 +266,28 @@ func newSavedItem(
 	domain pgtype.Text,
 	platform pgtype.Text,
 	title pgtype.Text,
+	description pgtype.Text,
+	imageURL pgtype.Text,
+	collectionID uuid.UUID,
+	enrichmentStatus string,
+	lastEnrichedAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
 ) SavedItem {
 	return SavedItem{
-		ID:        id,
-		UserID:    userID,
-		Url:       url,
-		Domain:    domain,
-		Platform:  platform,
-		Title:     title,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+		ID:               id,
+		UserID:           userID,
+		Url:              url,
+		Domain:           domain,
+		Platform:         platform,
+		Title:            title,
+		Description:      description,
+		ImageURL:         imageURL,
+		CollectionID:     collectionID,
+		EnrichmentStatus: enrichmentStatus,
+		LastEnrichedAt:   lastEnrichedAt,
+		CreatedAt:        createdAt,
+		UpdatedAt:        updatedAt,
 	}
 }
 

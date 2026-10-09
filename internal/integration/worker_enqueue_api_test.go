@@ -24,14 +24,20 @@ import (
 // a task is due and the id it names; that the task reaches a worker is covered
 // end to end in worker_queue_test.go.
 
+// createSavedItemResponse is the create response as the endpoint now reports it.
+//
+// Only the minimal fields are declared. A decoder would silently leave the rest nil
+// whether the endpoint sent them or not, so this type is not what pins the create
+// contract down; that assertion is made on the raw body in
+// TestSavedItem_CreateContract. What matters here is the id, which the queue
+// assertions below compare against.
 type createSavedItemResponse struct {
 	Data struct {
 		SavedItem struct {
-			ID       string  `json:"id"`
-			URL      string  `json:"url"`
-			Domain   *string `json:"domain"`
-			Platform *string `json:"platform"`
-			Title    *string `json:"title"`
+			ID               string `json:"id"`
+			URL              string `json:"url"`
+			CollectionID     string `json:"collection_id"`
+			EnrichmentStatus string `json:"enrichment_status"`
 		} `json:"saved_item"`
 	} `json:"data"`
 	Message string `json:"message"`
@@ -133,8 +139,16 @@ func TestSavedItem_Create_DoesNotWaitForEnrichment(t *testing.T) {
 	resp, body := saveURL(t, app, userID, "https://example.com/articles/quiet")
 
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
-	require.Nil(t, body.Data.SavedItem.Platform)
-	require.Nil(t, body.Data.SavedItem.Title)
+
+	// The create response reports the stored enrichment state rather than anything
+	// the enricher might produce. platform and title are not reported at all now, so
+	// the row below is where "nothing was looked up" is asserted.
+	require.Equal(
+		t,
+		"pending",
+		body.Data.SavedItem.EnrichmentStatus,
+		"the create response must report the value the row was stored with",
+	)
 
 	state := workerEnrichmentState(
 		t,
@@ -147,6 +161,8 @@ func TestSavedItem_Create_DoesNotWaitForEnrichment(t *testing.T) {
 		state.EnrichmentStatus,
 		"a save must leave the item pending until enrichment actually runs",
 	)
+	require.False(t, state.Platform.Valid)
+	require.False(t, state.Title.Valid)
 	require.False(t, state.LastEnrichedAt.Valid)
 	require.Empty(
 		t,

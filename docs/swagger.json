@@ -1593,7 +1593,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Save a URL to the current user's inbox. The domain is derived\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Save a URL to the current user's inbox. The domain is derived server-side from the submitted URL by lowercasing the host and removing a single leading \"www.\"; the remote page is never fetched and no metadata extraction is performed. Platform and title are left null and are populated later by background enrichment.\nThe response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as \"this page has nothing\" rather than \"this page has not been read yet\".\nenrichment_status is the value the row was stored with, which on a fresh save is always \"pending\". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports \"completed\". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.\nThe save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -1617,7 +1617,7 @@
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created",
+                        "description": "The saved item's id, url, collection_id and enrichment_status",
                         "schema": {
                             "$ref": "#/definitions/saved_item.CreateSavedItemAPIResponse"
                         }
@@ -1650,7 +1650,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get one of the current user's saved items by ID. A saved item\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Get one of the current user's saved items by ID, with the collection it is filed in. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nThe response body is {\"data\": {...}, \"message\": \"...\"}, where data holds the item and its collection: {\"saved_item\": {...}, \"collection\": {\"id\": \"...\", \"name\": \"...\"}}. The collection object carries only id and name; type and system_key belong to GET /collections.\ndata.saved_item is the complete saved item, with the same fields as the listing in GET /collections/{id}/saved-items: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at. saved_item.collection_id always equals collection.id.\ntitle, description, image_url, domain, platform and last_enriched_at are nullable and are reported as null rather than omitted. enrichment_status is pending, completed or failed and describes whether the enrichment process ran rather than whether every field is populated, so a completed item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once, so a pending or failed item reports null.\nAn item whose enrichment has not run, or failed, is still returned in full. It exists and belongs to the caller, and \"this page has not been read yet\" is a fact about an item rather than a reason to withhold it.\nThis is a read. It starts no enrichment, changes nothing, and does not move the item between collections. The collection is read in the same statement as the item, so naming it costs no additional query.\nPossible error codes:\n- BAD_REQUEST (non-UUID id)\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1661,6 +1661,7 @@
                 "parameters": [
                     {
                         "type": "string",
+                        "format": "uuid",
                         "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
                         "description": "Saved item ID",
                         "name": "id",
@@ -1670,7 +1671,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "The complete saved item and the id and name of the collection it is in",
                         "schema": {
                             "$ref": "#/definitions/saved_item.GetSavedItemAPIResponse"
                         }
@@ -1688,7 +1689,7 @@
                         }
                     },
                     "404": {
-                        "description": "Saved item not found",
+                        "description": "Saved item not found, or owned by another user",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -2995,7 +2996,29 @@
             "type": "object",
             "properties": {
                 "saved_item": {
-                    "$ref": "#/definitions/saved_item.SavedItemResponse"
+                    "$ref": "#/definitions/saved_item.CreatedSavedItemResponse"
+                }
+            }
+        },
+        "saved_item.CreatedSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "enrichment_status": {
+                    "description": "EnrichmentStatus is the value the row was stored with, which on a fresh save is\nalways pending. Background enrichment has been queued by the time this returns\nbut has not run, so this response never reports completed.",
+                    "type": "string",
+                    "example": "pending"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com/articles/1"
                 }
             }
         },
@@ -3045,25 +3068,64 @@
         "saved_item.GetSavedItemResponse": {
             "type": "object",
             "properties": {
+                "collection": {
+                    "$ref": "#/definitions/saved_item.SavedItemCollectionResponse"
+                },
                 "saved_item": {
-                    "$ref": "#/definitions/saved_item.SavedItemResponse"
+                    "$ref": "#/definitions/saved_item.SavedItemDetailResponse"
                 }
             }
         },
-        "saved_item.SavedItemResponse": {
+        "saved_item.SavedItemCollectionResponse": {
             "type": "object",
             "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Wishlist"
+                }
+            }
+        },
+        "saved_item.SavedItemDetailResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
                 "created_at": {
                     "type": "string",
                     "example": "2026-10-02T10:30:00Z"
+                },
+                "description": {
+                    "description": "Description and ImageURL are null until enrichment supplies them, and stay null\nafterwards when a page exposed neither.",
+                    "type": "string",
+                    "example": "A short summary of the page"
                 },
                 "domain": {
                     "type": "string",
                     "example": "example.com"
                 },
+                "enrichment_status": {
+                    "description": "EnrichmentStatus is pending, completed or failed. Completed means the process\nran, not that every field above is populated.",
+                    "type": "string",
+                    "example": "completed"
+                },
                 "id": {
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "image_url": {
+                    "type": "string",
+                    "example": "https://example.com/og.png"
+                },
+                "last_enriched_at": {
+                    "description": "LastEnrichedAt is null until an enrichment has succeeded at least once. A failed\nattempt refreshes nothing, so it does not set this.",
+                    "type": "string",
+                    "example": "2026-10-02T10:31:00Z"
                 },
                 "platform": {
                     "type": "string",
@@ -3075,7 +3137,7 @@
                 },
                 "updated_at": {
                     "type": "string",
-                    "example": "2026-10-02T10:30:00Z"
+                    "example": "2026-10-02T10:31:00Z"
                 },
                 "url": {
                     "type": "string",

@@ -33,8 +33,8 @@ through `saved_item.RegisterModule`, and covered by tests.
 
 | Endpoint                  | Status | Notes                             |
 | ------------------------- | ------ | --------------------------------- |
-| `POST /saved-items`       | done   | 201, requires Bearer              |
-| `GET /saved-items/:id`    | done   | 200, owner-scoped                 |
+| `POST /saved-items`       | done   | 201, requires Bearer, minimal response |
+| `GET /saved-items/:id`    | done   | 200, owner-scoped, complete item + collection |
 | `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped, reports collection state |
 
 Update/edit (`PATCH` or `PUT`) is deliberately out of scope for now.
@@ -47,6 +47,66 @@ same question, and the standalone one reported fewer fields: it carried no
 
 Feature package: `internal/api/saved_item/`, following the project's
 vertical-slice convention.
+
+### Save response is minimal, detail response is complete
+
+The two read paths answer different questions and deliberately report different
+things.
+
+`POST /saved-items` returns only what a save can meaningfully know:
+
+```json
+{ "data": { "saved_item": { "id": "…", "url": "https://example.com/a",
+      "collection_id": "…", "enrichment_status": "pending" } },
+  "message": "saved item created successfully" }
+```
+
+A save commits before enrichment has run, so `domain` is the only metadata column
+carrying a value and it was derived locally from the submitted URL, not read off the
+page. Reporting `title`, `platform`, `description`, `image_url` or `last_enriched_at`
+there would be a set of nulls presented as though they had been looked up, which reads
+as "this page has nothing" rather than "this page has not been read yet".
+
+`enrichment_status` is included because the `INSERT` returns it. It costs no extra
+query, and reporting the stored value beats reporting a constant the code assumes: it
+is what the column's default actually wrote.
+
+`GET /saved-items/:id` returns the complete item plus the collection it is filed in:
+
+```json
+{ "data": { "saved_item": { "id": "…", "url": "https://example.com/a",
+      "domain": "example.com", "platform": null, "title": null,
+      "description": null, "image_url": null, "collection_id": "…",
+      "enrichment_status": "pending", "last_enriched_at": null,
+      "created_at": "…", "updated_at": "…" },
+    "collection": { "id": "…", "name": "Wishlist" } },
+  "message": "saved item retrieved successfully" }
+```
+
+- **`data.saved_item` matches the listing shape** in `GET /collections/:id/saved-items`
+  field for field, for the same reason: without `enrichment_status` a null title is
+  ambiguous between "this page has no title" and "this page has not been read yet".
+- **`data.collection` carries `id` and `name` only.** `type` and `system_key` belong
+  to `GET /collections`: they describe how a collection came to be, which plays no
+  part in showing one item. Unsorted arrives through the same object as anything else.
+- **`saved_item.collection_id` always equals `collection.id`.** The redundancy is
+  deliberate: it makes the item self-describing once it is carried out of the response.
+- **No extra query for the collection.** `GetSavedItemByIDForUser` joins
+  `collections` in the same statement, owner-scoped on both sides, so naming the
+  collection costs nothing beyond what the read already did. The join is `INNER`
+  because `collection_id` is `NOT NULL` and references an existing row.
+- **A pending or failed item is returned in full.** `title`, `description`,
+  `image_url`, `platform` and `last_enriched_at` are reported as JSON `null` with the
+  key present, never omitted.
+- **Neither DTO was weakened.** `CreatedSavedItemResponse` and
+  `SavedItemDetailResponse` are separate types; the detail response did not have to
+  give up fields so the create response could be short.
+
+`SavedItem`, the feature's projection, is now the complete row including
+`collection_id` and the enrichment columns, because `Get` has to report all of it.
+Create and Get are its only readers, so a narrower projection would only mean a
+second near-identical type. The collection slice keeps its own separate projection,
+shaped for paging over a collection rather than describing one item.
 
 ### Authentication and ownership
 
