@@ -14,31 +14,39 @@ import (
 // dropped. It is internal to how the results were ranked, and it is not part of
 // the response contract.
 func mapSearchResponse(result SearchResult) SearchResponse {
-	collections := make([]SearchCollectionResponse, 0, len(result.Collections))
-	for _, collection := range result.Collections {
-		collections = append(collections, mapSearchCollectionResponse(collection))
-	}
-
 	savedItems := make([]SearchSavedItemResponse, 0, len(result.SavedItems))
 	for _, savedItem := range result.SavedItems {
 		savedItems = append(savedItems, mapSearchSavedItemResponse(savedItem))
 	}
 
+	collections := make([]SearchCollectionResponse, 0, len(result.Collections))
+	for _, collection := range result.Collections {
+		collections = append(collections, mapSearchCollectionResponse(collection))
+	}
+
 	return SearchResponse{
-		Collections: collections,
 		SavedItems:  savedItems,
+		Collections: collections,
 	}
 }
 
 func mapSearchSavedItemResponse(savedItem SearchSavedItem) SearchSavedItemResponse {
 	return SearchSavedItemResponse{
-		ID:           savedItem.ID,
-		URL:          savedItem.URL,
-		Domain:       mapOptionalText(savedItem.Domain),
-		Title:        mapOptionalText(savedItem.Title),
-		CollectionID: savedItem.CollectionID,
-		CreatedAt:    savedItem.CreatedAt.Time,
-		UpdatedAt:    savedItem.UpdatedAt.Time,
+		ID:               savedItem.ID,
+		Title:            mapOptionalText(savedItem.Title),
+		URL:              savedItem.URL,
+		Domain:           mapOptionalText(savedItem.Domain),
+		ImageURL:         mapOptionalText(savedItem.ImageURL),
+		EnrichmentStatus: savedItem.EnrichmentStatus,
+		// The collection is reported as the object it is rather than as a bare
+		// id, so a result says both which collection it is in and what that
+		// collection is called. Nothing is looked up here: the name came from the
+		// same statement that produced the item.
+		Collection: SearchSavedItemCollectionInfo{
+			ID:   savedItem.Collection.ID,
+			Name: savedItem.Collection.Name,
+		},
+		CreatedAt: savedItem.CreatedAt.Time,
 	}
 }
 
@@ -46,12 +54,8 @@ func mapSearchCollectionResponse(
 	collection SearchCollection,
 ) SearchCollectionResponse {
 	return SearchCollectionResponse{
-		ID:        collection.ID,
-		Name:      collection.Name,
-		Type:      collection.Type,
-		SystemKey: mapOptionalText(collection.SystemKey),
-		CreatedAt: collection.CreatedAt.Time,
-		UpdatedAt: collection.UpdatedAt.Time,
+		ID:   collection.ID,
+		Name: collection.Name,
 	}
 }
 
@@ -59,7 +63,8 @@ func mapSearchCollectionResponse(
 //
 // A column that is NULL in the database becomes JSON null rather than being
 // dropped from the payload, so the response shape is the same whether or not
-// enrichment has run.
+// enrichment has run. Nothing else is ever substituted for the column's value:
+// a missing title stays missing rather than becoming the domain or the URL.
 func mapOptionalText(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil

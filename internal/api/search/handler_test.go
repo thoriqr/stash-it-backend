@@ -100,25 +100,28 @@ func readBody(t *testing.T, resp *http.Response) string {
 	return string(raw)
 }
 
+// searchPayload mirrors the wire shape of a search response, including which
+// fields are nullable. It is decoded here rather than reusing the API response
+// types so these tests assert what actually reaches a client.
 type searchPayload struct {
 	Message string `json:"message"`
 	Data    struct {
 		Collections []struct {
-			ID        string    `json:"id"`
-			Name      string    `json:"name"`
-			Type      string    `json:"type"`
-			SystemKey *string   `json:"system_key"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"collections"`
 		SavedItems []struct {
-			ID           string    `json:"id"`
-			URL          string    `json:"url"`
-			Domain       *string   `json:"domain"`
-			Title        *string   `json:"title"`
-			CollectionID string    `json:"collection_id"`
-			CreatedAt    time.Time `json:"created_at"`
-			UpdatedAt    time.Time `json:"updated_at"`
+			ID               string  `json:"id"`
+			Title            *string `json:"title"`
+			URL              string  `json:"url"`
+			Domain           *string `json:"domain"`
+			ImageURL         *string `json:"image_url"`
+			EnrichmentStatus string  `json:"enrichment_status"`
+			Collection       struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"collection"`
+			CreatedAt time.Time `json:"created_at"`
 		} `json:"saved_items"`
 	} `json:"data"`
 }
@@ -158,6 +161,55 @@ func decodeSearchAPIFromString(t *testing.T, raw string) searchPayload {
 	return payload
 }
 
+// firstObjectField walks a path of object keys and returns the first element of the
+// array found at the end of it.
+//
+// Decoding into the typed payload cannot answer what a response does not declare:
+// an undeclared key is simply left out of the struct. These tests assert exact key
+// sets, so they read the body as plain JSON.
+func firstObjectField(
+	t *testing.T,
+	raw string,
+	path ...string,
+) map[string]any {
+	t.Helper()
+
+	var current any
+
+	require.NoError(t, json.Unmarshal([]byte(raw), &current))
+
+	for _, key := range path {
+		object, ok := current.(map[string]any)
+		require.True(t, ok, "expected an object at %q", key)
+
+		current, ok = object[key]
+		require.True(t, ok, "response has no %q", key)
+	}
+
+	elements, ok := current.([]any)
+	require.True(t, ok, "expected an array at %q", path[len(path)-1])
+	require.NotEmpty(t, elements)
+
+	element, ok := elements[0].(map[string]any)
+	require.True(t, ok, "expected an object in the array at %q", path[len(path)-1])
+
+	return element
+}
+
+// objectFieldKeys lists what a decoded object carries, so a test can pin the exact
+// set rather than spot-check the fields it happens to remember.
+func objectFieldKeys(t *testing.T, object map[string]any) []string {
+	t.Helper()
+
+	keys := make([]string, 0, len(object))
+
+	for key := range object {
+		keys = append(keys, key)
+	}
+
+	return keys
+}
+
 func handlerTimestamptz() pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 }
@@ -178,26 +230,26 @@ func TestHandler_Search(t *testing.T) {
 		repo.EXPECT().
 			SearchSavedItems(gomock.Any(), gomock.Any()).
 			Return([]search.SearchSavedItem{{
-				ID:           savedItemID,
-				URL:          "https://example.org/cameras",
-				Domain:       handlerPgText("example.org"),
-				Title:        handlerPgText("Camera Buying Guide"),
-				CollectionID: collectionID,
-				CreatedAt:    handlerTimestamptz(),
-				UpdatedAt:    handlerTimestamptz(),
-				Score:        10.95,
+				ID:               savedItemID,
+				Title:            handlerPgText("Camera Buying Guide"),
+				URL:              "https://example.org/cameras",
+				Domain:           handlerPgText("example.org"),
+				ImageURL:         handlerPgText("https://example.org/og.png"),
+				EnrichmentStatus: "completed",
+				Collection: search.SearchCollectionRef{
+					ID:   collectionID,
+					Name: "Camera Gear",
+				},
+				CreatedAt: handlerTimestamptz(),
+				Score:     10.95,
 			}}, nil)
 
 		repo.EXPECT().
 			SearchCollections(gomock.Any(), gomock.Any()).
 			Return([]search.SearchCollection{{
-				ID:        collectionID,
-				Name:      "Camera Gear",
-				Type:      "user",
-				SystemKey: pgtype.Text{},
-				CreatedAt: handlerTimestamptz(),
-				UpdatedAt: handlerTimestamptz(),
-				Score:     10.95,
+				ID:    collectionID,
+				Name:  "Camera Gear",
+				Score: 10.95,
 			}}, nil)
 
 		app := newHandlerTestApp(t, repo)
@@ -212,28 +264,23 @@ func TestHandler_Search(t *testing.T) {
 		require.Len(t, payload.Data.SavedItems, 1)
 		require.Len(t, payload.Data.Collections, 1)
 
-		require.Equal(t, savedItemID.String(), payload.Data.SavedItems[0].ID)
-		require.Equal(
-			t,
-			"https://example.org/cameras",
-			payload.Data.SavedItems[0].URL,
-		)
-		require.Equal(t, "example.org", *payload.Data.SavedItems[0].Domain)
-		require.Equal(
-			t,
-			"Camera Buying Guide",
-			*payload.Data.SavedItems[0].Title,
-		)
-		require.Equal(
-			t,
-			collectionID.String(),
-			payload.Data.SavedItems[0].CollectionID,
-		)
-		require.False(t, payload.Data.SavedItems[0].CreatedAt.IsZero())
+		item := payload.Data.SavedItems[0]
+
+		require.Equal(t, savedItemID.String(), item.ID)
+		require.Equal(t, "https://example.org/cameras", item.URL)
+		require.Equal(t, "example.org", *item.Domain)
+		require.Equal(t, "Camera Buying Guide", *item.Title)
+		require.Equal(t, "https://example.org/og.png", *item.ImageURL)
+		require.Equal(t, "completed", item.EnrichmentStatus)
+		require.False(t, item.CreatedAt.IsZero())
+
+		// The collection is reported as an object, so the client can both show
+		// where the result lives and name it without a second request.
+		require.Equal(t, collectionID.String(), item.Collection.ID)
+		require.Equal(t, "Camera Gear", item.Collection.Name)
 
 		require.Equal(t, collectionID.String(), payload.Data.Collections[0].ID)
 		require.Equal(t, "Camera Gear", payload.Data.Collections[0].Name)
-		require.Equal(t, "user", payload.Data.Collections[0].Type)
 	})
 
 	t.Run("returns 200 with empty arrays when nothing matches", func(t *testing.T) {
@@ -603,7 +650,10 @@ func TestHandler_Search(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	t.Run("exposes a system collection with its type and key", func(t *testing.T) {
+	// A system collection is searchable and is reported exactly like any other
+	// one. How a collection came to be is answered by GET /collections, so a
+	// search result carries no type and no system_key to branch on.
+	t.Run("reports a system collection through the same contract", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := searchmocks.NewMockRepository(ctrl)
 
@@ -617,13 +667,9 @@ func TestHandler_Search(t *testing.T) {
 		repo.EXPECT().
 			SearchCollections(gomock.Any(), gomock.Any()).
 			Return([]search.SearchCollection{{
-				ID:        unsortedID,
-				Name:      "Unsorted",
-				Type:      "system",
-				SystemKey: handlerPgText("unsorted"),
-				CreatedAt: handlerTimestamptz(),
-				UpdatedAt: handlerTimestamptz(),
-				Score:     10.95,
+				ID:    unsortedID,
+				Name:  "Unsorted",
+				Score: 10.95,
 			}}, nil)
 
 		app := newHandlerTestApp(t, repo)
@@ -632,12 +678,15 @@ func TestHandler_Search(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		payload := decodeSearchPayload(t, resp)
+		payload, raw := decodeSearchPayloadAndRaw(t, resp)
 		require.Len(t, payload.Data.Collections, 1)
 		require.Equal(t, unsortedID.String(), payload.Data.Collections[0].ID)
-		require.Equal(t, "system", payload.Data.Collections[0].Type)
-		require.NotNil(t, payload.Data.Collections[0].SystemKey)
-		require.Equal(t, "unsorted", *payload.Data.Collections[0].SystemKey)
+		require.Equal(t, "Unsorted", payload.Data.Collections[0].Name)
+
+		// Only two keys, so nothing here invites a client to tell system
+		// collections apart from its own by matching on a response field.
+		collection := firstObjectField(t, raw, "data", "collections")
+		require.ElementsMatch(t, []string{"id", "name"}, objectFieldKeys(t, collection))
 	})
 
 	t.Run("reports null metadata as JSON null rather than dropping it", func(t *testing.T) {
@@ -646,19 +695,23 @@ func TestHandler_Search(t *testing.T) {
 
 		userID := uuid.New()
 
-		// Nothing populates title or domain beyond what the save path already wrote,
-		// so nulls are the common case and the payload shape must not change.
+		// Nothing populates title or image_url beyond what the save path already
+		// wrote, so nulls are the common case and the payload shape must not
+		// change.
 		repo.EXPECT().
 			SearchSavedItems(gomock.Any(), gomock.Any()).
 			Return([]search.SearchSavedItem{{
-				ID:           uuid.New(),
-				URL:          "https://example.com/cameras",
-				Domain:       pgtype.Text{},
-				Title:        pgtype.Text{},
-				CollectionID: uuid.New(),
-				CreatedAt:    handlerTimestamptz(),
-				UpdatedAt:    handlerTimestamptz(),
-				Score:        0.5,
+				ID:         uuid.New(),
+				URL:        "https://example.com/cameras",
+				Domain:     pgtype.Text{},
+				Title:      pgtype.Text{},
+				ImageURL:   pgtype.Text{},
+				Collection: search.SearchCollectionRef{ID: uuid.New(), Name: "Unsorted"},
+				// The stored value, not a constant this code assumes: an item that
+				// has not been enriched says so rather than reading as an absence.
+				EnrichmentStatus: "pending",
+				CreatedAt:        handlerTimestamptz(),
+				Score:            0.5,
 			}}, nil)
 		repo.EXPECT().
 			SearchCollections(gomock.Any(), gomock.Any()).
@@ -673,13 +726,22 @@ func TestHandler_Search(t *testing.T) {
 
 		require.Contains(t, raw, `"domain":null`)
 		require.Contains(t, raw, `"title":null`)
+		require.Contains(t, raw, `"image_url":null`)
 
-		// Platform is not a searchable field and is never part of a result.
+		// A title is never assembled from the domain or the url, so a null title
+		// stays null rather than becoming something that was never on the page.
+		require.Contains(t, raw, `"title":null,"url":"https://example.com/cameras"`)
+
+		require.Contains(t, raw, `"enrichment_status":"pending"`)
+
+		// Platform is not a searchable field and is never part of a result, and
+		// nothing else is reported that the result cannot be rendered from.
 		require.NotContains(t, raw, "platform")
-
-		// Enrichment is not read or reported by search.
-		require.NotContains(t, raw, "enrichment")
 		require.NotContains(t, raw, "last_enriched")
+		require.NotContains(t, raw, "updated_at")
+		require.NotContains(t, raw, "description")
+		require.NotContains(t, raw, "system_key")
+		require.NotContains(t, raw, `"type"`)
 	})
 
 	t.Run("does not expose the relevance score in the payload", func(t *testing.T) {
@@ -694,26 +756,25 @@ func TestHandler_Search(t *testing.T) {
 		repo.EXPECT().
 			SearchSavedItems(gomock.Any(), gomock.Any()).
 			Return([]search.SearchSavedItem{{
-				ID:           uuid.New(),
-				URL:          "https://example.com/cameras",
-				Domain:       handlerPgText("example.com"),
-				Title:        handlerPgText("Camera Buying Guide"),
-				CollectionID: uuid.New(),
-				CreatedAt:    handlerTimestamptz(),
-				UpdatedAt:    handlerTimestamptz(),
-				Score:        10.95,
+				ID:     uuid.New(),
+				Title:  handlerPgText("Camera Buying Guide"),
+				URL:    "https://example.com/cameras",
+				Domain: handlerPgText("example.com"),
+				Collection: search.SearchCollectionRef{
+					ID:   uuid.New(),
+					Name: "Unsorted",
+				},
+				EnrichmentStatus: "completed",
+				CreatedAt:        handlerTimestamptz(),
+				Score:            10.95,
 			}}, nil)
 
 		repo.EXPECT().
 			SearchCollections(gomock.Any(), gomock.Any()).
 			Return([]search.SearchCollection{{
-				ID:        uuid.New(),
-				Name:      "Camera Gear",
-				Type:      "user",
-				SystemKey: pgtype.Text{},
-				CreatedAt: handlerTimestamptz(),
-				UpdatedAt: handlerTimestamptz(),
-				Score:     10.95,
+				ID:    uuid.New(),
+				Name:  "Camera Gear",
+				Score: 10.95,
 			}}, nil)
 
 		app := newHandlerTestApp(t, repo)
@@ -730,7 +791,7 @@ func TestHandler_Search(t *testing.T) {
 		payload := decodeSearchAPIFromString(t, raw)
 		require.Len(t, payload.Data.SavedItems, 1)
 		require.Len(t, payload.Data.Collections, 1)
-		require.NotEmpty(t, payload.Data.SavedItems[0].CollectionID)
+		require.NotEmpty(t, payload.Data.SavedItems[0].Collection.ID)
 	})
 
 	t.Run("keeps the driver detail out of an internal error response", func(t *testing.T) {

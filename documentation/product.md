@@ -389,8 +389,17 @@ user's saved items and collections and returns both result groups together.
 their URL. Collections are matched on their name. System collections take part
 too, so searching for "unsorted" finds the Unsorted collection. Nothing else is
 searchable: not the content platform, not identifiers, not dates. A saved item
-result does report which collection it is in, so the user can see where a result
+result does report the collection it is in, so the user can see where a result
 lives, but that collection is not itself searchable.
+
+**What a result shows.** A saved item result carries enough to render the row and
+say where it lives: its title, URL, domain and preview image, the collection it
+is filed in with that collection's name, and whether the page behind it has been
+read yet. Metadata that has not been read is reported as absent rather than
+filled in — a title is never invented from the URL or the site name, so an
+unread page shows what is genuinely known and no more. A collection result is a
+destination rather than a record: it names the collection and identifies it, and
+the user goes through it to what is inside.
 
 **Matching.** A query that appears in a result matches it. That is the normal
 case, and it covers partial words: "ca" finds "camera". Because people mistype,

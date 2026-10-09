@@ -67,6 +67,10 @@ func NewRepository(
 // Matching and ranking both happen in SQL. The predicate decides whether a row
 // is a result at all, and the score decides the order, so the service cannot
 // disagree with the database about either.
+//
+// The collection each result lives in is joined in by the same statement, so
+// naming it costs no extra query per result and cannot be answered from a
+// different snapshot than the item it belongs to.
 func (r *repository) SearchSavedItems(
 	ctx context.Context,
 	params SearchSavedItemsParams,
@@ -88,14 +92,21 @@ func (r *repository) SearchSavedItems(
 	savedItems := make([]SearchSavedItem, 0, len(rows))
 	for _, row := range rows {
 		savedItems = append(savedItems, SearchSavedItem{
-			ID:           row.ID,
-			URL:          row.Url,
-			Domain:       row.Domain,
-			Title:        row.Title,
-			CollectionID: row.CollectionID,
-			CreatedAt:    row.CreatedAt,
-			UpdatedAt:    row.UpdatedAt,
-			Score:        row.Score,
+			ID:    row.ID,
+			Title: row.Title,
+			URL:   row.Url,
+			// Domain and ImageURL are passed through with the nullability the
+			// columns have. Neither is ever replaced by a value derived from the
+			// URL, so an unread page reports what is stored and nothing else.
+			Domain:           row.Domain,
+			ImageURL:         row.ImageUrl,
+			EnrichmentStatus: row.EnrichmentStatus,
+			Collection: SearchCollectionRef{
+				ID:   row.CollectionID,
+				Name: row.CollectionName,
+			},
+			CreatedAt: row.CreatedAt,
+			Score:     row.Score,
 		})
 	}
 
@@ -126,13 +137,9 @@ func (r *repository) SearchCollections(
 	collections := make([]SearchCollection, 0, len(rows))
 	for _, row := range rows {
 		collections = append(collections, SearchCollection{
-			ID:        row.ID,
-			Name:      row.Name,
-			Type:      row.Type,
-			SystemKey: row.SystemKey,
-			CreatedAt: row.CreatedAt,
-			UpdatedAt: row.UpdatedAt,
-			Score:     row.Score,
+			ID:    row.ID,
+			Name:  row.Name,
+			Score: row.Score,
 		})
 	}
 

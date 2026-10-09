@@ -46,18 +46,21 @@ func TestService_Search(t *testing.T) {
 		collectionID := uuid.New()
 
 		expectedSavedItem := search.SearchSavedItem{
-			ID:           uuid.New(),
-			URL:          "https://example.org/notes/camera-buying-guide",
-			Domain:       testText("example.org"),
-			Title:        testText("Camera Buying Guide"),
-			CollectionID: collectionID,
-			Score:        10.9,
+			ID:     uuid.New(),
+			Title:  testText("Camera Buying Guide"),
+			URL:    "https://example.org/notes/camera-buying-guide",
+			Domain: testText("example.org"),
+			Collection: search.SearchCollectionRef{
+				ID:   collectionID,
+				Name: "Camera Gear",
+			},
+			EnrichmentStatus: "completed",
+			Score:            10.9,
 		}
 
 		expectedCollection := search.SearchCollection{
 			ID:    collectionID,
 			Name:  "Camera Gear",
-			Type:  "user",
 			Score: 10.95,
 		}
 

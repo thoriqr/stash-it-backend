@@ -1903,7 +1903,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Search the current user's saved items and collections with one query.\nSaved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for \"unsorted\" can find the Unsorted collection.\nMatching prefers a substring match and falls back to fuzzy matching for typos, so \"ca\" finds \"camera\" and \"camra\" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.\nResults are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.\nOnly the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.\nA search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.\nThe query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.\nPossible error codes:\n- INVALID_SEARCH_QUERY\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Search the current user's saved items and collections with one query.\nSaved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for \"unsorted\" can find the Unsorted collection.\nMatching prefers a substring match and falls back to fuzzy matching for typos, so \"ca\" finds \"camera\" and \"camra\" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.\nResults are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.\nA saved item result reports the collection it is filed in, with that collection's id and name, so where a result lives is shown without another request. It also reports the item's enrichment_status, which is what distinguishes a page that exposed no title from a page that has not been read yet. title, domain and image_url are reported as stored and are null until enrichment populates them; no value is ever derived from the URL in their place.\nA collection result reports only its id and name. Use the id with GET /collections/{id}/saved-items to see what is in it. Whether a collection is one of the user's own or a system collection is reported by GET /collections rather than here.\nOnly the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.\nA search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.\nThe query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.\nPossible error codes:\n- INVALID_SEARCH_QUERY\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -3160,10 +3160,6 @@
         "search.SearchCollectionResponse": {
             "type": "object",
             "properties": {
-                "created_at": {
-                    "type": "string",
-                    "example": "2026-10-02T10:30:00Z"
-                },
                 "id": {
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
@@ -3171,18 +3167,6 @@
                 "name": {
                     "type": "string",
                     "example": "Camera Gear"
-                },
-                "system_key": {
-                    "type": "string",
-                    "example": "unsorted"
-                },
-                "type": {
-                    "type": "string",
-                    "example": "user"
-                },
-                "updated_at": {
-                    "type": "string",
-                    "example": "2026-10-02T10:30:00Z"
                 }
             }
         },
@@ -3203,34 +3187,48 @@
                 }
             }
         },
+        "search.SearchSavedItemCollectionInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Camera Gear"
+                }
+            }
+        },
         "search.SearchSavedItemResponse": {
             "type": "object",
             "properties": {
-                "collection_id": {
-                    "description": "CollectionID is the collection the item is currently in. It is returned\nbecause the client needs it to show where a result lives, not because\ncollection_id is searchable.",
-                    "type": "string",
-                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                "collection": {
+                    "$ref": "#/definitions/search.SearchSavedItemCollectionInfo"
                 },
                 "created_at": {
                     "type": "string",
                     "example": "2026-10-02T10:30:00Z"
                 },
                 "domain": {
-                    "description": "Domain and Title are null until background enrichment populates them, which\nis why they are pointers rather than strings.",
                     "type": "string",
                     "example": "example.org"
+                },
+                "enrichment_status": {
+                    "type": "string",
+                    "example": "completed"
                 },
                 "id": {
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 },
+                "image_url": {
+                    "type": "string",
+                    "example": "https://example.org/og.png"
+                },
                 "title": {
                     "type": "string",
                     "example": "Camera Buying Guide"
-                },
-                "updated_at": {
-                    "type": "string",
-                    "example": "2026-10-02T10:30:00Z"
                 },
                 "url": {
                     "type": "string",

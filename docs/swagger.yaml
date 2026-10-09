@@ -895,23 +895,11 @@ definitions:
     type: object
   search.SearchCollectionResponse:
     properties:
-      created_at:
-        example: "2026-10-02T10:30:00Z"
-        type: string
       id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
       name:
         example: Camera Gear
-        type: string
-      system_key:
-        example: unsorted
-        type: string
-      type:
-        example: user
-        type: string
-      updated_at:
-        example: "2026-10-02T10:30:00Z"
         type: string
     type: object
   search.SearchResponse:
@@ -925,32 +913,36 @@ definitions:
           $ref: '#/definitions/search.SearchSavedItemResponse'
         type: array
     type: object
-  search.SearchSavedItemResponse:
+  search.SearchSavedItemCollectionInfo:
     properties:
-      collection_id:
-        description: |-
-          CollectionID is the collection the item is currently in. It is returned
-          because the client needs it to show where a result lives, not because
-          collection_id is searchable.
+      id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
+      name:
+        example: Camera Gear
+        type: string
+    type: object
+  search.SearchSavedItemResponse:
+    properties:
+      collection:
+        $ref: '#/definitions/search.SearchSavedItemCollectionInfo'
       created_at:
         example: "2026-10-02T10:30:00Z"
         type: string
       domain:
-        description: |-
-          Domain and Title are null until background enrichment populates them, which
-          is why they are pointers rather than strings.
         example: example.org
+        type: string
+      enrichment_status:
+        example: completed
         type: string
       id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
+      image_url:
+        example: https://example.org/og.png
+        type: string
       title:
         example: Camera Buying Guide
-        type: string
-      updated_at:
-        example: "2026-10-02T10:30:00Z"
         type: string
       url:
         example: https://example.org/notes/camera-buying-guide
@@ -2643,6 +2635,8 @@ paths:
         Saved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for "unsorted" can find the Unsorted collection.
         Matching prefers a substring match and falls back to fuzzy matching for typos, so "ca" finds "camera" and "camra" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.
         Results are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.
+        A saved item result reports the collection it is filed in, with that collection's id and name, so where a result lives is shown without another request. It also reports the item's enrichment_status, which is what distinguishes a page that exposed no title from a page that has not been read yet. title, domain and image_url are reported as stored and are null until enrichment populates them; no value is ever derived from the URL in their place.
+        A collection result reports only its id and name. Use the id with GET /collections/{id}/saved-items to see what is in it. Whether a collection is one of the user's own or a system collection is reported by GET /collections rather than here.
         Only the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.
         A search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.
         The query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.

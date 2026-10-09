@@ -49,21 +49,21 @@ func runSearch(
 type searchAPIResponse struct {
 	Data struct {
 		Collections []struct {
-			ID        string  `json:"id"`
-			Name      string  `json:"name"`
-			Type      string  `json:"type"`
-			SystemKey *string `json:"system_key"`
-			CreatedAt string  `json:"created_at"`
-			UpdatedAt string  `json:"updated_at"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"collections"`
 		SavedItems []struct {
-			ID           string  `json:"id"`
-			URL          string  `json:"url"`
-			Domain       *string `json:"domain"`
-			Title        *string `json:"title"`
-			CollectionID string  `json:"collection_id"`
-			CreatedAt    string  `json:"created_at"`
-			UpdatedAt    string  `json:"updated_at"`
+			ID         string  `json:"id"`
+			Title      *string `json:"title"`
+			URL        string  `json:"url"`
+			Domain     *string `json:"domain"`
+			ImageURL   *string `json:"image_url"`
+			Collection struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"collection"`
+			EnrichmentStatus string `json:"enrichment_status"`
+			CreatedAt        string `json:"created_at"`
 		} `json:"saved_items"`
 	} `json:"data"`
 	Message string `json:"message"`
@@ -202,7 +202,7 @@ func TestSearchAPI_Search(t *testing.T) {
 		require.Empty(t, body.Data.Collections)
 	})
 
-	t.Run("returns the collection id for every saved item result", func(t *testing.T) {
+	t.Run("returns the collection and enrichment state of every saved item result", func(t *testing.T) {
 		truncateSearchData(t)
 
 		userID, _ := createSearchUserWithUnsorted(t, "search-api-fields@example.com")
@@ -218,6 +218,14 @@ func TestSearchAPI_Search(t *testing.T) {
 			"Camera Buying Guide",
 		)
 
+		setSearchSavedItemEnrichmentState(
+			t,
+			savedItemID,
+			"completed",
+			"Camera Buying Guide",
+			"https://example.org/og.png",
+		)
+
 		resp := runSearch(t, userID, "camera", true)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -228,9 +236,11 @@ func TestSearchAPI_Search(t *testing.T) {
 
 		item := body.Data.SavedItems[index]
 
-		// collection_id is the field the client most needs from a search result: it
-		// is where the item currently lives.
-		require.Equal(t, gearID.String(), item.CollectionID)
+		// The collection is what the client most needs from a search result: where
+		// the item lives and what that collection is called, without asking again.
+		require.Equal(t, gearID.String(), item.Collection.ID)
+		require.Equal(t, "Camera Gear", item.Collection.Name)
+
 		require.Equal(
 			t,
 			"https://example.org/notes/camera-buying-guide",
@@ -240,8 +250,10 @@ func TestSearchAPI_Search(t *testing.T) {
 		require.Equal(t, "example.org", *item.Domain)
 		require.NotNil(t, item.Title)
 		require.Equal(t, "Camera Buying Guide", *item.Title)
+		require.NotNil(t, item.ImageURL)
+		require.Equal(t, "https://example.org/og.png", *item.ImageURL)
+		require.Equal(t, "completed", item.EnrichmentStatus)
 		require.NotEmpty(t, item.CreatedAt)
-		require.NotEmpty(t, item.UpdatedAt)
 
 		// The database agrees the item is in that collection.
 		require.Equal(
@@ -256,7 +268,7 @@ func TestSearchAPI_Search(t *testing.T) {
 
 		userID, unsortedID := createSearchUserWithUnsorted(t, "search-api-nulls@example.com")
 
-		// Nothing populates title in production yet, so this is the real shape.
+		// Nothing populates the metadata columns yet, so this is the real shape.
 		createSearchSavedItem(
 			t,
 			userID,
@@ -274,13 +286,20 @@ func TestSearchAPI_Search(t *testing.T) {
 		// Present and explicitly null, not dropped and not an empty string.
 		require.Contains(t, raw, `"title":null`)
 		require.Contains(t, raw, `"domain":null`)
+		require.Contains(t, raw, `"image_url":null`)
 
-		// Platform is not a searchable field and is never part of a result.
+		// The stored state, which is what makes a null title mean "not read yet"
+		// rather than "this page exposed no title".
+		require.Contains(t, raw, `"enrichment_status":"pending"`)
+
+		// Platform is not a searchable field and is never part of a result, and
+		// nothing else is reported that a result cannot be rendered from.
 		require.NotContains(t, raw, "platform")
-
-		// Enrichment is not read or reported by search.
-		require.NotContains(t, raw, "enrichment")
 		require.NotContains(t, raw, "last_enriched")
+		require.NotContains(t, raw, "updated_at")
+		require.NotContains(t, raw, "description")
+		require.NotContains(t, raw, "collection_id")
+		require.NotContains(t, raw, "system_key")
 	})
 
 	t.Run("matches a fuzzy typo through the whole stack", func(t *testing.T) {
@@ -336,7 +355,7 @@ func TestSearchAPI_Search(t *testing.T) {
 		body := decodeSearchAPIFromRaw(t, raw)
 		require.NotEmpty(t, body.Data.SavedItems)
 		require.NotEmpty(t, body.Data.Collections)
-		require.NotEmpty(t, body.Data.SavedItems[0].CollectionID)
+		require.NotEmpty(t, body.Data.SavedItems[0].Collection.ID)
 	})
 
 	t.Run("finds the Unsorted system collection", func(t *testing.T) {
@@ -355,11 +374,10 @@ func TestSearchAPI_Search(t *testing.T) {
 		index := indexOfString(ids, unsortedID.String())
 		found := body.Data.Collections[index]
 
-		// System collections are searchable, and the client can tell them apart.
+		// System collections are searchable, and a result identifies one by the
+		// same two fields every other collection result uses.
+		require.Equal(t, unsortedID.String(), found.ID)
 		require.Equal(t, "Unsorted", found.Name)
-		require.Equal(t, "system", found.Type)
-		require.NotNil(t, found.SystemKey)
-		require.Equal(t, "unsorted", *found.SystemKey)
 	})
 
 	t.Run("ranks a substring match above a fuzzy-only match through HTTP", func(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
 	searchdb "github.com/thoriqr/stash-it-backend/internal/api/search/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	collectiondbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/collection/generated"
 	searchdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/search/generated"
 )
 
@@ -210,6 +211,52 @@ func createSearchSavedItemFull(
 	require.NoError(t, err)
 
 	return savedItemID
+}
+
+// setSearchSavedItemEnrichmentState writes the enrichment columns a search result
+// reports. The collection slice's helper already sets the full enrichment state on a
+// saved item, so it is reused rather than copied: a second version here could
+// disagree with that one about what a valid enrichment state looks like.
+//
+// It sets every enrichment column rather than only the ones a given test cares about,
+// so an empty value is written as NULL. Passing title and imageURL keeps a fixture's
+// intent explicit: a test that wants a null title passes one, rather than relying on
+// leaving a parameter out.
+func setSearchSavedItemEnrichmentState(
+	t *testing.T,
+	savedItemID uuid.UUID,
+	status string,
+	title string,
+	imageURL string,
+) {
+	t.Helper()
+
+	require.NoError(
+		t,
+		collectiondbtest.New(testPool).SetTestSavedItemEnrichmentStateAt(
+			context.Background(),
+			collectiondbtest.SetTestSavedItemEnrichmentStateAtParams{
+				EnrichmentStatus: status,
+				CreatedAt: pgtype.Timestamptz{
+					Time:  time.Now(),
+					Valid: true,
+				},
+				Title:    optionalTestText(title),
+				ImageUrl: optionalTestText(imageURL),
+				ID:       savedItemID,
+			},
+		),
+	)
+}
+
+// optionalTestText turns an empty string into SQL NULL, which is how a test says a
+// column was never populated.
+func optionalTestText(value string) pgtype.Text {
+	if value == "" {
+		return pgtype.Text{}
+	}
+
+	return testText(value)
 }
 
 func searchSavedItemIDs(items []search.SearchSavedItem) []uuid.UUID {
@@ -429,19 +476,27 @@ func TestSearch_Matching(t *testing.T) {
 		require.Empty(t, result.SavedItems)
 	})
 
-	t.Run("carries the collection id on every saved item result", func(t *testing.T) {
+	t.Run("carries the collection each result lives in", func(t *testing.T) {
 		truncateSearchData(t)
 
 		svc := newSearchService(t)
-		userID, _ := createSearchUserWithUnsorted(t, "collectionid@example.com")
+		userID, unsortedID := createSearchUserWithUnsorted(t, "collectionid@example.com")
 
 		gearID := createSearchCollection(t, userID, "Camera Gear", "user", "")
 
-		createSearchSavedItem(
+		inGear := createSearchSavedItem(
 			t,
 			userID,
 			gearID,
-			"https://example.com/cameras",
+			"https://example.com/cameras/gear",
+			"example.com",
+			"",
+		)
+		inUnsorted := createSearchSavedItem(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/cameras/inbox",
 			"example.com",
 			"",
 		)
@@ -449,10 +504,74 @@ func TestSearch_Matching(t *testing.T) {
 		result, err := svc.Search(context.Background(), userID, "cameras", 0)
 		require.NoError(t, err)
 
-		// The client needs to show where an item currently lives, so the result
-		// carries the collection the item is actually in.
-		require.Len(t, result.SavedItems, 1)
-		require.Equal(t, gearID, result.SavedItems[0].CollectionID)
+		require.Len(t, result.SavedItems, 2)
+
+		// The client needs to show where a result lives and what that collection
+		// is called, so the result carries both. Two different collections in one
+		// result set is what proves the name is read per row rather than looked up
+		// once and repeated.
+		byID := map[uuid.UUID]search.SearchSavedItem{}
+
+		for _, item := range result.SavedItems {
+			byID[item.ID] = item
+		}
+
+		require.Equal(t, gearID, byID[inGear].Collection.ID)
+		require.Equal(t, "Camera Gear", byID[inGear].Collection.Name)
+		require.Equal(t, unsortedID, byID[inUnsorted].Collection.ID)
+		require.Equal(t, "Unsorted", byID[inUnsorted].Collection.Name)
+	})
+
+	t.Run("reports the stored enrichment state and image url", func(t *testing.T) {
+		truncateSearchData(t)
+
+		svc := newSearchService(t)
+		userID, unsortedID := createSearchUserWithUnsorted(t, "enrichment@example.com")
+
+		enrichedID := createSearchSavedItem(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/cameras/enriched",
+			"example.com",
+			"",
+		)
+
+		setSearchSavedItemEnrichmentState(
+			t,
+			enrichedID,
+			"completed",
+			"Camera Buying Guide",
+			"https://example.com/og.png",
+		)
+
+		unenrichedID := createSearchSavedItem(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/cameras/unenriched",
+			"example.com",
+			"",
+		)
+
+		result, err := svc.Search(context.Background(), userID, "cameras", 0)
+		require.NoError(t, err)
+
+		byID := map[uuid.UUID]search.SearchSavedItem{}
+
+		for _, item := range result.SavedItems {
+			byID[item.ID] = item
+		}
+
+		// The result reports what the row holds, so a client can tell an item
+		// whose page was read from one that has not been. Neither the status nor
+		// the image url is derived here.
+		require.Equal(t, "completed", byID[enrichedID].EnrichmentStatus)
+		require.True(t, byID[enrichedID].ImageURL.Valid)
+		require.Equal(t, "https://example.com/og.png", byID[enrichedID].ImageURL.String)
+
+		require.Equal(t, "pending", byID[unenrichedID].EnrichmentStatus)
+		require.False(t, byID[unenrichedID].ImageURL.Valid)
 	})
 }
 
@@ -534,7 +653,10 @@ func TestSearch_SystemCollections(t *testing.T) {
 		require.Contains(t, searchCollectionIDs(result.Collections), unsortedID)
 	})
 
-	t.Run("returns the system collection with its type and key", func(t *testing.T) {
+	// A collection result identifies a collection and names it. How a collection
+	// came to be is what GET /collections reports, so a search result carries no
+	// type and no system_key to branch on.
+	t.Run("reports a system collection by id and name alone", func(t *testing.T) {
 		truncateSearchData(t)
 
 		svc := newSearchService(t)
@@ -548,11 +670,8 @@ func TestSearch_SystemCollections(t *testing.T) {
 
 		found := result.Collections[index]
 
-		// Without the type and the system key the client cannot tell a system
-		// collection from one of the user's own.
-		require.Equal(t, "system", found.Type)
-		require.True(t, found.SystemKey.Valid)
-		require.Equal(t, "unsorted", found.SystemKey.String)
+		require.Equal(t, unsortedID, found.ID)
+		require.Equal(t, "Unsorted", found.Name)
 	})
 
 	t.Run("finds a named system collection", func(t *testing.T) {

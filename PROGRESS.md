@@ -410,6 +410,12 @@ Search behavior:
 - Collections match on `name`.
 - Results are user-scoped.
 - Scores are internal and are not part of the public API contract.
+- A saved item result reports `id`, `title`, `url`, `domain`, `image_url`,
+  `enrichment_status`, a nested `collection` of `id` and `name`, and `created_at`.
+  The collection is joined in by the search query itself, so naming it costs no
+  extra query per result.
+- A collection result reports `id` and `name` only; `type` and `system_key` are
+  reported by `GET /collections` rather than by a search result.
 - Saved items default to 20 results and cap at 50.
 - Collections cap at 5.
 - Cursor pagination, autocomplete, and suggestions are not implemented.
