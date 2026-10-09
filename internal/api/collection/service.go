@@ -35,6 +35,16 @@ type Service interface {
 		cursor string,
 	) (ListCollectionsResult, error)
 
+	// ListSavedItemsInCollection returns one page of the saved items in one of the
+	// user's collections, newest first, plus the cursor state that follows the page.
+	ListSavedItemsInCollection(
+		ctx context.Context,
+		userID uuid.UUID,
+		collectionID uuid.UUID,
+		limit int,
+		cursor string,
+	) (ListSavedItemsInCollectionResult, error)
+
 	// DeleteCollection removes one of the user's collections and applies the
 	// disposition of its saved items that the caller chose.
 	DeleteCollection(
@@ -376,6 +386,172 @@ func parseCursorTimestamp(value string) (pgtype.Timestamptz, error) {
 // next query compares it against cannot find its own position.
 func normalizeCollectionNameForCursor(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// ListSavedItemsInCollection returns one page of the saved items in a collection.
+//
+// The cursor is validated first, then ownership is proved, then the page is read. The
+// order matters twice: an unusable token is refused without spending a query, and a
+// collection belonging to another user never reaches an item query. The ownership
+// check is the reason this method exists as more than a forwarding call — without it
+// the listing would be scoped by collection id alone, and the item query's user_id
+// predicate would be the only thing keeping one user's items apart from another's.
+//
+// A collection belonging to another user and one that does not exist produce the same
+// not found error, so this endpoint never discloses whether a collection id exists.
+//
+// The limit is defaulted and clamped here for the same reason it is on the other list
+// endpoints: the bound is stated once rather than per query.
+//
+// The cursor is decoded, validated and parsed here, for the reason every cursor in
+// this feature is: a token is a string this build did not write, so it cannot be
+// trusted to hold a usable position. Parsing the timestamp before the repository means
+// an unusable token is rejected without running a query or taking a connection.
+//
+// This listing never triggers enrichment and never writes. Enrichment is scheduled by
+// saving and by an explicit request; looking at a collection is not a reason to fetch
+// anything. That is why the service holds no enqueuer here.
+//
+// The collection the page came from is returned alongside it, reusing the row the
+// ownership check already read. It is present even when the page is empty, because an
+// empty collection is still a collection a client asked about by name.
+func (s *service) ListSavedItemsInCollection(
+	ctx context.Context,
+	userID uuid.UUID,
+	collectionID uuid.UUID,
+	limit int,
+	cursor string,
+) (ListSavedItemsInCollectionResult, error) {
+	if limit <= 0 {
+		limit = SavedItemListDefaultLimit
+	}
+
+	if limit > SavedItemListMaxLimit {
+		limit = SavedItemListMaxLimit
+	}
+
+	params := ListSavedItemsInCollectionParams{
+		UserID:       userID,
+		CollectionID: collectionID,
+		Limit:        limit,
+	}
+
+	// The cursor is settled before ownership is looked up. A token that cannot be used
+	// is refused on its own terms, and there is no collection being shown for it to be
+	// checked against, so spending a query on it would be answering a question the
+	// request has already failed.
+	if cursor != "" {
+		decoded, err := decodeListSavedItemsInCollectionCursor(cursor)
+		if err != nil {
+			return ListSavedItemsInCollectionResult{}, err
+		}
+
+		params.Cursor = decoded
+	}
+
+	// Ownership next, so another user's collection never reaches an item query. The
+	// error is the same one an unknown id produces, which is what keeps this endpoint
+	// from disclosing whether a collection id exists.
+	//
+	// The row is kept rather than discarded. It already holds the id and name the
+	// response reports, so carrying it costs nothing and avoids a second lookup for
+	// data this call has just read.
+	collectionRow, err := s.repository.GetCollectionByIDForUser(
+		ctx,
+		GetCollectionByIDForUserParams{
+			ID:     collectionID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		return ListSavedItemsInCollectionResult{}, err
+	}
+
+	result, err := s.repository.ListSavedItemsInCollection(ctx, params)
+	if err != nil {
+		return ListSavedItemsInCollectionResult{}, err
+	}
+
+	result.Collection = collectionRow
+
+	// The next cursor is derived from the last item actually returned, never the
+	// lookahead row: a cursor built from a row the client never received would resume
+	// past it and skip one item at every page boundary.
+	if result.HasMore && len(result.SavedItems) > 0 {
+		token, err := encodeListSavedItemsInCollectionCursor(result.SavedItems)
+		if err != nil {
+			return ListSavedItemsInCollectionResult{}, apperror.Internal(err)
+		}
+
+		result.NextCursor = &token
+	} else {
+		// A final page and an empty page are the same shape, which the response
+		// renders as an explicit null rather than omitting the field.
+		result.HasMore = false
+		result.NextCursor = nil
+	}
+
+	return result, nil
+}
+
+// decodeListSavedItemsInCollectionCursor turns an opaque token into a validated
+// cursor.
+//
+// Every failure is the same 400 with the same code, for the reason the collection
+// listing does it that way: a cursor is not a capability, so "malformed" and
+// "unusable" mean one thing to a caller, which is to start over without a cursor.
+//
+// There is no sort or group to check here. This listing has one ordering and no
+// pinned row, so a token cannot be mismatched against anything and there is nothing
+// for a sort comparison to reject.
+func decodeListSavedItemsInCollectionCursor(
+	token string,
+) (*ListSavedItemsInCollectionCursor, error) {
+	decoded, err := pagination.DecodeVersioned[ListSavedItemsInCollectionCursor](token)
+	if err != nil {
+		return nil, invalidCursorError(err)
+	}
+
+	// Both halves are required: an ordering on created_at alone is not total, so a
+	// position without the tie-breaker could not describe where a page ended.
+	if decoded.Value == nil || decoded.ID == nil {
+		return nil, invalidCursorError(nil)
+	}
+
+	if *decoded.Value == "" || *decoded.ID == uuid.Nil {
+		return nil, invalidCursorError(nil)
+	}
+
+	// The position is compared against a timestamptz column, so it has to actually be
+	// a timestamp. Checking it here rather than in the repository turns an unusable
+	// token into the 400 it is before any query runs.
+	parsed, err := parseCursorTimestamp(*decoded.Value)
+	if err != nil {
+		return nil, invalidCursorError(err)
+	}
+
+	decoded.Timestamp = parsed
+
+	return &decoded, nil
+}
+
+// encodeListSavedItemsInCollectionCursor builds the token for the page ending at the
+// given item.
+//
+// The position is read from the item as stored, never re-derived, so the value in the
+// token is the one the query ordered by.
+func encodeListSavedItemsInCollectionCursor(
+	savedItems []ListedSavedItem,
+) (string, error) {
+	last := savedItems[len(savedItems)-1]
+
+	value := last.CreatedAt.Time.Format(time.RFC3339Nano)
+
+	return pagination.Encode(ListSavedItemsInCollectionCursor{
+		Version: pagination.CurrentVersion,
+		Value:   &value,
+		ID:      &last.ID,
+	})
 }
 
 // DeleteCollection removes one of the user's collections, and deals with the saved

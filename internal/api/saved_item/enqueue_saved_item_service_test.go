@@ -177,6 +177,10 @@ func TestService_Create_WorksWithoutAnEnqueuer(t *testing.T) {
 
 // Reading and deleting an item must never enqueue anything. Only saving starts
 // enrichment, and a task per delete would enrich items on their way out.
+//
+// Listing an item's collection is the same case in a different slice: it is a read,
+// so it schedules nothing either. That is covered by the collection package's own
+// tests, since listing moved there.
 func TestService_DoesNotEnqueueOnReadsOrDeletes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -197,17 +201,6 @@ func TestService_DoesNotEnqueueOnReadsOrDeletes(t *testing.T) {
 		Return(saved_item.SavedItem{ID: savedItemID}, nil)
 
 	_, err := svc.Get(context.Background(), userID, savedItemID)
-	require.NoError(t, err)
-
-	repo.EXPECT().
-		ListSavedItems(gomock.Any(), userID, gomock.Any(), gomock.Any()).
-		Return([]saved_item.SavedItem{}, nil)
-
-	repo.EXPECT().
-		CountSavedItems(gomock.Any(), userID).
-		Return(int64(0), nil)
-
-	_, err = svc.List(context.Background(), userID, 1, 20)
 	require.NoError(t, err)
 
 	// The delete now also reads the collection the item was in, to report whether

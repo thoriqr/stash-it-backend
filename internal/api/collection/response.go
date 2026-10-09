@@ -70,6 +70,18 @@ type ListCollectionsResponse struct {
 type ListCollectionsAPIResponse struct {
 	Data    *ListCollectionsResponse `json:"data"`
 	Message string                   `json:"message" example:"collections retrieved successfully"`
+	Meta    ListCollectionsMeta      `json:"meta"`
+}
+
+// ListCollectionsMeta is the envelope's meta for GET /collections.
+//
+// Documentation only, and for the same reason as ListSavedItemsInCollectionMeta: this
+// endpoint's own description talks about meta.cursor, and the generated schema for its
+// 200 response omitted meta entirely, so the two contradicted each other. It shares
+// CursorPageMeta rather than repeating those two fields, because both endpoints report
+// the same envelope and two hand-written copies would be one more thing to keep in step.
+type ListCollectionsMeta struct {
+	Cursor CursorPageMeta `json:"cursor"`
 }
 
 type PutSavedItemIntoCollectionResponse struct {
@@ -89,6 +101,120 @@ type PutSavedItemIntoCollectionResponse struct {
 type PutSavedItemIntoCollectionAPIResponse struct {
 	Data    *PutSavedItemIntoCollectionResponse `json:"data"`
 	Message string                              `json:"message" example:"saved item moved into collection successfully"`
+}
+
+// ListedSavedItemResponse is a saved item as the collection listing reports it.
+//
+// It carries every column the listing projects, including the enrichment ones. Those
+// are what make the response meaningful to a caller: without enrichment_status a null
+// title is ambiguous between "this page has no title" and "this page has not been read
+// yet", and without last_enriched_at there is no way to tell whether metadata is
+// current.
+//
+// description and image_url are nullable because a page is not required to expose
+// either, and an item that was never enriched has neither. That is an ordinary state
+// rather than a defect, so they are reported as null rather than omitted.
+//
+// CanonicalURL, SiteName and Author are absent. The extractor can find them, but there
+// are no saved_items columns for them and no decision to expose them, so reporting them
+// would promise storage that does not exist.
+type ListedSavedItemResponse struct {
+	ID           uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	URL          string    `json:"url" example:"https://example.com/articles/1"`
+	Domain       *string   `json:"domain" example:"example.com"`
+	Platform     *string   `json:"platform" example:"youtube"`
+	Title        *string   `json:"title" example:"An interesting article"`
+	Description  *string   `json:"description" example:"A short summary of the page"`
+	ImageURL     *string   `json:"image_url" example:"https://example.com/og.png"`
+	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+
+	// EnrichmentStatus is pending, completed or failed. Completed means the process
+	// ran, not that every field above is populated, so completed with a null title is
+	// normal.
+	EnrichmentStatus string `json:"enrichment_status" example:"completed"`
+
+	// LastEnrichedAt is null until an enrichment has succeeded at least once. A failed
+	// attempt refreshes nothing, so it does not set this.
+	LastEnrichedAt *time.Time `json:"last_enriched_at" example:"2026-10-02T10:31:00Z"`
+
+	CreatedAt time.Time `json:"created_at" example:"2026-10-02T10:30:00Z"`
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T10:31:00Z"`
+}
+
+// ListedSavedItemsCollectionResponse names the collection a page of saved items was
+// read from.
+//
+// It is the narrowest collection shape this feature has, and deliberately so. The
+// caller already arrived knowing the id, and the one thing it cannot know from the
+// path is what the collection is called. That is all a listing needs to answer, and
+// each of the fields this omits is a question a collection list answers rather than
+// this one:
+//
+//   - type and system_key belong to ListCollectionsResponse. system_key is how a client
+//     recognizes Unsorted, and a client reading this response has already named the
+//     collection it wants; reporting how that collection was created would invite it to
+//     branch on a fact that plays no part in the page it just received.
+//   - created_at and updated_at are ordering and bookkeeping details of the
+//     collections listing, and have nothing to say about the items inside.
+//
+// Unsorted is not special-cased. It arrives through this type like every other
+// collection, which is the same contract it has everywhere else.
+type ListedSavedItemsCollectionResponse struct {
+	ID   uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	Name string    `json:"name" example:"YouTube"`
+}
+
+// ListSavedItemsInCollectionResponse is one page of a collection's saved items,
+// together with the collection they came from.
+//
+// The collection is reported on every response, including one whose saved_items is
+// empty. An empty collection is an ordinary state and still has a name worth showing,
+// and reporting the collection unconditionally means a client never has to distinguish
+// "no items" from "no collection" to decide what to render.
+//
+// An empty page is an empty array, never null. A collection holding nothing is an
+// ordinary state this product already has, so it is reported as an empty list rather
+// than as an absence of one.
+type ListSavedItemsInCollectionResponse struct {
+	Collection ListedSavedItemsCollectionResponse `json:"collection"`
+	SavedItems []ListedSavedItemResponse          `json:"saved_items"`
+}
+
+type ListSavedItemsInCollectionAPIResponse struct {
+	Data    *ListSavedItemsInCollectionResponse `json:"data"`
+	Message string                              `json:"message" example:"saved items retrieved successfully"`
+	Meta    ListSavedItemsInCollectionMeta      `json:"meta"`
+}
+
+// ListSavedItemsInCollectionMeta is the envelope's meta for this endpoint.
+//
+// Documentation only. httpx builds the real one; this mirrors it so the generated
+// description of a 200 body shows where next_cursor lives, rather than describing a
+// two-key envelope while the endpoint actually returns three.
+type ListSavedItemsInCollectionMeta struct {
+	Cursor CursorPageMeta `json:"cursor"`
+}
+
+// CursorPageMeta is the documented shape of meta.cursor.
+//
+// Documentation only. It mirrors httpx.CursorPage, whose NextCursor field carries no
+// omitempty precisely so a final page emits an explicit null rather than a missing key.
+// The field is a pointer here for the same reason: the null is the contract, and a
+// schema rendering it as an ordinary string would say the opposite.
+//
+// It is deliberately not a $ref to httpx.CursorPage. That type is the runtime one and
+// swag emits no schema for it, so referencing it would produce a definition with no
+// properties rather than one describing the fields. Restating two fields keeps the
+// generated document readable on its own.
+type CursorPageMeta struct {
+	// NextCursor is the token for the following page, or null on the final page and on
+	// an empty result. It is null whenever has_more is false.
+	NextCursor *string `json:"next_cursor" example:"eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9"`
+
+	// HasMore is computed from one row fetched beyond the requested limit, so it is
+	// exact rather than inferred from a count. There is deliberately no total: a
+	// cursor-paginated response does not know how many results exist overall.
+	HasMore bool `json:"has_more" example:"true"`
 }
 
 // DeleteCollectionAPIResponse is a plain success with no body.

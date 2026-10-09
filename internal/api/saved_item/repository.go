@@ -46,18 +46,6 @@ type Repository interface {
 		userID uuid.UUID,
 		collectionID uuid.UUID,
 	) (pgtype.Text, error)
-
-	ListSavedItems(
-		ctx context.Context,
-		userID uuid.UUID,
-		offset int32,
-		limit int32,
-	) ([]SavedItem, error)
-
-	CountSavedItems(
-		ctx context.Context,
-		userID uuid.UUID,
-	) (int64, error)
 }
 
 type repository struct {
@@ -240,44 +228,6 @@ func (r *repository) GetCollectionSystemKeyForUser(
 	return systemKey, nil
 }
 
-func (r *repository) ListSavedItems(
-	ctx context.Context,
-	userID uuid.UUID,
-	offset int32,
-	limit int32,
-) ([]SavedItem, error) {
-	rows, err := r.queries.ListSavedItems(
-		ctx,
-		saveditemdb.ListSavedItemsParams{
-			UserID:     userID,
-			PageOffset: offset,
-			PageLimit:  limit,
-		},
-	)
-	if err != nil {
-		return nil, internalError(err)
-	}
-
-	savedItems := make([]SavedItem, 0, len(rows))
-	for _, row := range rows {
-		savedItems = append(
-			savedItems,
-			newSavedItem(
-				row.ID,
-				row.UserID,
-				row.Url,
-				row.Domain,
-				row.Platform,
-				row.Title,
-				row.CreatedAt,
-				row.UpdatedAt,
-			),
-		)
-	}
-
-	return savedItems, nil
-}
-
 // newSavedItem builds the SavedItem projection from the columns the saved items
 // queries project. Since migration 000022 added collection_id, saved_items has
 // more columns than these queries select, so sqlc generates a distinct row type
@@ -308,18 +258,6 @@ func newSavedItem(
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}
-}
-
-func (r *repository) CountSavedItems(
-	ctx context.Context,
-	userID uuid.UUID,
-) (int64, error) {
-	count, err := r.queries.CountSavedItems(ctx, userID)
-	if err != nil {
-		return 0, internalError(err)
-	}
-
-	return count, nil
 }
 
 func optionalText(value string) pgtype.Text {

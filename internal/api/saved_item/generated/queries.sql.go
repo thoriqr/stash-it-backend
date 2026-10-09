@@ -12,19 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countSavedItems = `-- name: CountSavedItems :one
-SELECT COUNT(*)
-FROM saved_items
-WHERE user_id = $1
-`
-
-func (q *Queries) CountSavedItems(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countSavedItems, userID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countSavedItemsInCollection = `-- name: CountSavedItemsInCollection :one
 SELECT COUNT(*)
 FROM saved_items
@@ -263,67 +250,4 @@ func (q *Queries) GetUnsortedCollectionByUser(ctx context.Context, userID uuid.U
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const listSavedItems = `-- name: ListSavedItems :many
-SELECT
-    id,
-    user_id,
-    url,
-    domain,
-    platform,
-    title,
-    created_at,
-    updated_at
-FROM saved_items
-WHERE user_id = $1
-ORDER BY created_at DESC
-LIMIT $3
-OFFSET $2
-`
-
-type ListSavedItemsParams struct {
-	UserID     uuid.UUID
-	PageOffset int32
-	PageLimit  int32
-}
-
-type ListSavedItemsRow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Url       string
-	Domain    pgtype.Text
-	Platform  pgtype.Text
-	Title     pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-}
-
-func (q *Queries) ListSavedItems(ctx context.Context, arg ListSavedItemsParams) ([]ListSavedItemsRow, error) {
-	rows, err := q.db.Query(ctx, listSavedItems, arg.UserID, arg.PageOffset, arg.PageLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListSavedItemsRow
-	for rows.Next() {
-		var i ListSavedItemsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Url,
-			&i.Domain,
-			&i.Platform,
-			&i.Title,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

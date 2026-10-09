@@ -798,6 +798,223 @@ func (q *Queries) ListCollectionsOldestFirst(ctx context.Context, arg ListCollec
 	return items, nil
 }
 
+const listSavedItemsInCollectionAfterRow = `-- name: ListSavedItemsInCollectionAfterRow :many
+SELECT
+    si.id,
+    si.user_id,
+    si.url,
+    si.domain,
+    si.platform,
+    si.title,
+    si.description,
+    si.image_url,
+    si.collection_id,
+    si.enrichment_status,
+    si.last_enriched_at,
+    si.created_at,
+    si.updated_at
+FROM saved_items si
+WHERE si.collection_id = $1
+  AND si.user_id = $2
+  AND (si.created_at, si.id) < (
+      $3::timestamptz,
+      $4::uuid
+  )
+ORDER BY
+    si.created_at DESC,
+    si.id DESC
+LIMIT $5
+`
+
+type ListSavedItemsInCollectionAfterRowParams struct {
+	CollectionID uuid.UUID
+	UserID       uuid.UUID
+	CursorValue  pgtype.Timestamptz
+	CursorID     uuid.UUID
+	PageLimit    int32
+}
+
+type ListSavedItemsInCollectionAfterRowRow struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// Saved items in one collection, newest first, after the position a cursor carries.
+//
+// The row comparison describes the same total order as the ORDER BY above it, which
+// is what makes this keyset pagination rather than an offset in disguise: DESC
+// ordering resumes with <. Row comparison short-circuits like the expanded form, so
+// it needs only the leading index column and resolves ties without an OR chain.
+//
+// The casts are load-bearing. Without them sqlc types every row-comparison parameter
+// from the row's leftmost element, which would give cursor_id a timestamptz type and
+// let a timestamp be passed where a UUID belongs.
+//
+// The stored position comes from the cursor, never from a lookup of the row it came
+// from. Nothing here reads saved_items by id, so a cursor keeps working after its
+// anchor item is deleted: it resumes from the position it recorded. That is the
+// property offset pagination cannot offer, since deleting an item shifts everything
+// after it and makes a client receive a duplicate.
+//
+// cursor_value is the item's created_at and cursor_id its id, both as read from the
+// database rather than re-derived.
+func (q *Queries) ListSavedItemsInCollectionAfterRow(ctx context.Context, arg ListSavedItemsInCollectionAfterRowParams) ([]ListSavedItemsInCollectionAfterRowRow, error) {
+	rows, err := q.db.Query(ctx, listSavedItemsInCollectionAfterRow,
+		arg.CollectionID,
+		arg.UserID,
+		arg.CursorValue,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSavedItemsInCollectionAfterRowRow
+	for rows.Next() {
+		var i ListSavedItemsInCollectionAfterRowRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Url,
+			&i.Domain,
+			&i.Platform,
+			&i.Title,
+			&i.Description,
+			&i.ImageUrl,
+			&i.CollectionID,
+			&i.EnrichmentStatus,
+			&i.LastEnrichedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedItemsInCollectionFirst = `-- name: ListSavedItemsInCollectionFirst :many
+SELECT
+    si.id,
+    si.user_id,
+    si.url,
+    si.domain,
+    si.platform,
+    si.title,
+    si.description,
+    si.image_url,
+    si.collection_id,
+    si.enrichment_status,
+    si.last_enriched_at,
+    si.created_at,
+    si.updated_at
+FROM saved_items si
+WHERE si.collection_id = $1
+  AND si.user_id = $2
+ORDER BY
+    si.created_at DESC,
+    si.id DESC
+LIMIT $3
+`
+
+type ListSavedItemsInCollectionFirstParams struct {
+	CollectionID uuid.UUID
+	UserID       uuid.UUID
+	PageLimit    int32
+}
+
+type ListSavedItemsInCollectionFirstRow struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// First page of the saved items in one collection, newest first.
+//
+// This is a read. It projects every column a client needs to render an item,
+// including the enrichment columns, because a listing that omitted them could not
+// tell a caller whether an item's metadata had arrived. It writes nothing and
+// triggers nothing: enrichment is scheduled by saving and by an explicit request,
+// never by looking at a collection.
+//
+// created_at DESC, id DESC is a total order. The tie-break is not optional:
+// created_at defaults to NOW(), which is transaction_timestamp() and therefore
+// constant within a transaction, so rows inserted together genuinely share a
+// timestamp. Without the id a page boundary could skip or repeat an item.
+// saved_items.id is uuidv7() with no overriding trigger, so it is unique and
+// monotonic in creation order.
+//
+// No sort is offered here. This listing has one ordering by design: a collection is a
+// bucket a person curated, and offering ways to reorder what they put in it would
+// answer a question nobody asked. GET /collections is where ordering is a choice.
+//
+// Ownership is matched on collection_id AND user_id. Migration 000025's composite
+// foreign key already guarantees every item filed in this collection belongs to this
+// collection's owner, so the user_id predicate cannot change the result; it states
+// the intent. The collection itself was already resolved and ownership-checked by the
+// caller, so no other user's item is reachable from here.
+//
+// Callers request limit + 1 rows so has_more is exact rather than inferred.
+func (q *Queries) ListSavedItemsInCollectionFirst(ctx context.Context, arg ListSavedItemsInCollectionFirstParams) ([]ListSavedItemsInCollectionFirstRow, error) {
+	rows, err := q.db.Query(ctx, listSavedItemsInCollectionFirst, arg.CollectionID, arg.UserID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSavedItemsInCollectionFirstRow
+	for rows.Next() {
+		var i ListSavedItemsInCollectionFirstRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Url,
+			&i.Domain,
+			&i.Platform,
+			&i.Title,
+			&i.Description,
+			&i.ImageUrl,
+			&i.CollectionID,
+			&i.EnrichmentStatus,
+			&i.LastEnrichedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockSavedItemForUser = `-- name: LockSavedItemForUser :one
 SELECT
     id,

@@ -34,11 +34,16 @@ through `saved_item.RegisterModule`, and covered by tests.
 | Endpoint                  | Status | Notes                             |
 | ------------------------- | ------ | --------------------------------- |
 | `POST /saved-items`       | done   | 201, requires Bearer              |
-| `GET /saved-items`        | done   | 200, paginated, `created_at DESC` |
 | `GET /saved-items/:id`    | done   | 200, owner-scoped                 |
 | `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped, reports collection state |
 
 Update/edit (`PATCH` or `PUT`) is deliberately out of scope for now.
+
+`GET /saved-items` was removed. Every saved item belongs to exactly one collection, so
+the inbox is the Unsorted collection seen through `GET /collections/:id/saved-items`
+rather than a second, independent list. Keeping both would mean two ways to ask the
+same question, and the standalone one reported fewer fields: it carried no
+`enrichment_status`, `last_enriched_at`, `description` or `image_url`.
 
 Feature package: `internal/api/saved_item/`, following the project's
 vertical-slice convention.
@@ -70,11 +75,12 @@ No public-suffix or registrable-domain detection is performed.
 
 `internal/api/collection/` is implemented as a complete vertical slice.
 
-| Endpoint                          | Status | Notes                                          |
-| --------------------------------- | ------ | ---------------------------------------------- |
-| `PUT /saved-items/:id/collection` | done   | 200, owner-scoped, requires Bearer             |
-| `GET /collections`                | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
-| `DELETE /collections/:id`         | done   | 200, owner-scoped, requires Bearer             |
+| Endpoint                              | Status | Notes                                                     |
+| ------------------------------------- | ------ | --------------------------------------------------------- |
+| `PUT /saved-items/:id/collection`     | done   | 200, owner-scoped, requires Bearer                        |
+| `GET /collections`                    | done   | 200, owner-scoped, cursor-paginated, requires Bearer      |
+| `GET /collections/:id/saved-items`    | done   | 200, owner-scoped, cursor-paginated, requires Bearer      |
+| `DELETE /collections/:id`             | done   | 200, owner-scoped, requires Bearer                        |
 
 The endpoint accepts `{"collection_name": "..."}` and files one saved item
 into one user collection, creating that collection when necessary.
@@ -145,8 +151,8 @@ GET /collections?sort=newest&limit=20&cursor=<opaque>
 | Param | Values | Default | Notes |
 | --- | --- | --- | --- |
 | `sort` | `newest`, `oldest`, `name` | `newest` | Unknown value is a 400, never guessed |
-| `limit` | 1–50 | 20 | Above the maximum is clamped by the service, as elsewhere |
-| `cursor` | opaque token | none | Resume where the previous page ended |
+| `limit` | 1–50 | 20 | Above the maximum is `VALIDATION_ERROR`; `limit=0` is read as absent |
+| `cursor` | opaque token | none | Resume where the previous page ended; must match the requested `sort` |
 
 Behavior:
 
@@ -192,6 +198,106 @@ Response:
 - **No `total` or `total_pages`.** `has_more` comes from one extra fetched row rather
   than a count, which is the work keyset pagination exists to avoid.
 - An empty page serializes `collections` as `[]`, never `null`.
+- **`meta` is declared on the API response type as a documentation-only mirror.**
+  `httpx.OKWithMeta` writes the real envelope, so a struct that omits `meta` returned a
+  three-key body while the generated schema described two — and the `@Description`
+  above, which talks about `meta.cursor.next_cursor`, then contradicted the schema
+  under it. Still valid OpenAPI, so no linter caught it. Fixed here and on
+  `GET /collections/:id/saved-items`; both now share one `CursorPageMeta`. See the
+  "Documented response shape" test below.
+
+### A collection's saved items — `GET /collections/:id/saved-items`
+
+Where the saved items of one collection are seen. It replaces the removed standalone
+listing, because every saved item belongs to exactly one collection.
+
+Request:
+
+```http
+GET /collections/:id/saved-items?limit=20&cursor=<opaque>
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "collection": { "id": "01a0f359-093b-737a-963a-80f7ca6768ed", "name": "YouTube" },
+    "saved_items": [
+      {
+        "id": "01a0f359-093b-737a-963a-80f7ca6768ed",
+        "url": "https://example.com/video",
+        "domain": "example.com",
+        "platform": null,
+        "title": null,
+        "description": null,
+        "image_url": null,
+        "collection_id": "01a0f359-093b-737a-963a-80f7ca6768ed",
+        "enrichment_status": "pending",
+        "last_enriched_at": null,
+        "created_at": "2026-10-09T00:00:00Z",
+        "updated_at": "2026-10-09T00:00:00Z"
+      }
+    ]
+  },
+  "message": "saved items retrieved successfully",
+  "meta": {
+    "cursor": { "next_cursor": null, "has_more": false }
+  }
+}
+```
+
+Behavior:
+
+- **The collection is resolved and its ownership proved before any item is read.** A
+  collection that does not exist and one owned by somebody else produce the same
+  `COLLECTION_NOT_FOUND`, so the endpoint never discloses whether an id exists.
+- **`data.collection` carries `id` and `name`, and nothing else.** The caller arrived
+  knowing the id; the name is the one thing the path cannot tell it. It is reused from
+  the ownership lookup rather than read again — no second query was added — and it is
+  reported on every response, **including an empty page**, because an empty collection
+  is still a named collection and omitting the field would make "nothing in it"
+  indistinguishable from "no match". `type` and `system_key` are deliberately absent:
+  they answer questions for `GET /collections`, not this one.
+- **Unsorted is an ordinary collection here.** Nothing is special-cased for it: the
+  inbox is this endpoint pointed at the Unsorted id, and it arrives through the same
+  `collection` object as anything else.
+- **Each item is reported in full**: `id`, `url`, `domain`, `platform`, `title`,
+  `description`, `image_url`, `collection_id`, `enrichment_status`,
+  `last_enriched_at`, `created_at`, `updated_at`. The previous standalone listing
+  reported seven of these, so a caller could not tell a missing title from metadata
+  that had not arrived.
+- **`collection_id` stays on every item** and always equals `data.collection.id`. The
+  redundancy is deliberate: it makes an item self-describing once it is carried out of
+  this response.
+- **A null title, a null description, a null image url and a `failed` enrichment are
+  all ordinary states and all listed.** `enrichment_status` is `NOT NULL` with a
+  default; the metadata columns are nullable and stay so after a page exposes none.
+- **Ordering is fixed at `created_at DESC, id DESC`.** No sort parameter. A collection
+  is something a person curated, so the order they chose when filing is the one they
+  see.
+- **`limit` defaults to 20 and is capped at 50.** A limit of 51+ or below 1 is
+  `VALIDATION_ERROR`; a non-numeric limit is `BAD_REQUEST`; `limit=0` is treated as
+  absent. The `max=50` tag fires before the service's own clamp, so an out-of-range
+  limit is rejected rather than silently resized.
+- **Listing never triggers enrichment and never writes.** Enrichment is scheduled by
+  saving and by `POST /saved-items/:id/enrich`; browsing is not a reason to fetch.
+- **Cursor-paginated**, with the same `meta.cursor` shape as `GET /collections` and an
+  explicit `next_cursor: null` on the final page. A cursor is a position, so it
+  survives its anchor item being deleted; a cursor past the end returns an empty page.
+- **Two SQL statements, not six.** One ordering and no pinned row means one
+  first-page statement and one after-position statement.
+- **Its cursor payload has no `Sort` and no `Group`.** Both exist on the collection
+  payload only because that listing pins Unsorted and offers three orders; fields that
+  can never vary here would only add unreachable validation branches. There is a test
+  asserting the payload carries neither.
+- **The timestamp is parsed and validated in the service**, so a token that decodes but
+  holds an unusable value is `INVALID_CURSOR` rather than a server fault, and no query
+  runs to discover it.
+
+Errors: `400 BAD_REQUEST` / `400 VALIDATION_ERROR` / `400 INVALID_CURSOR`,
+`401 INVALID_AUTHORIZATION_HEADER` / `INVALID_ACCESS_TOKEN` / `ACCESS_TOKEN_EXPIRED`,
+`404 COLLECTION_NOT_FOUND`, `500 INTERNAL_SERVER_ERROR`.
 
 ### Saved item deletion reports collection state
 
@@ -834,10 +940,36 @@ Do not change these casually. Revisit only with an explicit decision.
     it and the client silently receives a duplicate.
 
 19f. **`GET /collections` uses cursor pagination; the existing offset list endpoints
-    are unchanged.** `GET /saved-items` and `GET /auth/sessions` keep `page`/`limit`
-    and `meta.pagination`. `httpx.Meta` carries both, with `cursor` omitted entirely
-    where unset, so no existing response changes. Converting those endpoints is a
-    separate piece of work and needs its own decision.
+    are unchanged.** `GET /collections/:id/saved-items` is cursor-paginated too.
+    `GET /auth/sessions` keeps `page`/`limit` and `meta.pagination`. `httpx.Meta`
+    carries both, with `cursor` omitted entirely where unset, so no existing response
+    changes. Converting the session endpoint is a separate piece of work and needs its
+    own decision.
+
+19g. **There is no standalone saved-item listing.** Every saved item belongs to
+    exactly one collection, so an inbox is the Unsorted collection seen through
+    `GET /collections/:id/saved-items`. Two ways to ask the same question would be two
+    answers to keep in step, and the standalone one was also the poorer answer: it
+    carried no `enrichment_status`, `last_enriched_at`, `description` or `image_url`,
+    so a caller could not tell a page with no title from one that had not been read.
+
+19h. **A collection listing names its collection.** `GET /collections/:id/saved-items`
+    reports `data.collection` with `id` and `name`, reused from the ownership lookup
+    that call already had to make — no extra query. It is reported on every response
+    including an empty page, because "nothing in it" and "no such collection" are
+    different things and the name is what tells them apart. `type` and `system_key` are
+    left out: they answer questions for `GET /collections`, and a client that reached
+    this endpoint has already named the collection it wants. Unsorted goes through the
+    same type as everything else.
+
+19i. **A response schema that omits `meta` is a documentation bug, and it is guarded.**
+    Both cursor endpoints described `meta.cursor` in prose while their generated 200
+    schema showed a two-key envelope, because `httpx.OKWithMeta` builds `meta` and the
+    API response structs did not declare it. Nothing at runtime could notice, and the
+    result is still valid OpenAPI, so no linter did either. Both now declare a
+    documentation-only mirror sharing one `CursorPageMeta`, and
+    `TestCollectionAPI_ListSavedItems_DocumentedShape` walks `docs/swagger.json` and a
+    real body side by side at every level, failing if either gains or loses a key.
 
 ---
 

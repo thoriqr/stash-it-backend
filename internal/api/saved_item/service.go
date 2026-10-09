@@ -31,13 +31,6 @@ type SavedItemService interface {
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
 	) (DeleteResult, error)
-
-	List(
-		ctx context.Context,
-		userID uuid.UUID,
-		page int,
-		limit int,
-	) (ListResult, error)
 }
 
 type service struct {
@@ -302,63 +295,6 @@ func (s *service) Delete(
 		CollectionID:        deleted.CollectionID,
 		CollectionEmpty:     collectionEmpty,
 		CollectionDeletable: collectionEmpty && !isUnsorted,
-	}, nil
-}
-
-type ListResult struct {
-	SavedItems []SavedItem
-	Page       int
-	Limit      int
-	Total      int64
-	TotalPages int
-}
-
-func (s *service) List(
-	ctx context.Context,
-	userID uuid.UUID,
-	page int,
-	limit int,
-) (ListResult, error) {
-	if page < 1 {
-		page = 1
-	}
-
-	if limit <= 0 {
-		limit = SavedItemListDefaultLimit
-	}
-
-	if limit > SavedItemListMaxLimit {
-		limit = SavedItemListMaxLimit
-	}
-
-	offset := int32((page - 1) * limit)
-
-	savedItems, err := s.repository.ListSavedItems(
-		ctx,
-		userID,
-		offset,
-		int32(limit),
-	)
-	if err != nil {
-		return ListResult{}, err
-	}
-
-	total, err := s.repository.CountSavedItems(ctx, userID)
-	if err != nil {
-		return ListResult{}, err
-	}
-
-	totalPages := 0
-	if total > 0 {
-		totalPages = int((total + int64(limit) - 1) / int64(limit))
-	}
-
-	return ListResult{
-		SavedItems: savedItems,
-		Page:       page,
-		Limit:      limit,
-		Total:      total,
-		TotalPages: totalPages,
 	}, nil
 }
 

@@ -56,10 +56,6 @@ type DeleteSavedItemAPIResponse struct {
 	Message string                   `json:"message" example:"saved item deleted successfully"`
 }
 
-type ListSavedItemsResponse struct {
-	SavedItems []SavedItemResponse `json:"saved_items"`
-}
-
 type CreateSavedItemAPIResponse struct {
 	Data    *CreateSavedItemResponse `json:"data"`
 	Message string                   `json:"message" example:"saved item created successfully"`
@@ -68,21 +64,4 @@ type CreateSavedItemAPIResponse struct {
 type GetSavedItemAPIResponse struct {
 	Data    *GetSavedItemResponse `json:"data"`
 	Message string                `json:"message" example:"saved item retrieved successfully"`
-}
-
-type ListSavedItemsAPIResponse struct {
-	Data    *ListSavedItemsResponse `json:"data"`
-	Message string                  `json:"message" example:"saved items retrieved successfully"`
-	Meta    ListSavedItemsMeta      `json:"meta"`
-}
-
-type ListSavedItemsMeta struct {
-	Pagination ListSavedItemsPagination `json:"pagination"`
-}
-
-type ListSavedItemsPagination struct {
-	Page       int   `json:"page" example:"1"`
-	Limit      int   `json:"limit" example:"20"`
-	Total      int64 `json:"total" example:"42"`
-	TotalPages int   `json:"total_pages" example:"3"`
 }

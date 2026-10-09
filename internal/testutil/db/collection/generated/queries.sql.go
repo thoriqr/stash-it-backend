@@ -432,6 +432,46 @@ func (q *Queries) SetTestSavedItemEnrichmentState(ctx context.Context, arg SetTe
 	return err
 }
 
+const setTestSavedItemEnrichmentStateAt = `-- name: SetTestSavedItemEnrichmentStateAt :exec
+UPDATE saved_items
+SET enrichment_status = $1,
+    last_enriched_at = $2,
+    title = $3,
+    description = $4,
+    image_url = $5,
+    created_at = $6
+WHERE id = $7
+`
+
+type SetTestSavedItemEnrichmentStateAtParams struct {
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	ID               uuid.UUID
+}
+
+// Sets the full enrichment state on an existing saved item, including created_at.
+//
+// A listing needs items in every enrichment state at once, and it orders by
+// created_at, so a test has to control both. SetTestSavedItemEnrichmentState covers
+// the enrichment columns but leaves created_at alone, which cannot place a row at a
+// chosen position in the ordering or create rows that genuinely tie.
+func (q *Queries) SetTestSavedItemEnrichmentStateAt(ctx context.Context, arg SetTestSavedItemEnrichmentStateAtParams) error {
+	_, err := q.db.Exec(ctx, setTestSavedItemEnrichmentStateAt,
+		arg.EnrichmentStatus,
+		arg.LastEnrichedAt,
+		arg.Title,
+		arg.Description,
+		arg.ImageUrl,
+		arg.CreatedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const truncateCollectionData = `-- name: TruncateCollectionData :exec
 TRUNCATE TABLE
     saved_items,

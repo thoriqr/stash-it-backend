@@ -54,6 +54,15 @@ func CollectionRoutes(
 		handler.ListCollections,
 	)
 
+	// "/:id/saved-items" rather than a nested router, so the collection remains the
+	// resource being addressed and this reads as a view of one collection rather than
+	// as a second resource that happens to hang off it.
+	router.Get(
+		"/:id/saved-items",
+		middleware.Auth(verifier),
+		handler.ListSavedItemsInCollection,
+	)
+
 	router.Delete(
 		"/:id",
 		middleware.Auth(verifier),

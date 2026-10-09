@@ -28,21 +28,6 @@ func mapGetSavedItemResponse(result GetResult) GetSavedItemResponse {
 	}
 }
 
-func mapListSavedItemsResponse(result ListResult) ListSavedItemsResponse {
-	savedItems := make([]SavedItemResponse, 0, len(result.SavedItems))
-
-	for _, savedItem := range result.SavedItems {
-		savedItems = append(
-			savedItems,
-			mapSavedItemResponse(savedItem),
-		)
-	}
-
-	return ListSavedItemsResponse{
-		SavedItems: savedItems,
-	}
-}
-
 func mapDeleteSavedItemResponse(result DeleteResult) DeleteSavedItemResponse {
 	return DeleteSavedItemResponse{
 		CollectionID:        result.CollectionID,

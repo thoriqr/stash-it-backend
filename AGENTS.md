@@ -310,6 +310,41 @@ endpoint.
 - Keyset predicates need **explicit casts** on row-comparison parameters. Without them
   sqlc types every parameter from the row's leftmost element, which would give a
   `timestamptz` type to an id parameter.
+
+**Listing a collection's saved items** is `GET /collections/:id/saved-items`, also on
+the `/collections` group. There is no standalone saved-item listing: every saved item
+belongs to exactly one collection, so an inbox is the Unsorted collection seen through
+the same endpoint.
+
+- It reports the **full** saved item, including `description`, `image_url`,
+  `collection_id`, `enrichment_status` and `last_enriched_at`. The field is named
+  `last_enriched_at`, matching the column and the enrichment feature's DTO. A listing
+  that omitted the enrichment columns could not tell a caller whether an item's
+  metadata had arrived, which is the difference between "this page has no title" and
+  "this page has not been read yet".
+- **`data.collection` carries `id` and `name` and nothing else.** The caller already
+  arrived knowing the id; what it cannot know from the path is the name. Reuse the row
+  `GetCollectionByIDForUser` already returned rather than reading again — a second
+  lookup would be a round trip to fetch a row already in hand. Report it on every
+  response, including an empty page, because an empty collection is still a named
+  collection and omitting the field would make "nothing in it" look like "no match".
+  Unsorted goes through the same type as everything else.
+- **A null title and a failed enrichment are ordinary states, not absences.** Both are
+  listed. `enrichment_status` is `NOT NULL` so it is never null; the metadata columns
+  are, so they are pointers in the response.
+- **It is ordered `created_at DESC, id DESC` with no sort option.** A collection is
+  something a person curated, and offering orders for it would answer a question this
+  resource does not pose. `GET /collections` is where ordering is a choice.
+- **Listing must never trigger enrichment or write anything.** Enrichment is scheduled
+  by saving and by an explicit per-item request; browsing is not a reason to fetch.
+- **Ownership is proved before any item is read**, by resolving the collection with
+  `id AND user_id`. Without that the listing would be scoped by collection id alone.
+- Its cursor payload is **`ListSavedItemsInCollectionCursor`**, which has no `Sort` and
+  no `Group`. Both exist on the collection payload only because that listing pins
+  Unsorted and offers three orders; carrying fields that can never vary here would mean
+  writing validation branches that cannot be reached.
+- Only **two** queries are needed, not six: one ordering and no pinned row means one
+  first-page statement and one after-position statement.
 - **The service validates and parses a cursor's position before any query runs.** A
   cursor position arrives as a string, so the time-based sorts must check it really is
   a timestamp and record the parsed `pgtype.Timestamptz` on the cursor. The repository
@@ -405,6 +440,17 @@ params, success/failure responses, and route. Global Swagger annotations and
 
 `internal/api/swagger/` contains documentation-only response shapes; never import
 it from runtime code.
+
+**A feature's `...APIResponse` must declare its `meta`, and that field is
+documentation-only.** `httpx.OKWithMeta` builds the real envelope, so an API response
+struct that omits `meta` still returns a three-key body while the generated schema
+describes two — and any `@Description` mentioning `meta.cursor` then contradicts the
+schema beneath it, which is still valid OpenAPI and so passes every linter. Declare a
+swag-only mirror (`ListCollectionsMeta`, `ListSavedItemsInCollectionMeta`) sharing one
+`CursorPageMeta`, and never populate the field. `session.ListSessionsMeta` is the
+pre-existing precedent. Because the drift is invisible at runtime, assert it in a test:
+`internal/integration/collection_saved_items_api_test.go` walks `docs/swagger.json`
+and the real body side by side and fails if either gains or loses a key.
 
 Generated Swagger belongs in `docs/`. Hand-written project documentation belongs
 in `documentation/`.

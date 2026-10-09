@@ -83,6 +83,22 @@ SET enrichment_status = sqlc.arg(enrichment_status),
     last_enriched_at = sqlc.narg(last_enriched_at)
 WHERE id = sqlc.arg(id);
 
+-- name: SetTestSavedItemEnrichmentStateAt :exec
+-- Sets the full enrichment state on an existing saved item, including created_at.
+--
+-- A listing needs items in every enrichment state at once, and it orders by
+-- created_at, so a test has to control both. SetTestSavedItemEnrichmentState covers
+-- the enrichment columns but leaves created_at alone, which cannot place a row at a
+-- chosen position in the ordering or create rows that genuinely tie.
+UPDATE saved_items
+SET enrichment_status = sqlc.arg(enrichment_status),
+    last_enriched_at = sqlc.narg(last_enriched_at),
+    title = sqlc.narg(title),
+    description = sqlc.narg(description),
+    image_url = sqlc.narg(image_url),
+    created_at = sqlc.arg(created_at)
+WHERE id = sqlc.arg(id);
+
 -- name: GetCollectionState :one
 SELECT
     id,

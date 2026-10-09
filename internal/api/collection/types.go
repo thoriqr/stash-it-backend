@@ -31,6 +31,18 @@ const (
 	SavedItemsActionMove SavedItemsAction = "move"
 )
 
+// GetCollectionByIDForUserParams identifies one collection of the authenticated
+// user.
+//
+// The pair is the ownership convention this project uses everywhere a user is in
+// scope: a collection that does not exist and one belonging to somebody else match
+// nothing, so both surface as the same not found error and the endpoint never
+// discloses whether an id exists.
+type GetCollectionByIDForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
 // DeleteCollectionParams is one validated request to delete a collection.
 type DeleteCollectionParams struct {
 	UserID       uuid.UUID
@@ -241,4 +253,133 @@ type SavedItem struct {
 	CollectionID uuid.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+// ListedSavedItem is a saved item as the collection listing reports it.
+//
+// It is a separate projection from SavedItem rather than an extension of it, for the
+// same reason ListedCollectionResponse is separate from CollectionResponse: the two
+// operations read different sets of columns, and widening one to serve the other
+// would put fields in front of the move endpoint that it neither reads nor reports.
+//
+// Every column a client needs to render an item is here, including the enrichment
+// ones. A listing that omitted them could not tell a caller whether an item's
+// metadata had arrived, which is the difference between "an item with no title" and
+// "an item whose title has not arrived yet".
+type ListedSavedItem struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	URL      string
+	Domain   pgtype.Text
+	Platform pgtype.Text
+	Title    pgtype.Text
+	// Description and ImageURL are NULL until enrichment supplies them, and stay
+	// NULL afterwards when a page exposed neither. Neither being present is an
+	// ordinary outcome and not a defect.
+	Description pgtype.Text
+	ImageURL    pgtype.Text
+	// CollectionID is the collection this item is filed in. It is included because a
+	// listing is scoped to a collection and reporting where an item lives lets a
+	// client confirm the scoping it asked for.
+	CollectionID uuid.UUID
+	// EnrichmentStatus is pending, completed or failed. It describes whether the
+	// enrichment process ran, not whether every field above is populated, so
+	// completed with a null title is a normal state.
+	EnrichmentStatus string
+	// LastEnrichedAt is NULL until an enrichment has succeeded at least once. A
+	// failed attempt refreshes nothing, so it does not set this.
+	LastEnrichedAt pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+// ListSavedItemsInCollectionParams is one validated request to list the saved items
+// in a collection.
+type ListSavedItemsInCollectionParams struct {
+	UserID       uuid.UUID
+	CollectionID uuid.UUID
+
+	// Limit is the number of saved items to return, already defaulted and clamped by
+	// the service. The repository asks for one more so HasMore is exact.
+	Limit int
+
+	// Cursor resumes a listing, or is nil for the first page. It is the decoded token,
+	// never the raw query string.
+	Cursor *ListSavedItemsInCollectionCursor
+}
+
+// ListSavedItemsInCollectionCursor is the position a page ended at, encoded into an
+// opaque token.
+//
+// It is a feature payload rather than part of internal/pagination, and it is separate
+// from ListCollectionsCursor rather than a trimmed version of it. The collection
+// payload carries a Sort and a Group because its listing pins Unsorted and offers
+// three orderings; this one has neither, because a collection's items have a single
+// ordering and no pinned row. Carrying fields that can never vary would mean every
+// validation here had a branch that cannot be reached, and reusing the collection
+// shape would mean a saved-item token could carry a sort that means nothing here.
+//
+// Value and ID are pointers so an absent field stays distinguishable from a zero one:
+// a truncated token must be rejected rather than read as the top of the listing.
+type ListSavedItemsInCollectionCursor struct {
+	// Version is the payload format, checked against pagination.CurrentVersion. A
+	// cursor can outlive a deployment, so a token written by another build has to fail
+	// cleanly rather than be misread as a position.
+	Version int `json:"v"`
+
+	// Value is the item's created_at at that position, as RFC3339Nano because the
+	// payload travels as JSON.
+	//
+	// The service checks it is a real timestamp and records the parsed form in
+	// Timestamp before any query runs, so Value never reaches a query unvalidated.
+	Value *string `json:"val"`
+
+	// ID is the tie-breaker at that position, which is what makes created_at a total
+	// order.
+	ID *uuid.UUID `json:"i"`
+
+	// Timestamp is Value already parsed into the type sqlc expects for a timestamptz
+	// column. It is derived, not transmitted: json:"-" keeps it out of the token, so
+	// the payload stays the wire contract and this is never a second copy of the
+	// position that could disagree with it.
+	Timestamp pgtype.Timestamptz `json:"-"`
+}
+
+// CursorVersion reports the payload format so pagination.DecodeVersioned can check it
+// without this package needing to know the field.
+func (c ListSavedItemsInCollectionCursor) CursorVersion() int {
+	return c.Version
+}
+
+// hasPosition reports whether the cursor carries a position to resume from.
+func (c *ListSavedItemsInCollectionCursor) hasPosition() bool {
+	return c.Value != nil && c.ID != nil
+}
+
+// ListSavedItemsInCollectionResult is one page of saved items, the collection they
+// were read from, and the cursor state that follows the page.
+type ListSavedItemsInCollectionResult struct {
+	// Collection is the collection the page was read from, carried from the
+	// owner-scoped lookup the service already had to perform. A page that reported its
+	// items without naming the collection would leave a caller that arrived with only
+	// an id having nothing to render a heading from, and nothing to confirm the
+	// listing was scoped to the collection it asked for.
+	//
+	// It is the full row rather than a narrowed copy, because the row is what the
+	// ownership check returned and the mapper decides which fields the response
+	// exposes. It is present on every successful result, including one whose
+	// SavedItems is empty: an empty collection is still a named collection.
+	Collection collectiondb.Collection
+
+	SavedItems []ListedSavedItem
+	Limit      int
+
+	// HasMore is exact: the repository fetched one row beyond Limit and this says
+	// whether that row existed, rather than counting every item to find out.
+	HasMore bool
+
+	// NextCursor is the token for the following page, or nil when HasMore is false.
+	// It is derived from the last item actually returned, never from the lookahead
+	// row, so a page boundary never skips an item the client did not receive.
+	NextCursor *string
 }

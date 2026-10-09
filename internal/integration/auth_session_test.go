@@ -41,10 +41,10 @@ func TestSession_CreateSession(t *testing.T) {
 	createdSession, createdRefreshToken, err := repository.CreateSession(
 		ctx,
 		sessiondb.CreateSessionParams{
-			UserID:  userID,
+			UserID:   userID,
 			Platform: "web",
 			InstallationID: pgtype.UUID{
-				Bytes:  [16]byte{1, 2, 3},
+				Bytes: [16]byte{1, 2, 3},
 				Valid: true,
 			},
 			DeviceName: pgtype.Text{
@@ -113,7 +113,7 @@ func TestSession_GetRefreshTokenWithSession(t *testing.T) {
 	require.NoError(t, err)
 
 	sessionRecord, err := db.CreateTestSession(ctx, sessiondbtest.CreateTestSessionParams{
-		UserID:  userID,
+		UserID:   userID,
 		Platform: "web",
 		AbsoluteExpiresAt: pgtype.Timestamptz{
 			Time:  time.Now().Add(24 * time.Hour),
@@ -127,8 +127,8 @@ func TestSession_GetRefreshTokenWithSession(t *testing.T) {
 	refreshToken, err := db.CreateTestRefreshToken(
 		ctx,
 		sessiondbtest.CreateTestRefreshTokenParams{
-			SessionID: sessionRecord.ID,
-			TokenHash: tokenHash,
+			SessionID:  sessionRecord.ID,
+			TokenHash:  tokenHash,
 			ReplacedBy: pgtype.UUID{},
 		},
 	)
@@ -200,7 +200,7 @@ func TestSession_RefreshToken(t *testing.T) {
 	require.NoError(t, err)
 
 	sessionRecord, err := db.CreateTestSession(ctx, sessiondbtest.CreateTestSessionParams{
-		UserID:  userID,
+		UserID:   userID,
 		Platform: "web",
 		AbsoluteExpiresAt: pgtype.Timestamptz{
 			Time:  time.Now().Add(24 * time.Hour),
@@ -215,8 +215,8 @@ func TestSession_RefreshToken(t *testing.T) {
 	oldToken, err := db.CreateTestRefreshToken(
 		ctx,
 		sessiondbtest.CreateTestRefreshTokenParams{
-			SessionID: sessionRecord.ID,
-			TokenHash: oldHash,
+			SessionID:  sessionRecord.ID,
+			TokenHash:  oldHash,
 			ReplacedBy: pgtype.UUID{},
 		},
 	)
@@ -289,7 +289,7 @@ func TestSession_RefreshToken_Revoked(t *testing.T) {
 	sessionRecord, err := db.CreateTestSession(
 		ctx,
 		sessiondbtest.CreateTestSessionParams{
-			UserID:  userID,
+			UserID:   userID,
 			Platform: "web",
 			AbsoluteExpiresAt: pgtype.Timestamptz{
 				Time:  time.Now().Add(24 * time.Hour),
@@ -308,8 +308,8 @@ func TestSession_RefreshToken_Revoked(t *testing.T) {
 	oldToken, err := db.CreateTestRefreshToken(
 		ctx,
 		sessiondbtest.CreateTestRefreshTokenParams{
-			SessionID: sessionRecord.ID,
-			TokenHash: oldHash,
+			SessionID:  sessionRecord.ID,
+			TokenHash:  oldHash,
 			ReplacedBy: pgtype.UUID{},
 		},
 	)
@@ -357,7 +357,7 @@ func TestSession_RefreshToken_Replaced(t *testing.T) {
 	sessionRecord, err := db.CreateTestSession(
 		ctx,
 		sessiondbtest.CreateTestSessionParams{
-			UserID:  userID,
+			UserID:   userID,
 			Platform: "web",
 			AbsoluteExpiresAt: pgtype.Timestamptz{
 				Time:  time.Now().Add(24 * time.Hour),
@@ -387,7 +387,7 @@ func TestSession_RefreshToken_Replaced(t *testing.T) {
 			SessionID: sessionRecord.ID,
 			TokenHash: oldHash,
 			ReplacedBy: pgtype.UUID{
-				Bytes:  replacedToken.ID,
+				Bytes: replacedToken.ID,
 				Valid: true,
 			},
 		},
@@ -442,7 +442,7 @@ func TestSession_RefreshToken_AbsoluteExpired(t *testing.T) {
 	sessionRecord, err := db.CreateTestSession(
 		ctx,
 		sessiondbtest.CreateTestSessionParams{
-			UserID:  userID,
+			UserID:   userID,
 			Platform: "web",
 			AbsoluteExpiresAt: pgtype.Timestamptz{
 				Time:  time.Now().Add(-time.Hour),
@@ -515,7 +515,7 @@ func TestSession_RefreshToken_IdleExpired(t *testing.T) {
 	sessionRecord, err := db.CreateTestSession(
 		ctx,
 		sessiondbtest.CreateTestSessionParams{
-			UserID:  userID,
+			UserID:   userID,
 			Platform: "web",
 			AbsoluteExpiresAt: pgtype.Timestamptz{
 				Time:  time.Now().Add(24 * time.Hour),

@@ -108,24 +108,3 @@ SELECT system_key
 FROM collections
 WHERE id = sqlc.arg(id)
   AND user_id = sqlc.arg(user_id);
-
--- name: ListSavedItems :many
-SELECT
-    id,
-    user_id,
-    url,
-    domain,
-    platform,
-    title,
-    created_at,
-    updated_at
-FROM saved_items
-WHERE user_id = sqlc.arg(user_id)
-ORDER BY created_at DESC
-LIMIT sqlc.arg(page_limit)
-OFFSET sqlc.arg(page_offset);
-
--- name: CountSavedItems :one
-SELECT COUNT(*)
-FROM saved_items
-WHERE user_id = sqlc.arg(user_id);

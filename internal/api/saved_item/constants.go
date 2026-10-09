@@ -1,9 +1,6 @@
 package saved_item
 
 const (
-	SavedItemListDefaultLimit = 20
-	SavedItemListMaxLimit     = 50
-
 	// CollectionSystemKeyUnsorted is the stable identity of the Unsorted
 	// collection, the one collection a user may never delete.
 	//

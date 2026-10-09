@@ -385,7 +385,8 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		ctx := context.Background()
 
 		// The collection module mounts under the same /saved-items prefix. The
-		// existing saved item routes must keep working unchanged.
+		// existing saved item routes must keep working unchanged, and the listing is
+		// addressed through its collection rather than through the shared prefix.
 		getReq := httptest.NewRequest(
 			http.MethodGet,
 			"/saved-items/"+savedItemID.String(),
@@ -397,7 +398,11 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, getResp.StatusCode)
 
-		listReq := httptest.NewRequest(http.MethodGet, "/saved-items", nil)
+		listReq := httptest.NewRequest(
+			http.MethodGet,
+			"/collections/"+unsortedID.String()+"/saved-items",
+			nil,
+		)
 		listReq.Header.Set("Authorization", "Bearer "+accessToken)
 
 		listResp, err := testApp.Test(listReq)

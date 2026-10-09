@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	collection "github.com/thoriqr/stash-it-backend/internal/api/collection"
+	collectiondb "github.com/thoriqr/stash-it-backend/internal/api/collection/generated"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -79,6 +80,45 @@ func (c *MockRepositoryDeleteCollectionCall) DoAndReturn(f func(context.Context,
 	return c
 }
 
+// GetCollectionByIDForUser mocks base method.
+func (m *MockRepository) GetCollectionByIDForUser(ctx context.Context, params collection.GetCollectionByIDForUserParams) (collectiondb.Collection, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCollectionByIDForUser", ctx, params)
+	ret0, _ := ret[0].(collectiondb.Collection)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCollectionByIDForUser indicates an expected call of GetCollectionByIDForUser.
+func (mr *MockRepositoryMockRecorder) GetCollectionByIDForUser(ctx, params any) *MockRepositoryGetCollectionByIDForUserCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCollectionByIDForUser", reflect.TypeOf((*MockRepository)(nil).GetCollectionByIDForUser), ctx, params)
+	return &MockRepositoryGetCollectionByIDForUserCall{Call: call}
+}
+
+// MockRepositoryGetCollectionByIDForUserCall wrap *gomock.Call
+type MockRepositoryGetCollectionByIDForUserCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryGetCollectionByIDForUserCall) Return(arg0 collectiondb.Collection, arg1 error) *MockRepositoryGetCollectionByIDForUserCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryGetCollectionByIDForUserCall) Do(f func(context.Context, collection.GetCollectionByIDForUserParams) (collectiondb.Collection, error)) *MockRepositoryGetCollectionByIDForUserCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryGetCollectionByIDForUserCall) DoAndReturn(f func(context.Context, collection.GetCollectionByIDForUserParams) (collectiondb.Collection, error)) *MockRepositoryGetCollectionByIDForUserCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // ListCollections mocks base method.
 func (m *MockRepository) ListCollections(ctx context.Context, params collection.ListCollectionsParams) (collection.ListCollectionsResult, error) {
 	m.ctrl.T.Helper()
@@ -114,6 +154,45 @@ func (c *MockRepositoryListCollectionsCall) Do(f func(context.Context, collectio
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryListCollectionsCall) DoAndReturn(f func(context.Context, collection.ListCollectionsParams) (collection.ListCollectionsResult, error)) *MockRepositoryListCollectionsCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// ListSavedItemsInCollection mocks base method.
+func (m *MockRepository) ListSavedItemsInCollection(ctx context.Context, params collection.ListSavedItemsInCollectionParams) (collection.ListSavedItemsInCollectionResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListSavedItemsInCollection", ctx, params)
+	ret0, _ := ret[0].(collection.ListSavedItemsInCollectionResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListSavedItemsInCollection indicates an expected call of ListSavedItemsInCollection.
+func (mr *MockRepositoryMockRecorder) ListSavedItemsInCollection(ctx, params any) *MockRepositoryListSavedItemsInCollectionCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSavedItemsInCollection", reflect.TypeOf((*MockRepository)(nil).ListSavedItemsInCollection), ctx, params)
+	return &MockRepositoryListSavedItemsInCollectionCall{Call: call}
+}
+
+// MockRepositoryListSavedItemsInCollectionCall wrap *gomock.Call
+type MockRepositoryListSavedItemsInCollectionCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryListSavedItemsInCollectionCall) Return(arg0 collection.ListSavedItemsInCollectionResult, arg1 error) *MockRepositoryListSavedItemsInCollectionCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryListSavedItemsInCollectionCall) Do(f func(context.Context, collection.ListSavedItemsInCollectionParams) (collection.ListSavedItemsInCollectionResult, error)) *MockRepositoryListSavedItemsInCollectionCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryListSavedItemsInCollectionCall) DoAndReturn(f func(context.Context, collection.ListSavedItemsInCollectionParams) (collection.ListSavedItemsInCollectionResult, error)) *MockRepositoryListSavedItemsInCollectionCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

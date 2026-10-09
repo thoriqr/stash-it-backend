@@ -98,18 +98,18 @@ func TestPasswordReset_EndToEndRevokesSessions(t *testing.T) {
 
 	// Override generated PIN for deterministic integration test.
 	codeHash := security.NewVerificationCodeHasher(
-    []byte("integration-test-verification-secret"),
+		[]byte("integration-test-verification-secret"),
 	).Hash("123456")
 
 	require.NoError(
-    t,
-    db.SetVerificationCodeHash(
-        ctx,
-        passwordresetdbtest.SetVerificationCodeHashParams{
-            CodeHash:              codeHash,
-            VerificationRequestID: requestBody.Data.VerificationID,
-        },
-    ),
+		t,
+		db.SetVerificationCodeHash(
+			ctx,
+			passwordresetdbtest.SetVerificationCodeHashParams{
+				CodeHash:              codeHash,
+				VerificationRequestID: requestBody.Data.VerificationID,
+			},
+		),
 	)
 
 	// Verify PIN.
@@ -382,113 +382,113 @@ func TestPasswordReset_CreatePIN(t *testing.T) {
 }
 
 func TestPasswordReset_GetVerification(t *testing.T) {
-    ctx := context.Background()
-    db := passwordresetdbtest.New(testPool)
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
 
-    require.NoError(t, db.TruncatePasswordResetData(ctx))
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
 
-    email := "get-verification@example.com"
+	email := "get-verification@example.com"
 
-    _, err := db.CreatePasswordResetUser(ctx, email)
-    require.NoError(t, err)
+	_, err := db.CreatePasswordResetUser(ctx, email)
+	require.NoError(t, err)
 
-    // Request password reset.
-    request := httptest.NewRequest(
-        http.MethodPost,
-        "/auth/password-reset",
-        strings.NewReader(`{"email":"get-verification@example.com"}`),
-    )
-    request.Header.Set("Content-Type", "application/json")
+	// Request password reset.
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/password-reset",
+		strings.NewReader(`{"email":"get-verification@example.com"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
 
-    response, err := testApp.Test(request)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusCreated, response.StatusCode)
+	response, err := testApp.Test(request)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, response.StatusCode)
 
-    var requestBody struct {
-        Data struct {
-            VerificationID uuid.UUID `json:"verification_id"`
-        } `json:"data"`
-    }
+	var requestBody struct {
+		Data struct {
+			VerificationID uuid.UUID `json:"verification_id"`
+		} `json:"data"`
+	}
 
-    require.NoError(
-        t,
-        json.NewDecoder(response.Body).Decode(&requestBody),
-    )
+	require.NoError(
+		t,
+		json.NewDecoder(response.Body).Decode(&requestBody),
+	)
 
-    verificationID := requestBody.Data.VerificationID
-    require.NotEqual(t, uuid.Nil, verificationID)
+	verificationID := requestBody.Data.VerificationID
+	require.NotEqual(t, uuid.Nil, verificationID)
 
-    // Get verification before PIN is issued.
-    getVerification := httptest.NewRequest(
-        http.MethodGet,
-        "/auth/password-reset/verification/"+verificationID.String(),
-        nil,
-    )
+	// Get verification before PIN is issued.
+	getVerification := httptest.NewRequest(
+		http.MethodGet,
+		"/auth/password-reset/verification/"+verificationID.String(),
+		nil,
+	)
 
-    getResponse, err := testApp.Test(getVerification)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusOK, getResponse.StatusCode)
+	getResponse, err := testApp.Test(getVerification)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getResponse.StatusCode)
 
-    var getBody struct {
-        Data struct {
-            VerificationID  string `json:"verification_id"`
-            Status           string `json:"status"`
-            PINIssued        bool   `json:"pin_issued"`
-            ResendInSeconds  int    `json:"resend_in_seconds"`
-        } `json:"data"`
-    }
+	var getBody struct {
+		Data struct {
+			VerificationID  string `json:"verification_id"`
+			Status          string `json:"status"`
+			PINIssued       bool   `json:"pin_issued"`
+			ResendInSeconds int    `json:"resend_in_seconds"`
+		} `json:"data"`
+	}
 
-    require.NoError(
-        t,
-        json.NewDecoder(getResponse.Body).Decode(&getBody),
-    )
+	require.NoError(
+		t,
+		json.NewDecoder(getResponse.Body).Decode(&getBody),
+	)
 
-    require.Equal(t, verificationID.String(), getBody.Data.VerificationID)
-    require.Equal(
-        t,
-        string(passwordreset.VerificationRequestPending),
-        getBody.Data.Status,
-    )
-    require.False(t, getBody.Data.PINIssued)
-    require.Equal(t, 0, getBody.Data.ResendInSeconds)
+	require.Equal(t, verificationID.String(), getBody.Data.VerificationID)
+	require.Equal(
+		t,
+		string(passwordreset.VerificationRequestPending),
+		getBody.Data.Status,
+	)
+	require.False(t, getBody.Data.PINIssued)
+	require.Equal(t, 0, getBody.Data.ResendInSeconds)
 
-    // Create verification PIN.
-    createPIN := httptest.NewRequest(
-        http.MethodPost,
-        "/auth/password-reset/verification/"+
-            verificationID.String()+
-            "/pin",
-        nil,
-    )
+	// Create verification PIN.
+	createPIN := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/password-reset/verification/"+
+			verificationID.String()+
+			"/pin",
+		nil,
+	)
 
-    createPINResponse, err := testApp.Test(createPIN)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusCreated, createPINResponse.StatusCode)
+	createPINResponse, err := testApp.Test(createPIN)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, createPINResponse.StatusCode)
 
-    // Get verification after PIN is issued.
-    getVerification = httptest.NewRequest(
-        http.MethodGet,
-        "/auth/password-reset/verification/"+verificationID.String(),
-        nil,
-    )
+	// Get verification after PIN is issued.
+	getVerification = httptest.NewRequest(
+		http.MethodGet,
+		"/auth/password-reset/verification/"+verificationID.String(),
+		nil,
+	)
 
-    getResponse, err = testApp.Test(getVerification)
-    require.NoError(t, err)
-    require.Equal(t, http.StatusOK, getResponse.StatusCode)
+	getResponse, err = testApp.Test(getVerification)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getResponse.StatusCode)
 
-    require.NoError(
-        t,
-        json.NewDecoder(getResponse.Body).Decode(&getBody),
-    )
+	require.NoError(
+		t,
+		json.NewDecoder(getResponse.Body).Decode(&getBody),
+	)
 
-    require.Equal(t, verificationID.String(), getBody.Data.VerificationID)
-    require.Equal(
-        t,
-        string(passwordreset.VerificationRequestPending),
-        getBody.Data.Status,
-    )
-    require.True(t, getBody.Data.PINIssued)
-    require.Greater(t, getBody.Data.ResendInSeconds, 0)
+	require.Equal(t, verificationID.String(), getBody.Data.VerificationID)
+	require.Equal(
+		t,
+		string(passwordreset.VerificationRequestPending),
+		getBody.Data.Status,
+	)
+	require.True(t, getBody.Data.PINIssued)
+	require.Greater(t, getBody.Data.ResendInSeconds, 0)
 }
 
 func TestPasswordReset_ResendVerification_Cooldown(t *testing.T) {

@@ -1072,8 +1072,8 @@ func TestFinalizeSocialRegistration_AuthIdentityAlreadyExists(t *testing.T) {
 		ctx,
 		registrationtestdb.CreateSocialRegistrationContinuationParams{
 			TokenHash:       tokenHash,
-			Email:            email,
-			Provider:         provider,
+			Email:           email,
+			Provider:        provider,
 			ProviderSubject: providerSubject,
 			EmailSnapshot: pgtype.Text{
 				String: email,

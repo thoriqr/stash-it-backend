@@ -207,7 +207,7 @@ func TestSavedItem_NonCreatingReadsDoNotQueue(t *testing.T) {
 	)
 
 	userID := createWorkerEnrichmentUser(t, "enqueue-reads@example.com")
-	createUnsortedForWorkerEnrichment(t, userID)
+	unsortedID := createUnsortedForWorkerEnrichment(t, userID)
 
 	enqueuer := &testutil.FakeSavedItemEnqueuer{}
 
@@ -235,7 +235,13 @@ func TestSavedItem_NonCreatingReadsDoNotQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	listReq := httptest.NewRequest(http.MethodGet, "/saved-items", nil)
+	// Listing is a read too, so browsing a collection must not queue anything. The
+	// listing lives on the collection because that is where every saved item belongs.
+	listReq := httptest.NewRequest(
+		http.MethodGet,
+		"/collections/"+unsortedID.String()+"/saved-items",
+		nil,
+	)
 	listReq.Header.Set("Authorization", "Bearer "+token)
 
 	listResp, err := app.Test(listReq)

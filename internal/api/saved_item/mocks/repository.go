@@ -44,45 +44,6 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
 }
 
-// CountSavedItems mocks base method.
-func (m *MockRepository) CountSavedItems(ctx context.Context, userID uuid.UUID) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountSavedItems", ctx, userID)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountSavedItems indicates an expected call of CountSavedItems.
-func (mr *MockRepositoryMockRecorder) CountSavedItems(ctx, userID any) *MockRepositoryCountSavedItemsCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountSavedItems", reflect.TypeOf((*MockRepository)(nil).CountSavedItems), ctx, userID)
-	return &MockRepositoryCountSavedItemsCall{Call: call}
-}
-
-// MockRepositoryCountSavedItemsCall wrap *gomock.Call
-type MockRepositoryCountSavedItemsCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockRepositoryCountSavedItemsCall) Return(arg0 int64, arg1 error) *MockRepositoryCountSavedItemsCall {
-	c.Call = c.Call.Return(arg0, arg1)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockRepositoryCountSavedItemsCall) Do(f func(context.Context, uuid.UUID) (int64, error)) *MockRepositoryCountSavedItemsCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryCountSavedItemsCall) DoAndReturn(f func(context.Context, uuid.UUID) (int64, error)) *MockRepositoryCountSavedItemsCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
 // CountSavedItemsInCollection mocks base method.
 func (m *MockRepository) CountSavedItemsInCollection(ctx context.Context, userID, collectionID uuid.UUID) (int64, error) {
 	m.ctrl.T.Helper()
@@ -313,45 +274,6 @@ func (c *MockRepositoryGetUnsortedCollectionByUserCall) Do(f func(context.Contex
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryGetUnsortedCollectionByUserCall) DoAndReturn(f func(context.Context, uuid.UUID) (uuid.UUID, error)) *MockRepositoryGetUnsortedCollectionByUserCall {
-	c.Call = c.Call.DoAndReturn(f)
-	return c
-}
-
-// ListSavedItems mocks base method.
-func (m *MockRepository) ListSavedItems(ctx context.Context, userID uuid.UUID, offset, limit int32) ([]saved_item.SavedItem, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListSavedItems", ctx, userID, offset, limit)
-	ret0, _ := ret[0].([]saved_item.SavedItem)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListSavedItems indicates an expected call of ListSavedItems.
-func (mr *MockRepositoryMockRecorder) ListSavedItems(ctx, userID, offset, limit any) *MockRepositoryListSavedItemsCall {
-	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSavedItems", reflect.TypeOf((*MockRepository)(nil).ListSavedItems), ctx, userID, offset, limit)
-	return &MockRepositoryListSavedItemsCall{Call: call}
-}
-
-// MockRepositoryListSavedItemsCall wrap *gomock.Call
-type MockRepositoryListSavedItemsCall struct {
-	*gomock.Call
-}
-
-// Return rewrite *gomock.Call.Return
-func (c *MockRepositoryListSavedItemsCall) Return(arg0 []saved_item.SavedItem, arg1 error) *MockRepositoryListSavedItemsCall {
-	c.Call = c.Call.Return(arg0, arg1)
-	return c
-}
-
-// Do rewrite *gomock.Call.Do
-func (c *MockRepositoryListSavedItemsCall) Do(f func(context.Context, uuid.UUID, int32, int32) ([]saved_item.SavedItem, error)) *MockRepositoryListSavedItemsCall {
-	c.Call = c.Call.Do(f)
-	return c
-}
-
-// DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryListSavedItemsCall) DoAndReturn(f func(context.Context, uuid.UUID, int32, int32) ([]saved_item.SavedItem, error)) *MockRepositoryListSavedItemsCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

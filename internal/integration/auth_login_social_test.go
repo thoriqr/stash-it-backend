@@ -179,7 +179,7 @@ func TestLoginGoogle_RegistrationRequired(t *testing.T) {
 
 	var body struct {
 		Data struct {
-			Outcome         login.LoginOutcome `json:"outcome"`
+			Outcome        login.LoginOutcome `json:"outcome"`
 			VerificationID string             `json:"verification_id"`
 		} `json:"data"`
 	}

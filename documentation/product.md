@@ -202,6 +202,34 @@ are organized. An item may remain in `Unsorted` indefinitely.
 - Organizing never waits on or alters metadata enrichment; an item can be moved
   in any enrichment state.
 
+### Seeing what is in a collection
+
+A person who wants to see their saved items looks at the collection they are in.
+
+- **Saved items are seen through the collection they belong to.** There is one
+  collection per item, so there is no separate "all items" list to keep in step with
+  them. Seeing everything means seeing each collection.
+- **`Unsorted` is where items go until they are filed elsewhere**, and it is seen the
+  same way as any other collection: the same contents, the same order, the same
+  handling.
+- **The newest saved item comes first**, and there is no other order. A collection is
+  something a person put things into deliberately, so the order they already chose
+  when filing is the one they see.
+- **Each item is shown in full**, including whether its details have been read from the
+  page yet. An item whose details have not arrived, or whose page could not be read, is
+  still listed: not knowing yet is a fact about an item, not a reason to hide it. An
+  item whose page had no title simply has no title.
+- **The collection is named in the answer**, not just addressed in the request, so a
+  person reading a list knows which one they are looking at without having to remember
+  what they asked for. That holds even when the collection is empty: "nothing in here"
+  and "no such collection" are different things, and the name is what tells them apart.
+- **The list grows as a person scrolls**, rather than arriving in numbered pages, so
+  items saved or deleted while someone is reading do not make them skip an item or see
+  one twice.
+- **Looking never changes anything and never fetches anything.** Details are gathered
+  when an item is saved or when someone asks for one item specifically; browsing a
+  collection is not a reason to go and read pages.
+
 ### Seeing your collections
 
 A user can see every collection they have, which is what the collection list is for.
@@ -293,16 +321,22 @@ Implemented:
 
 - Authentication
 - Save a URL
-- Inbox
+- Inbox, which is the Unsorted collection
 - Saved item detail
 - Delete a saved item
 - Collections, including filing an item into a collection of the user's own,
-  listing the collections a user has, and deleting a collection along with a
-  chosen fate for its saved items
+  listing the collections a user has, seeing the saved items in one, and deleting a
+  collection along with a chosen fate for its saved items
 - Basic search, across saved items and collections
 
 Saved item detail and delete were built during Phase A to complete the core loop.
 Collections and Basic Search complete Phase B.
+
+The inbox is not a separate list. Every saved item belongs to exactly one collection,
+and `Unsorted` is the one they land in, so the inbox is that collection seen through
+the same lens as any other. There is deliberately no endpoint that lists every saved
+item at once: it would be a second way to ask the same question, and it would answer
+it without the collection context that says where an item belongs.
 
 The database foundation is in place: `collections`, `saved_items.collection_id`,
 and the saved item enrichment state columns. Enrichment is reachable both ways: a

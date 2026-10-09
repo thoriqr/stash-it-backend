@@ -1383,8 +1383,9 @@ func TestSavedItem_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// Migration 000022 seeds one Unsorted collection per user, and that
-		// is where a newly saved item lands.
-		createUnsortedCollection(t, ctx, db, userID)
+		// is where a newly saved item lands. The inbox is this collection seen
+		// through its listing, since there is no standalone saved item listing.
+		unsortedID := createUnsortedCollection(t, ctx, db, userID)
 
 		accessToken := newTestAccessToken(t, userID)
 
@@ -1426,27 +1427,35 @@ func TestSavedItem_Delete(t *testing.T) {
 		createAndDelete("https://example.com/gone-1")
 		createAndDelete("https://example.com/gone-2")
 
-		listReq := httptest.NewRequest(http.MethodGet, "/saved-items", nil)
+		listReq := httptest.NewRequest(
+			http.MethodGet,
+			"/collections/"+unsortedID.String()+"/saved-items",
+			nil,
+		)
 		listReq.Header.Set("Authorization", "Bearer "+accessToken)
 
 		listResp, err := testApp.Test(listReq)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, listResp.StatusCode)
 
+		// The cursor listing reports no total, so an emptied inbox is an empty page
+		// with has_more false rather than a count of zero.
 		var listBody struct {
 			Data struct {
 				SavedItems []json.RawMessage `json:"saved_items"`
 			} `json:"data"`
 			Meta struct {
-				Pagination struct {
-					Total int64 `json:"total"`
-				} `json:"pagination"`
+				Cursor struct {
+					NextCursor *string `json:"next_cursor"`
+					HasMore    bool    `json:"has_more"`
+				} `json:"cursor"`
 			} `json:"meta"`
 		}
 
 		require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listBody))
 		require.Empty(t, listBody.Data.SavedItems)
-		require.Equal(t, int64(0), listBody.Meta.Pagination.Total)
+		require.False(t, listBody.Meta.Cursor.HasMore)
+		require.Nil(t, listBody.Meta.Cursor.NextCursor)
 	})
 }
 
@@ -1929,266 +1938,5 @@ func TestSavedItem_Delete_Concurrency(t *testing.T) {
 
 		require.Equal(t, int64(0), countSavedItemsInCollection(t, wishlistID))
 		require.True(t, collectionExists(t, wishlistID))
-	})
-}
-
-func TestSavedItem_List(t *testing.T) {
-	t.Run("returns the current user's items newest first", func(t *testing.T) {
-		ctx := context.Background()
-		db := saveditemdbtest.New(testPool)
-
-		require.NoError(t, db.TruncateSavedItemData(ctx))
-
-		userID, err := db.CreateSavedItemUser(
-			ctx,
-			saveditemdbtest.CreateSavedItemUserParams{
-				Email:       "saved-item-list@example.com",
-				DisplayName: "Saved Item List User",
-			},
-		)
-		require.NoError(t, err)
-
-		otherUserID, err := db.CreateSavedItemUser(
-			ctx,
-			saveditemdbtest.CreateSavedItemUserParams{
-				Email:       "saved-item-list-other@example.com",
-				DisplayName: "Saved Item List Other User",
-			},
-		)
-		require.NoError(t, err)
-
-		base := time.Now().Add(-time.Hour)
-
-		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
-
-		otherUnsortedCollectionID := createUnsortedCollection(t, ctx, db, otherUserID)
-
-		older, err := db.CreateTestSavedItem(
-			ctx,
-			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:       userID,
-				Url:          "https://example.com/older",
-				Domain:       testText("example.com"),
-				Platform:     testText("web"),
-				CollectionID: unsortedCollectionID,
-				CreatedAt:    pgtype.Timestamptz{Time: base, Valid: true},
-			},
-		)
-		require.NoError(t, err)
-
-		newer, err := db.CreateTestSavedItem(
-			ctx,
-			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:       userID,
-				Url:          "https://example.com/newer",
-				Domain:       testText("example.com"),
-				Platform:     testText("web"),
-				CollectionID: unsortedCollectionID,
-				CreatedAt: pgtype.Timestamptz{
-					Time:  base.Add(30 * time.Minute),
-					Valid: true,
-				},
-			},
-		)
-		require.NoError(t, err)
-
-		_, err = db.CreateTestSavedItem(
-			ctx,
-			saveditemdbtest.CreateTestSavedItemParams{
-				UserID:       otherUserID,
-				Url:          "https://other.example.com/secret",
-				Domain:       testText("other.example.com"),
-				Platform:     testText("web"),
-				CollectionID: otherUnsortedCollectionID,
-				CreatedAt: pgtype.Timestamptz{
-					Time:  base.Add(45 * time.Minute),
-					Valid: true,
-				},
-			},
-		)
-		require.NoError(t, err)
-
-		accessToken := newTestAccessToken(t, userID)
-
-		req := httptest.NewRequest(
-			http.MethodGet,
-			"/saved-items",
-			nil,
-		)
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-
-		resp, err := testApp.Test(req)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var body struct {
-			Data struct {
-				SavedItems []struct {
-					ID  string `json:"id"`
-					URL string `json:"url"`
-				} `json:"saved_items"`
-			} `json:"data"`
-			Meta struct {
-				Pagination struct {
-					Page       int   `json:"page"`
-					Limit      int   `json:"limit"`
-					Total      int64 `json:"total"`
-					TotalPages int   `json:"total_pages"`
-				} `json:"pagination"`
-			} `json:"meta"`
-		}
-
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-
-		require.Len(t, body.Data.SavedItems, 2)
-		require.Equal(t, newer.ID.String(), body.Data.SavedItems[0].ID)
-		require.Equal(t, older.ID.String(), body.Data.SavedItems[1].ID)
-		require.Equal(t, int64(2), body.Meta.Pagination.Total)
-		require.Equal(t, 1, body.Meta.Pagination.Page)
-		require.Equal(t, 20, body.Meta.Pagination.Limit)
-		require.Equal(t, 1, body.Meta.Pagination.TotalPages)
-	})
-
-	t.Run("returns an empty inbox", func(t *testing.T) {
-		ctx := context.Background()
-		db := saveditemdbtest.New(testPool)
-
-		require.NoError(t, db.TruncateSavedItemData(ctx))
-
-		userID, err := db.CreateSavedItemUser(
-			ctx,
-			saveditemdbtest.CreateSavedItemUserParams{
-				Email:       "saved-item-empty@example.com",
-				DisplayName: "Saved Item Empty User",
-			},
-		)
-		require.NoError(t, err)
-
-		accessToken := newTestAccessToken(t, userID)
-
-		req := httptest.NewRequest(
-			http.MethodGet,
-			"/saved-items",
-			nil,
-		)
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-
-		resp, err := testApp.Test(req)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var body struct {
-			Data struct {
-				SavedItems []json.RawMessage `json:"saved_items"`
-			} `json:"data"`
-			Meta struct {
-				Pagination struct {
-					Total      int64 `json:"total"`
-					TotalPages int   `json:"total_pages"`
-				} `json:"pagination"`
-			} `json:"meta"`
-		}
-
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-		require.Empty(t, body.Data.SavedItems)
-		require.NotNil(t, body.Data.SavedItems)
-		require.Equal(t, int64(0), body.Meta.Pagination.Total)
-		require.Equal(t, 0, body.Meta.Pagination.TotalPages)
-	})
-
-	t.Run("paginates", func(t *testing.T) {
-		ctx := context.Background()
-		db := saveditemdbtest.New(testPool)
-
-		require.NoError(t, db.TruncateSavedItemData(ctx))
-
-		userID, err := db.CreateSavedItemUser(
-			ctx,
-			saveditemdbtest.CreateSavedItemUserParams{
-				Email:       "saved-item-pagination@example.com",
-				DisplayName: "Saved Item Pagination User",
-			},
-		)
-		require.NoError(t, err)
-
-		base := time.Now().Add(-time.Hour)
-
-		unsortedCollectionID := createUnsortedCollection(t, ctx, db, userID)
-
-		for i := range 3 {
-			_, err := db.CreateTestSavedItem(
-				ctx,
-				saveditemdbtest.CreateTestSavedItemParams{
-					UserID:       userID,
-					Url:          "https://example.com/page/" + string(rune('a'+i)),
-					Domain:       testText("example.com"),
-					Platform:     testText("web"),
-					CollectionID: unsortedCollectionID,
-					CreatedAt: pgtype.Timestamptz{
-						Time:  base.Add(time.Duration(i) * time.Minute),
-						Valid: true,
-					},
-				},
-			)
-			require.NoError(t, err)
-		}
-
-		accessToken := newTestAccessToken(t, userID)
-
-		req := httptest.NewRequest(
-			http.MethodGet,
-			"/saved-items?page=2&limit=1",
-			nil,
-		)
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-
-		resp, err := testApp.Test(req)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var body struct {
-			Data struct {
-				SavedItems []struct {
-					ID string `json:"id"`
-				} `json:"saved_items"`
-			} `json:"data"`
-			Meta struct {
-				Pagination struct {
-					Page       int   `json:"page"`
-					Limit      int   `json:"limit"`
-					Total      int64 `json:"total"`
-					TotalPages int   `json:"total_pages"`
-				} `json:"pagination"`
-			} `json:"meta"`
-		}
-
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-
-		require.Len(t, body.Data.SavedItems, 1)
-		require.Equal(t, 2, body.Meta.Pagination.Page)
-		require.Equal(t, 1, body.Meta.Pagination.Limit)
-		require.Equal(t, int64(3), body.Meta.Pagination.Total)
-		require.Equal(t, 3, body.Meta.Pagination.TotalPages)
-	})
-
-	t.Run("rejects request without access token", func(t *testing.T) {
-		req := httptest.NewRequest(
-			http.MethodGet,
-			"/saved-items",
-			nil,
-		)
-
-		resp, err := testApp.Test(req)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-
-		var body struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-		require.Equal(t, "INVALID_AUTHORIZATION_HEADER", body.Error.Code)
 	})
 }

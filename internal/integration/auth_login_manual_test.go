@@ -147,9 +147,9 @@ func TestLoginManual_InvalidCredentials(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	var body struct {
-    Error struct {
-        Code string `json:"code"`
-    } `json:"error"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
@@ -183,9 +183,9 @@ func TestLoginManual_UnknownEmail(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	var body struct {
-    Error struct {
-        Code string `json:"code"`
-    } `json:"error"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))

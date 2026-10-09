@@ -1362,7 +1362,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get the authenticated user's collections, one page at a time.\nThe Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is \"unsorted\"; the display name is not its identity and a collection's type never decides anything about it.\nCollections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.\nsort selects the order and defaults to \"newest\". \"newest\" and \"oldest\" order by when the collection was created; \"name\" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.\nPages are returned by cursor. Pass the next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted.\nmeta.cursor.next_cursor is explicitly null on the final page, where has_more is false. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall.\nSearch is not available here. GET /search already searches collections by name.\nPossible error codes:\n- INVALID_COLLECTION_SORT\n- INVALID_CURSOR\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Get the authenticated user's collections, one page at a time.\nThe Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is \"unsorted\"; the display name is not its identity and a collection's type never decides anything about it.\nCollections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.\nsort selects the order and defaults to \"newest\". \"newest\" and \"oldest\" order by when the collection was created; \"name\" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.\nPages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted or renamed, and a cursor pointing past the end returns an empty page rather than an error.\nmeta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, or does not match the requested sort is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall, and this response reports no meta.pagination.\nSearch is not available here. GET /search already searches collections by name.\nPossible error codes:\n- INVALID_COLLECTION_SORT\n- INVALID_CURSOR\n- VALIDATION_ERROR (limit outside 1..50)\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1390,21 +1390,22 @@
                         "type": "integer",
                         "default": 20,
                         "example": 20,
-                        "description": "Number of collections per page",
+                        "description": "Number of collections per page. Defaults to 20, capped at 50.",
                         "name": "limit",
                         "in": "query"
                     },
                     {
+                        "maxLength": 512,
                         "type": "string",
                         "example": "eyJ2IjoxLCJzIjoibmV3ZXN0In0",
-                        "description": "Cursor from the previous page",
+                        "description": "Opaque cursor from meta.cursor.next_cursor of the previous page. Omit to start at the beginning.",
                         "name": "cursor",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "One page of collections, with meta.cursor.next_cursor null when there is no next page",
                         "schema": {
                             "$ref": "#/definitions/collection.ListCollectionsAPIResponse"
                         }
@@ -1507,30 +1508,30 @@
                 }
             }
         },
-        "/saved-items": {
+        "/collections/{id}/saved-items": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get the current user's saved items, newest first.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Get one of the current user's collections, newest saved item first. Unsorted behaves exactly like any other collection here; nothing about it is special-cased in this listing.\nThe response body is {\"data\": {...}, \"message\": \"...\", \"meta\": {...}}. data holds the collection and the page: {\"collection\": {\"id\": \"...\", \"name\": \"...\"}, \"saved_items\": [...]}. The collection object carries only id and name, because the caller already arrived knowing the id and what it cannot know from the path is what the collection is called. It is reported on every response, including when saved_items is empty, so an empty collection is never mistaken for no match.\nEach saved item carries its full representation: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at. title, description, image_url, domain, platform and last_enriched_at are nullable. Every item keeps its own collection_id, which is always the id in data.collection.\nenrichment_status is pending, completed or failed, and describes whether the enrichment process ran rather than whether every field is populated, so an item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once, so a pending or failed item reports null.\nItems whose title is still null and items whose enrichment failed are both returned. A null field is an ordinary state of an item, not a reason to omit it.\nsaved_items is an empty array rather than null when the collection holds nothing.\nThis listing never starts enrichment and never changes anything. Enrichment is scheduled by saving a URL and by an explicit request for one item; looking at a collection is not a reason to fetch anything.\nOrdering is fixed at created_at DESC, id DESC. There is no sort parameter: a collection is something a person curated, so the order they chose when filing is the one they see. The id breaks ties, because created_at is constant within a transaction and rows inserted together genuinely share a timestamp.\nlimit defaults to 20 and is capped at 50. A limit of 51 or more, or one below 1, is rejected as VALIDATION_ERROR; a non-numeric limit is BAD_REQUEST. limit=0 is treated as absent and falls back to the default.\nPages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than an item, so it keeps working even if the item it came from has since been deleted, and a cursor past the end returns an empty page rather than an error.\nmeta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, has no position, or holds a value that is not a timestamp is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many items exist overall, and this response reports no meta.pagination.\nThe collection must belong to the authenticated user. A collection that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nA collection that does not exist at all, rather than existing and being emptied, returns 404 COLLECTION_NOT_FOUND.\nPossible error codes:\n- BAD_REQUEST (unparsable limit or cursor length, or a non-UUID collection id)\n- INVALID_CURSOR\n- VALIDATION_ERROR (limit outside 1..50)\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- COLLECTION_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "SavedItem"
+                    "Collection"
                 ],
-                "summary": "List saved items",
+                "summary": "List a collection's saved items",
                 "parameters": [
                     {
-                        "minimum": 1,
-                        "type": "integer",
-                        "default": 1,
-                        "example": 1,
-                        "description": "Page number",
-                        "name": "page",
-                        "in": "query"
+                        "type": "string",
+                        "format": "uuid",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Collection ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
                     },
                     {
                         "maximum": 50,
@@ -1538,26 +1539,40 @@
                         "type": "integer",
                         "default": 20,
                         "example": 20,
-                        "description": "Number of saved items per page",
+                        "description": "Number of saved items per page. Defaults to 20, capped at 50.",
                         "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 512,
+                        "type": "string",
+                        "example": "eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9",
+                        "description": "Opaque cursor from meta.cursor.next_cursor of the previous page. Omit to start at the newest item.",
+                        "name": "cursor",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "A page of the collection's saved items, with meta.cursor.next_cursor null when there is no next page",
                         "schema": {
-                            "$ref": "#/definitions/saved_item.ListSavedItemsAPIResponse"
+                            "$ref": "#/definitions/collection.ListSavedItemsInCollectionAPIResponse"
                         }
                     },
                     "400": {
-                        "description": "Validation error",
+                        "description": "Invalid limit, cursor or collection id",
                         "schema": {
                             "$ref": "#/definitions/swagger.ValidationErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Collection not found, or owned by another user",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -1569,7 +1584,9 @@
                         }
                     }
                 }
-            },
+            }
+        },
+        "/saved-items": {
             "post": {
                 "security": [
                     {
@@ -1960,6 +1977,21 @@
                 }
             }
         },
+        "collection.CursorPageMeta": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "description": "HasMore is computed from one row fetched beyond the requested limit, so it is\nexact rather than inferred from a count. There is deliberately no total: a\ncursor-paginated response does not know how many results exist overall.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "next_cursor": {
+                    "description": "NextCursor is the token for the following page, or null on the final page and on\nan empty result. It is null whenever has_more is false.",
+                    "type": "string",
+                    "example": "eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9"
+                }
+            }
+        },
         "collection.DeleteCollectionAPIResponse": {
             "type": "object",
             "properties": {
@@ -2004,6 +2036,17 @@
                 "message": {
                     "type": "string",
                     "example": "collections retrieved successfully"
+                },
+                "meta": {
+                    "$ref": "#/definitions/collection.ListCollectionsMeta"
+                }
+            }
+        },
+        "collection.ListCollectionsMeta": {
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "$ref": "#/definitions/collection.CursorPageMeta"
                 }
             }
         },
@@ -2014,6 +2057,43 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/collection.ListedCollectionResponse"
+                    }
+                }
+            }
+        },
+        "collection.ListSavedItemsInCollectionAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/collection.ListSavedItemsInCollectionResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved items retrieved successfully"
+                },
+                "meta": {
+                    "$ref": "#/definitions/collection.ListSavedItemsInCollectionMeta"
+                }
+            }
+        },
+        "collection.ListSavedItemsInCollectionMeta": {
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "$ref": "#/definitions/collection.CursorPageMeta"
+                }
+            }
+        },
+        "collection.ListSavedItemsInCollectionResponse": {
+            "type": "object",
+            "properties": {
+                "collection": {
+                    "$ref": "#/definitions/collection.ListedSavedItemsCollectionResponse"
+                },
+                "saved_items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/collection.ListedSavedItemResponse"
                     }
                 }
             }
@@ -2044,6 +2124,74 @@
                 "updated_at": {
                     "type": "string",
                     "example": "2026-10-02T10:30:00Z"
+                }
+            }
+        },
+        "collection.ListedSavedItemResponse": {
+            "type": "object",
+            "properties": {
+                "collection_id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "A short summary of the page"
+                },
+                "domain": {
+                    "type": "string",
+                    "example": "example.com"
+                },
+                "enrichment_status": {
+                    "description": "EnrichmentStatus is pending, completed or failed. Completed means the process\nran, not that every field above is populated, so completed with a null title is\nnormal.",
+                    "type": "string",
+                    "example": "completed"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "image_url": {
+                    "type": "string",
+                    "example": "https://example.com/og.png"
+                },
+                "last_enriched_at": {
+                    "description": "LastEnrichedAt is null until an enrichment has succeeded at least once. A failed\nattempt refreshes nothing, so it does not set this.",
+                    "type": "string",
+                    "example": "2026-10-02T10:31:00Z"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "youtube"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "An interesting article"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:31:00Z"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "collection.ListedSavedItemsCollectionResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "YouTube"
                 }
             }
         },
@@ -2899,61 +3047,6 @@
             "properties": {
                 "saved_item": {
                     "$ref": "#/definitions/saved_item.SavedItemResponse"
-                }
-            }
-        },
-        "saved_item.ListSavedItemsAPIResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/saved_item.ListSavedItemsResponse"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "saved items retrieved successfully"
-                },
-                "meta": {
-                    "$ref": "#/definitions/saved_item.ListSavedItemsMeta"
-                }
-            }
-        },
-        "saved_item.ListSavedItemsMeta": {
-            "type": "object",
-            "properties": {
-                "pagination": {
-                    "$ref": "#/definitions/saved_item.ListSavedItemsPagination"
-                }
-            }
-        },
-        "saved_item.ListSavedItemsPagination": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "example": 20
-                },
-                "page": {
-                    "type": "integer",
-                    "example": 1
-                },
-                "total": {
-                    "type": "integer",
-                    "example": 42
-                },
-                "total_pages": {
-                    "type": "integer",
-                    "example": 3
-                }
-            }
-        },
-        "saved_item.ListSavedItemsResponse": {
-            "type": "object",
-            "properties": {
-                "saved_items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/saved_item.SavedItemResponse"
-                    }
                 }
             }
         },

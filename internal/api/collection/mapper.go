@@ -1,6 +1,8 @@
 package collection
 
 import (
+	"time"
+
 	"github.com/jackc/pgx/v5/pgtype"
 
 	collectiondb "github.com/thoriqr/stash-it-backend/internal/api/collection/generated"
@@ -61,6 +63,72 @@ func mapListCollectionsResponse(
 
 	return ListCollectionsResponse{
 		Collections: collections,
+	}
+}
+
+func mapListedSavedItemResponse(
+	savedItem ListedSavedItem,
+) ListedSavedItemResponse {
+	// LastEnrichedAt is a pointer because a failed or never-run enrichment leaves it
+	// NULL, and reporting the zero time would claim metadata was refreshed then.
+	var lastEnrichedAt *time.Time
+
+	if savedItem.LastEnrichedAt.Valid {
+		enrichedAt := savedItem.LastEnrichedAt.Time
+		lastEnrichedAt = &enrichedAt
+	}
+
+	return ListedSavedItemResponse{
+		ID:           savedItem.ID,
+		URL:          savedItem.URL,
+		Domain:       mapOptionalText(savedItem.Domain),
+		Platform:     mapOptionalText(savedItem.Platform),
+		Title:        mapOptionalText(savedItem.Title),
+		Description:  mapOptionalText(savedItem.Description),
+		ImageURL:     mapOptionalText(savedItem.ImageURL),
+		CollectionID: savedItem.CollectionID,
+		// EnrichmentStatus is a NOT NULL column with a default, so it is always a real
+		// value here rather than an absent one. It is not mapped through
+		// mapOptionalText because there is no null case to represent.
+		EnrichmentStatus: savedItem.EnrichmentStatus,
+		LastEnrichedAt:   lastEnrichedAt,
+		CreatedAt:        savedItem.CreatedAt.Time,
+		UpdatedAt:        savedItem.UpdatedAt.Time,
+	}
+}
+
+// mapListedSavedItemsCollectionResponse names the collection a page came from.
+//
+// It takes the row the ownership check already returned rather than being handed a
+// name separately, so the id and the name reported together cannot describe two
+// different collections.
+func mapListedSavedItemsCollectionResponse(
+	collection collectiondb.Collection,
+) ListedSavedItemsCollectionResponse {
+	return ListedSavedItemsCollectionResponse{
+		ID:   collection.ID,
+		Name: collection.Name,
+	}
+}
+
+func mapListSavedItemsInCollectionResponse(
+	result ListSavedItemsInCollectionResult,
+) ListSavedItemsInCollectionResponse {
+	savedItems := make([]ListedSavedItemResponse, 0, len(result.SavedItems))
+
+	for _, savedItem := range result.SavedItems {
+		savedItems = append(
+			savedItems,
+			mapListedSavedItemResponse(savedItem),
+		)
+	}
+
+	// Mapped unconditionally rather than only when the page is non-empty. An empty
+	// collection is still the collection the caller asked about, and omitting the
+	// field there would make "nothing in it" look like "nothing matched".
+	return ListSavedItemsInCollectionResponse{
+		Collection: mapListedSavedItemsCollectionResponse(result.Collection),
+		SavedItems: savedItems,
 	}
 }
 

@@ -2,19 +2,32 @@ package collection
 
 import "github.com/google/uuid"
 
-// DeleteCollectionRequest states what should happen to the saved items currently
-// in a collection that is being deleted.
+// ListSavedItemsInCollectionRequest is the query for a collection's saved items.
 //
-// Both fields are always present and always mean the same thing. The shape does not
-// vary by action: the rule about which combination is valid is stated below and
-// enforced by the service, so a caller reading this type sees one contract rather
-// than two shapes they have to infer from each other.
+// There is deliberately no sort parameter. A collection holds one ordering of its
+// items, newest first, and adding a way to ask for another would answer a question
+// this resource does not pose: GET /collections is where ordering is a choice.
 //
-// Neither field carries a `validate` constraint on purpose, for the same reason
-// PutSavedItemIntoCollectionRequest does not: the service owns these rules and
-// answers with INVALID_COLLECTION_DELETE_ACTION and INVALID_COLLECTION_DELETE_TARGET
-// so a caller can tell an incoherent request apart from a malformed one. Tags here
-// would pre-empt that and collapse every case into a generic VALIDATION_ERROR.
+// The cursor carries no `validate` rule beyond its length. It is an opaque token bound
+// here and nowhere else; decoding it and deciding whether its contents are usable
+// belong to the service, which owns those rules for every cursor it issues.
+type ListSavedItemsInCollectionRequest struct {
+	// Limit is the number of saved items to return. Absent means the default, and a
+	// value above the maximum is rejected rather than clamped: max=50 on the tag fires
+	// before the service's own clamp can, so a caller is told what it asked for was
+	// out of range instead of quietly receiving a differently sized page. The clamp
+	// still exists in the service, for callers that reach it without going through
+	// this type.
+	Limit int `query:"limit" validate:"omitempty,min=1,max=50" example:"20"`
+
+	// Cursor resumes a listing from where the previous page ended. Absent starts at the
+	// beginning, newest first.
+	//
+	// max=512 is the one bound that matters here. It is what stops a client making the
+	// server base64-decode an arbitrarily large string.
+	Cursor string `query:"cursor" validate:"omitempty,max=512" example:"eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9"`
+}
+
 // ListCollectionsRequest is the query for GET /collections.
 //
 // The cursor field carries no `validate` rule beyond its length. It is an opaque
@@ -31,7 +44,11 @@ type ListCollectionsRequest struct {
 	Sort CollectionSort `query:"sort" validate:"omitempty,oneof=newest oldest name" example:"newest"`
 
 	// Limit is the number of collections to return. Absent means the default, and a
-	// value above the maximum is clamped rather than rejected.
+	// value above the maximum is rejected rather than clamped: max=50 on the tag fires
+	// before the service's own clamp can, so a caller is told what it asked for was
+	// out of range instead of quietly receiving a differently sized page. The clamp
+	// still exists in the service, for callers that reach it without going through
+	// this type.
 	Limit int `query:"limit" validate:"omitempty,min=1,max=50" example:"20"`
 
 	// Cursor resumes a listing from where the previous page ended. Absent starts at
@@ -39,6 +56,19 @@ type ListCollectionsRequest struct {
 	Cursor string `query:"cursor" validate:"omitempty,max=512" example:"eyJ2IjoxLCJzIjoibmV3ZXN0In0"`
 }
 
+// DeleteCollectionRequest states what should happen to the saved items currently
+// in a collection that is being deleted.
+//
+// Both fields are always present and always mean the same thing. The shape does not
+// vary by action: the rule about which combination is valid is stated below and
+// enforced by the service, so a caller reading this type sees one contract rather
+// than two shapes they have to infer from each other.
+//
+// Neither field carries a `validate` constraint on purpose, for the same reason
+// PutSavedItemIntoCollectionRequest does not: the service owns these rules and
+// answers with INVALID_COLLECTION_DELETE_ACTION and INVALID_COLLECTION_DELETE_TARGET
+// so a caller can tell an incoherent request apart from a malformed one. Tags here
+// would pre-empt that and collapse every case into a generic VALIDATION_ERROR.
 type DeleteCollectionRequest struct {
 	// SavedItemsAction is what to do with the collection's saved items.
 	//

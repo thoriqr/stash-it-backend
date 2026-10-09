@@ -19,12 +19,6 @@ func Routes(
 	)
 
 	router.Get(
-		"/",
-		middleware.Auth(verifier),
-		handler.List,
-	)
-
-	router.Get(
 		"/:id",
 		middleware.Auth(verifier),
 		handler.Get,

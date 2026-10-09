@@ -37,6 +37,14 @@ type Repository interface {
 		params PutSavedItemIntoUserCollectionParams,
 	) (PutSavedItemIntoUserCollectionResult, error)
 
+	// GetCollectionByIDForUser resolves one collection owned by the authenticated user,
+	// or reports the same not found error for one that does not exist and one owned by
+	// somebody else.
+	GetCollectionByIDForUser(
+		ctx context.Context,
+		params GetCollectionByIDForUserParams,
+	) (collectiondb.Collection, error)
+
 	// ListCollections returns one page of the user's collections in the requested
 	// order, plus whether more rows follow.
 	//
@@ -48,6 +56,16 @@ type Repository interface {
 		ctx context.Context,
 		params ListCollectionsParams,
 	) (ListCollectionsResult, error)
+
+	// ListSavedItemsInCollection returns one page of the saved items in a collection,
+	// newest first, plus whether more rows follow.
+	//
+	// The cursor arrives already decoded, validated and parsed, so this never
+	// interprets a client-supplied value.
+	ListSavedItemsInCollection(
+		ctx context.Context,
+		params ListSavedItemsInCollectionParams,
+	) (ListSavedItemsInCollectionResult, error)
 
 	// DeleteCollection removes one collection of the user and deals with the saved
 	// items in it according to the action the caller chose.
@@ -595,6 +613,189 @@ func (r *repository) listAfterPosition(
 		}
 
 		return rows, nil
+	}
+}
+
+// GetCollectionByIDForUser resolves one collection of the authenticated user.
+//
+// A collection that does not exist and one owned by somebody else both match nothing,
+// so both produce the same not found error. That is the non-disclosure guarantee the
+// move and delete paths already rely on, exposed here so a listing can prove
+// ownership the same way rather than assuming it from the id it was given.
+func (r *repository) GetCollectionByIDForUser(
+	ctx context.Context,
+	params GetCollectionByIDForUserParams,
+) (collectiondb.Collection, error) {
+	collection, err := r.queries.GetCollectionByIDForUser(
+		ctx,
+		collectiondb.GetCollectionByIDForUserParams{
+			ID:     params.ID,
+			UserID: params.UserID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return collectiondb.Collection{}, apperror.NotFoundWith(
+				CodeCollectionNotFound,
+				"collection not found",
+				err,
+			)
+		}
+
+		return collectiondb.Collection{}, internalError(err)
+	}
+
+	return collection, nil
+}
+
+// ListSavedItemsInCollection returns one page of the saved items in a collection.
+//
+// One row beyond the limit is requested so HasMore is a fact about rows that exist
+// rather than an inference from a count. The extra row is dropped before the page is
+// returned, and the caller builds the next cursor from the last row actually returned,
+// never from this lookahead row: the lookahead row was never sent, so a cursor built
+// from it would resume past an item the client never received.
+//
+// No transaction is needed. A listing reads, so there is nothing to keep consistent,
+// and the page is a single statement with its own snapshot.
+func (r *repository) ListSavedItemsInCollection(
+	ctx context.Context,
+	params ListSavedItemsInCollectionParams,
+) (ListSavedItemsInCollectionResult, error) {
+	pageLimit := int32(params.Limit + 1)
+
+	rows, err := r.listSavedItemRows(ctx, params, pageLimit)
+	if err != nil {
+		return ListSavedItemsInCollectionResult{}, err
+	}
+
+	hasMore := len(rows) > params.Limit
+	if hasMore {
+		rows = rows[:params.Limit]
+	}
+
+	return ListSavedItemsInCollectionResult{
+		SavedItems: rows,
+		Limit:      params.Limit,
+		HasMore:    hasMore,
+	}, nil
+}
+
+// listSavedItemRows dispatches to the statement matching the resume point.
+//
+// Unlike the collection listing there are only two, not six: this listing has a
+// single ordering and no pinned row, so there is no sort to branch on and no
+// positionless group.
+func (r *repository) listSavedItemRows(
+	ctx context.Context,
+	params ListSavedItemsInCollectionParams,
+	pageLimit int32,
+) ([]ListedSavedItem, error) {
+	if params.Cursor == nil {
+		rows, err := r.queries.ListSavedItemsInCollectionFirst(
+			ctx,
+			collectiondb.ListSavedItemsInCollectionFirstParams{
+				CollectionID: params.CollectionID,
+				UserID:       params.UserID,
+				PageLimit:    pageLimit,
+			},
+		)
+		if err != nil {
+			return nil, internalError(err)
+		}
+
+		return newListedSavedItems(rows), nil
+	}
+
+	// Both halves of the position were validated and the timestamp parsed by the
+	// service before this was called. CursorValue is therefore already the type sqlc
+	// generated for a timestamptz column, and a token that survived validation cannot
+	// become a query error here.
+	rows, err := r.queries.ListSavedItemsInCollectionAfterRow(
+		ctx,
+		collectiondb.ListSavedItemsInCollectionAfterRowParams{
+			CollectionID: params.CollectionID,
+			UserID:       params.UserID,
+			CursorValue:  params.Cursor.Timestamp,
+			CursorID:     *params.Cursor.ID,
+			PageLimit:    pageLimit,
+		},
+	)
+	if err != nil {
+		return nil, internalError(err)
+	}
+
+	return newListedSavedItemsAfterCursor(rows), nil
+}
+
+// newListedSavedItems maps the first-page rows onto the listing projection.
+//
+// Made with a length rather than left nil so an empty page serializes as [] rather
+// than null, which is the shape a caller decoding this list expects.
+func newListedSavedItems(
+	rows []collectiondb.ListSavedItemsInCollectionFirstRow,
+) []ListedSavedItem {
+	savedItems := make([]ListedSavedItem, 0, len(rows))
+
+	for _, row := range rows {
+		savedItems = append(savedItems, newListedSavedItem(row))
+	}
+
+	return savedItems
+}
+
+// newListedSavedItemsAfterCursor maps the resumed-page rows.
+//
+// sqlc emits a distinct row type per query because the two statements differ, even
+// though they project identical columns. This mirrors rather than restates: each row
+// field is copied straight across, and both statements are kept column-identical on
+// purpose so a future change to one has to be made to the other visibly.
+func newListedSavedItemsAfterCursor(
+	rows []collectiondb.ListSavedItemsInCollectionAfterRowRow,
+) []ListedSavedItem {
+	savedItems := make([]ListedSavedItem, 0, len(rows))
+
+	for _, row := range rows {
+		savedItems = append(
+			savedItems,
+			ListedSavedItem{
+				ID:               row.ID,
+				UserID:           row.UserID,
+				URL:              row.Url,
+				Domain:           row.Domain,
+				Platform:         row.Platform,
+				Title:            row.Title,
+				Description:      row.Description,
+				ImageURL:         row.ImageUrl,
+				CollectionID:     row.CollectionID,
+				EnrichmentStatus: row.EnrichmentStatus,
+				LastEnrichedAt:   row.LastEnrichedAt,
+				CreatedAt:        row.CreatedAt,
+				UpdatedAt:        row.UpdatedAt,
+			},
+		)
+	}
+
+	return savedItems
+}
+
+func newListedSavedItem(
+	row collectiondb.ListSavedItemsInCollectionFirstRow,
+) ListedSavedItem {
+	return ListedSavedItem{
+		ID:               row.ID,
+		UserID:           row.UserID,
+		URL:              row.Url,
+		Domain:           row.Domain,
+		Platform:         row.Platform,
+		Title:            row.Title,
+		Description:      row.Description,
+		ImageURL:         row.ImageUrl,
+		CollectionID:     row.CollectionID,
+		EnrichmentStatus: row.EnrichmentStatus,
+		LastEnrichedAt:   row.LastEnrichedAt,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
 	}
 }
 
