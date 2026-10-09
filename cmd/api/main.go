@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	swaggo "github.com/gofiber/contrib/v3/swaggo"
 	"github.com/gofiber/fiber/v3"
 	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 
 	_ "github.com/thoriqr/stash-it-backend/docs"
 
@@ -39,7 +43,23 @@ import (
 // @name Authorization
 // @description Enter your access token using the Bearer scheme. Example: "Bearer {token}"
 func main() {
-	ctx := context.Background()
+	// The signal context is created before anything else, for the same reason
+	// cmd/worker/main.go creates its own first: a SIGTERM arriving during startup
+	// then unwinds through the deferred closes below instead of being resolved by
+	// the platform's default disposition, which terminates the process outright and
+	// runs none of them.
+	//
+	// Registering a handler at all is what changes the outcome on Windows. Go's
+	// console handler returns to the OS "unhandled" when nothing is subscribed to
+	// the signal, and the OS then ends the process with STATUS_CONTROL_C_EXIT. That
+	// is the 0xc000013a an interrupted run reports, and no defer in main can run
+	// against it because it is an OS termination rather than a return from main.
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -165,10 +185,67 @@ func main() {
 		log,
 	)
 
-	fmt.Println("Database connected")
-	fmt.Println("Server running on http://localhost:8080")
+	log.Info(
+		"api started",
+		zap.String("app_env", cfg.AppEnv),
+		zap.String("addr", listenAddr),
+		// Only the parsed connection endpoint, never cfg.RedisURL itself. A Redis
+		// URL may carry a password in its userinfo section, and logging it would
+		// write a live credential into the log stream. The address and the database
+		// are what make a startup line diagnosable; ownership of the connection is
+		// unaffected.
+		zap.String("redis_addr", redisOptions.Addr),
+		zap.Int("redis_db", redisOptions.DB),
+	)
 
-	if err := app.Listen(":8080"); err != nil {
-		fmt.Println("Server error:", err)
+	// Listen blocks for as long as the server runs, so it cannot also be the thing
+	// that waits for a signal. It runs on its own goroutine and reports the result
+	// back on a buffered channel: buffered so the goroutine always completes its
+	// send even after main has taken the signal branch and is on its way out, which
+	// is what keeps this from leaking a blocked goroutine on shutdown.
+	serverErr := make(chan error, 1)
+
+	go func() {
+		serverErr <- app.Listen(listenAddr)
+	}()
+
+	select {
+	case err := <-serverErr:
+		// The listener stopped on its own. That is a real failure, not a shutdown:
+		// an address already in use, an unbindable port. It is reported exactly as
+		// it was before this select existed, and the deferred closes still run
+		// because this branch returns from main rather than falling through.
+		//
+		// A graceful shutdown never arrives here. Fiber's Listen returns nil once
+		// ShutdownWithTimeout has closed the listener, so the signal branch below is
+		// the only path a normal stop can take.
+		if err != nil {
+			fmt.Println("Server error:", err)
+		}
+
+		return
+
+	case <-ctx.Done():
+		log.Info("api shutting down")
 	}
+
+	// Graceful stop, and deliberately bounded. Fiber's own Shutdown is
+	// ShutdownWithContext(context.Background()), which waits for every connection to
+	// go idle with no ceiling, so a client holding a keepalive connection could keep
+	// the process up indefinitely and turn a graceful stop back into an abrupt one.
+	//
+	// Exceeding the timeout is not silent: Fiber returns the context error, which is
+	// logged below, because requests being cut off is the one outcome of a shutdown
+	// an operator needs to see.
+	if err := app.ShutdownWithTimeout(shutdownTimeout); err != nil {
+		log.Error("api shutdown error", zap.Error(err))
+	}
+
+	log.Info("api stopped")
+
+	// Falling off the end of main runs the deferred closes in the order they were
+	// registered: the Redis client, then the database pool, then the log flush. That
+	// ordering is the point. The server has already drained, so no handler is left
+	// holding a connection out of either pool when it closes, and the log survives
+	// long enough to record that it happened.
 }
