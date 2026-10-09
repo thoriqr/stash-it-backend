@@ -1932,6 +1932,12 @@ paths:
         - VERIFICATION_NOT_PENDING
         - REGISTRATION_NOT_PENDING
         - REGISTRATION_EXPIRED
+        - VERIFICATION_RESEND_COOLDOWN
+        - IP_RATE_LIMIT_EXCEEDED
+        - IP_RATE_LIMIT_UNAVAILABLE
+        - CLIENT_IP_UNAVAILABLE
+        - PIN_RATE_LIMIT_EXCEEDED
+        - PIN_RATE_LIMIT_UNAVAILABLE
         - RESOURCE_NOT_FOUND
         - INTERNAL_SERVER_ERROR
       parameters:
@@ -1959,8 +1965,18 @@ paths:
           description: Verification or registration conflict
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Too many requests from this client address or for this email
+            address; Retry-After reports when to try again
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting or client address resolution is unavailable,
+            so no code was issued
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Create verification PIN
@@ -1975,6 +1991,11 @@ paths:
         - REGISTRATION_NOT_PENDING
         - REGISTRATION_EXPIRED
         - VERIFICATION_RESEND_COOLDOWN
+        - IP_RATE_LIMIT_EXCEEDED
+        - IP_RATE_LIMIT_UNAVAILABLE
+        - CLIENT_IP_UNAVAILABLE
+        - PIN_RATE_LIMIT_EXCEEDED
+        - PIN_RATE_LIMIT_UNAVAILABLE
         - RESOURCE_NOT_FOUND
         - INTERNAL_SERVER_ERROR
       parameters:
@@ -2002,8 +2023,18 @@ paths:
           description: Verification or registration conflict
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Too many requests from this client address or for this email
+            address; Retry-After reports when to try again
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting or client address resolution is unavailable,
+            so no code was issued
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Resend verification PIN

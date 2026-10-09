@@ -17,4 +17,6 @@ const (
 	CodeRegistrationContinuationRequired = "REGISTRATION_CONTINUATION_REQUIRED"
 	CodeUserAlreadyExists                = "USER_ALREADY_EXISTS"
 	CodeAuthIdentityAlreadyExists        = "AUTH_IDENTITY_ALREADY_EXISTS"
+	CodePinRateLimitExceeded             = "PIN_RATE_LIMIT_EXCEEDED"
+	CodePinRateLimitUnavailable          = "PIN_RATE_LIMIT_UNAVAILABLE"
 )

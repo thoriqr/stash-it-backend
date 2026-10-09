@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
@@ -45,6 +46,26 @@ func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
 			log.Error("request failed", fields...)
 		} else {
 			log.Warn("request failed", fields...)
+		}
+
+		// A rate-limited caller is told when to come back, and only that caller.
+		//
+		// The value is written here rather than inside the service because this is
+		// the single place a response is written: a value carried on the error and
+		// never emitted would leave a client guessing when its own window reopens,
+		// which is exactly the behaviour a rate limit exists to make predictable.
+		//
+		// It is gated on 429 rather than on the field alone. A 503 from an
+		// unreachable counter has no recovery time anyone could name, so
+		// fabricating one would be a lie told to a client that is already being
+		// told to try again shortly.
+		if appErr.Status == fiber.StatusTooManyRequests {
+			if retryAfter := appErr.RetryAfterSeconds(); retryAfter != nil {
+				c.Set(
+					fiber.HeaderRetryAfter,
+					strconv.Itoa(*retryAfter),
+				)
+			}
 		}
 
 		return c.Status(appErr.Status).JSON(errorResponse{

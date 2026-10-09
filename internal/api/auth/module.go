@@ -25,6 +25,7 @@ func RegisterModule(
 	log *zap.Logger,
 	emailSender email.Sender,
 	googleTokenVerifier login.GoogleTokenVerifier,
+	pinRateLimiter registration.PinRateLimiter,
 ) {
 	authRouter := app.Group("/auth")
 
@@ -40,8 +41,8 @@ func RegisterModule(
 	)
 
 	accessTokenVerifier := security.NewAccessTokenVerifier(
-	[]byte(cfg.AccessTokenSecret),
-)
+		[]byte(cfg.AccessTokenSecret),
+	)
 
 	// Session
 	sessionQueries := sessiondb.New(pool)
@@ -81,6 +82,7 @@ func RegisterModule(
 		passwordHasher,
 		verificationCodeHasher,
 		emailSender,
+		pinRateLimiter,
 	)
 
 	registrationHandler := registration.NewHandler(
@@ -90,32 +92,33 @@ func RegisterModule(
 	registration.Routes(
 		authRouter,
 		registrationHandler,
+		pinRateLimiter,
 	)
 
 	// Login
 	loginQueries := logindb.New(pool)
 
 	loginRepository := login.NewRepository(
-    pool,
-    loginQueries,
+		pool,
+		loginQueries,
 	)
 
 	loginService := login.NewService(
-    loginRepository,
-    sessionService,
-    registrationService,
-    googleTokenVerifier,
-    passwordHasher,
-    accessTokenGenerator,
+		loginRepository,
+		sessionService,
+		registrationService,
+		googleTokenVerifier,
+		passwordHasher,
+		accessTokenGenerator,
 	)
 
 	loginHandler := login.NewHandler(
-    loginService,
+		loginService,
 	)
 
 	login.Routes(
-    authRouter,
-    loginHandler,
+		authRouter,
+		loginHandler,
 	)
 
 	// Password reset

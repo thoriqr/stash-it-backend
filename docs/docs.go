@@ -1070,7 +1070,7 @@ const docTemplate = `{
         },
         "/auth/register/verification/{verification_id}/pin": {
             "post": {
-                "description": "Generate and send a verification PIN for a pending registration.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "description": "Generate and send a verification PIN for a pending registration.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- VERIFICATION_RESEND_COOLDOWN\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- PIN_RATE_LIMIT_EXCEEDED\n- PIN_RATE_LIMIT_UNAVAILABLE\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1112,8 +1112,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address or for this email address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting or client address resolution is unavailable, so no code was issued",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -1123,7 +1135,7 @@ const docTemplate = `{
         },
         "/auth/register/verification/{verification_id}/resend": {
             "post": {
-                "description": "Generate and send a new verification PIN for a pending registration.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- VERIFICATION_RESEND_COOLDOWN\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "description": "Generate and send a new verification PIN for a pending registration.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_EXPIRED\n- VERIFICATION_RESEND_COOLDOWN\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- PIN_RATE_LIMIT_EXCEEDED\n- PIN_RATE_LIMIT_UNAVAILABLE\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1165,8 +1177,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address or for this email address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting or client address resolution is unavailable, so no code was issued",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

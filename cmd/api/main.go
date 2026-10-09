@@ -29,6 +29,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 	"github.com/thoriqr/stash-it-backend/internal/worker/queue"
@@ -85,9 +86,25 @@ func main() {
 
 	validate := validation.New()
 
+	// Client address resolution is configured from one declared source, and every
+	// part of it is derived rather than set separately here. That is what makes it
+	// impossible to end up reading a forwarding header without a verified
+	// allowlist beside it: there is only one place the two are decided, and the
+	// framework settings are its output.
+	//
+	// In the default peer mode all four settings are zero, so `c.IP()` is the
+	// socket's own address and no header in the request can influence it however
+	// it is spelled. Proxy mode is the only way to change that, and it cannot be
+	// reached without naming the proxies that are allowed to set the header.
+	proxySettings := cfg.ProxySettings()
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler:    httpx.NewErrorHandler(log),
-		StructValidator: validate,
+		ErrorHandler:       httpx.NewErrorHandler(log),
+		StructValidator:    validate,
+		TrustProxy:         proxySettings.TrustProxy,
+		TrustProxyConfig:   fiber.TrustProxyConfig{Proxies: proxySettings.Proxies},
+		ProxyHeader:        proxySettings.ProxyHeader,
+		EnableIPValidation: proxySettings.EnableIPValidation,
 	})
 
 	app.Use(recoverer.New())
@@ -112,19 +129,14 @@ func main() {
 		emailSender = email.NewUnconfiguredSender()
 	}
 
-	auth.RegisterModule(
-		app,
-		pool,
-		cfg,
-		log,
-		emailSender,
-		googleTokenVerifier,
-	)
-
 	// The queue client the API uses for one thing only: putting a saved item id on
 	// the enrichment queue once the row is committed. It shares the Redis
 	// connection below rather than opening its own, so the process has one pool and
 	// one Close.
+	//
+	// It is built before any module is registered because the auth module needs
+	// the same connection for PIN rate limiting, and there is no reason for two
+	// features to hold separate pools against one Redis.
 	//
 	// ParseURL keeps the whole Redis configuration in one value and accepts
 	// redis:// as well as rediss://, so the API and the worker read the same
@@ -142,6 +154,37 @@ func main() {
 	}()
 
 	enrichmentProducer := queue.NewProducer(redisClient)
+
+	// Rate limiting reuses the connection above rather than opening another, so
+	// the process still has one pool and one Close. The limiter refuses to answer
+	// when Redis is unreachable, which is why Check runs here: a feature that
+	// guards sending email treats an unreachable counter as a refusal, and this
+	// line is where that wiring mistake would otherwise be discovered by a user
+	// rather than at startup.
+	//
+	// The secret keys the subject hash and is the same one verification codes are
+	// HMAC'd with, which is already required at startup and already a secret this
+	// process holds.
+	pinRateLimiter := ratelimit.New(
+		redisClient,
+		[]byte(cfg.VerificationCodeSecret),
+	)
+
+	if err := pinRateLimiter.Check(ctx); err != nil {
+		log.Error("rate limiter unavailable at startup", zap.Error(err))
+
+		return
+	}
+
+	auth.RegisterModule(
+		app,
+		pool,
+		cfg,
+		log,
+		emailSender,
+		googleTokenVerifier,
+		pinRateLimiter,
+	)
 
 	// The enqueuer is injected rather than built inside saved_item so that the save
 	// flow depends on a one-method interface and knows nothing about Asynq, Redis
@@ -189,6 +232,14 @@ func main() {
 		"api started",
 		zap.String("app_env", cfg.AppEnv),
 		zap.String("addr", listenAddr),
+		// Recorded because it is what any IP-based rate limit keys on, and a
+		// deployment that resolved it differently from what it expected would
+		// otherwise leave no trace at all. The startup line is where the
+		// deployment's actual client-address configuration becomes part of the
+		// record rather than something a reader has to infer from the config.
+		zap.String("client_ip_source", string(cfg.ClientIPSource)),
+		zap.Strings("trusted_proxies", proxySettings.Proxies),
+		zap.String("proxy_header", proxySettings.ProxyHeader),
 		// Only the parsed connection endpoint, never cfg.RedisURL itself. A Redis
 		// URL may carry a password in its userinfo section, and logging it would
 		// write a live credential into the log stream. The address and the database

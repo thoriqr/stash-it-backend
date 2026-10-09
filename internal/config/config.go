@@ -22,6 +22,18 @@ type Config struct {
 	// that a missing value is a startup failure rather than a feature that quietly
 	// stops being wired.
 	RedisURL string
+
+	// ClientIPSource, TrustedProxies and TrustedProxyHeader describe where the
+	// client address comes from.
+	//
+	// They are loaded and validated here rather than at the composition root so
+	// that a deployment which cannot establish a trustworthy client address
+	// refuses to start. Every request limiter keys on that address, so a
+	// configuration that resolved it wrongly would silently group unrelated
+	// callers together, and nothing in the responses would say so.
+	ClientIPSource     ClientIPSource
+	TrustedProxies     []string
+	TrustedProxyHeader string
 }
 
 func Load() (Config, error) {
@@ -67,6 +79,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("REDIS_URL is required")
 	}
 
+	clientIPSource, trustedProxies, trustedProxyHeader, err := loadClientIP()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -74,5 +91,8 @@ func Load() (Config, error) {
 		AccessTokenSecret:      accessTokenSecret,
 		GoogleClientID:         googleClientID,
 		RedisURL:               redisURL,
+		ClientIPSource:         clientIPSource,
+		TrustedProxies:         trustedProxies,
+		TrustedProxyHeader:     trustedProxyHeader,
 	}, nil
 }

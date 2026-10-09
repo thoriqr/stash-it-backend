@@ -25,7 +25,13 @@ internal/api/<module>/        routes.go handler.go service.go service_validation
                               error_codes.go constants.go types.go generated/ mocks/
 internal/api/auth/module.go   composition root for auth sub-features
 internal/middleware/auth.go   JWT bearer guard
+internal/middleware/ratelimit.go
+                              per-client-IP limit; resolves the address via c.IP()
+                              and fails closed. Mounted per route.
 internal/{apperror,httpx,validation,email,security,config,logger,health,database}/
+internal/ratelimit/          Redis-backed fixed-window counters; atomic Lua script
+                              returns count and remaining TTL together; HMACs the
+                              subject; no Fiber, internal/api, or persistence
 internal/enrichment/          reusable metadata extraction; no Fiber, sqlc, Asynq, persistence
 internal/worker/queue/        background task contract; no Fiber, internal/api, persistence
 internal/worker/<feature>/    worker handler, service, repository, generated/, mocks/

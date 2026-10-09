@@ -777,7 +777,10 @@ honest consequence of `platform` being free text published by the page.
 
 ### Still not implemented
 
-- Endpoint rate limiting.
+- Rate limiting for endpoints other than the two PIN endpoints. Per-email and
+  per-IP PIN limiting is implemented and verified — see "Registration rate
+  limiting" below. Login, password reset, saved items, collections, search and
+  enrichment are deliberately unlimited for now.
 - A possible one-off backfill of items enriched before automatic organization
   existed, which are still in `Unsorted` with a platform. This is an open product
   decision rather than a gap in the mechanism, and it would be a separate
@@ -847,6 +850,244 @@ by counting Redis keys, so they cannot pass by reading nothing.
 
 ---
 
+## Registration rate limiting — implemented
+
+Both endpoints that send a message are limited:
+`POST /auth/register/verification/:verification_id/pin` and
+`.../resend`. Two independent budgets apply, and neither replaces the other.
+
+| Budget     | Subject                        | Limit            | Namespace | Enforced by |
+| ---------- | ------------------------------ | ---------------- | --------- | ----------- |
+| per-email  | normalized email address       | 5 per 1 hour     | `pin-email` | `registration` service |
+| per-IP     | resolved client IP address     | 20 per 10 minutes| `pin-ip`   | route middleware |
+
+Both are Redis-backed fixed-window counters. Both are shared across the two
+endpoints, so switching from `/pin` to `/resend` is not a way to double an
+allowance, and a new `verification_id` for the same address is not a fresh
+per-email budget.
+
+### Ordering within a request
+
+```
+IP middleware  ->  handler parses the path  ->  service resolves the verification
+  ->  cooldown  ->  email limiter  ->  issue  ->  send
+```
+
+- **The per-IP budget is enforced in front of the handler**, not in the service.
+  A service never sees a request that failed to parse its UUID or named a
+  verification that does not exist, so a limit enforced there would count only
+  well-formed requests. Repeated invalid requests are counted, because the
+  cheapest request an attacker can make is one that cannot succeed.
+- **The cooldown is checked before the email budget**, so a caller already being
+  told to wait is not also charged for asking.
+- **A request the IP budget refuses never reaches the email budget.** Verified
+  directly: an exhausted IP budget leaves the per-email counter untouched.
+
+The two registration endpoints that do not send a message
+(`POST /auth/register/manual`, `.../verify`, `.../finalize/*`) are deliberately
+not client-limited.
+
+### Responses
+
+| Situation                | Status | Code                              | `Retry-After` |
+| ------------------------ | ------ | --------------------------------- | ------------- |
+| email budget spent       | 429    | `PIN_RATE_LIMIT_EXCEEDED`         | yes           |
+| client budget spent      | 429    | `IP_RATE_LIMIT_EXCEEDED`          | yes           |
+| Redis unreachable        | 503    | `PIN_RATE_LIMIT_UNAVAILABLE` / `IP_RATE_LIMIT_UNAVAILABLE` | **no** |
+| client address unresolvable | 503 | `CLIENT_IP_UNAVAILABLE`           | **no**        |
+
+**A limiter that cannot answer is a refusal, not permission.** Allowing on failure
+would let anyone remove the ceiling by causing one. A 503 names no recovery time
+because there is none to name; fabricating a `Retry-After` there would tell a
+client to come back at a moment nobody chose.
+
+`Retry-After` is written by `httpx.NewErrorHandler`, the single place a response
+is written, gated on status 429. A value carried on an error object and never
+emitted would leave every client guessing when its own window reopens.
+
+### `Retry-After` semantics
+
+- **Read from the counter's remaining TTL, not from the configured window.**
+  Reporting the configured window would tell a client arriving late in a window
+  to wait out time that had already passed.
+- **Returned by the same Lua script that increments the counter.** Reading the
+  count and the TTL in two round trips would let the window expire between them,
+  so a caller could be told "over budget" from a count that was real and a TTL
+  that no longer was.
+- **Rounded up** to whole seconds, because the header's contract is "not before"
+  and rounding down names a moment the window is still closed.
+- **Never negative.** Redis reports a negative PTTL for a key with no expiry and
+  for a key that has gone; neither is a length of time to hand to a client.
+- **A refused request does not extend the window.** The TTL is set only when the
+  counter is created, so a client hammering a closed window cannot hold it open.
+  Verified over three consecutive refusals.
+
+### Client address resolution
+
+The deployment platform is **not decided**, so nothing is assumed about it. The
+resolution source is declared explicitly rather than inferred.
+
+| `CLIENT_IP_SOURCE` | Meaning | Forwarded headers |
+| ------------------ | ------- | ----------------- |
+| `peer` (default)   | Clients connect directly; the socket address is the client's | never read, whatever the request contains |
+| `proxy`            | A verified proxy fronts the application | read only from `TRUSTED_PROXIES`, in `TRUSTED_PROXY_HEADER` |
+
+Configuration is refused at startup when it could not be trusted:
+
+- `proxy` with no `TRUSTED_PROXIES` — a forwarded address believed from any
+  source, which is the same as believing it from the client;
+- `TRUSTED_PROXIES` or `TRUSTED_PROXY_HEADER` set while the source is `peer` —
+  a contradiction whose intended half is a guess;
+- an entry that is not an IP or CIDR;
+- an entry that trusts everything: `0.0.0.0/0`, `::/0`, any range broader than
+  `/8`, or the unspecified address;
+- **a bare address that is not in canonical form** — long-form or uppercase IPv6,
+  or IPv4 written in its IPv6-mapped form.
+
+The last one exists because of how the framework matches. It keeps each
+configured address as the text it was given and compares it to the incoming peer
+rendered canonically, so `2001:0db8::1`, `2001:DB8::1` and `::ffff:10.0.0.1`
+would configure an allowlist that silently matches nothing. The peer is then never
+recognised as a proxy, the forwarded address is never read, and **every client
+through it resolves to the proxy's own address and shares one counter** — the
+exact failure this configuration exists to prevent, with no error anywhere.
+Ranges are exempt: they are matched numerically, not by text.
+
+All four framework settings are **derived** from that one declaration by
+`config.Config.ProxySettings()`. There is no combination in which a header is
+read without a verified allowlist beside it.
+
+`EnableIPValidation` is turned on whenever a header is read, and this is not
+optional. Fiber v3.5.0's `extractIPFromHeader` returns the header's **raw bytes**
+when validation is off, so a chain of `203.0.113.7, 198.51.100.4` would become
+the client's identity — a different counter for every chain the client chose to
+send. With validation on, Fiber walks the chain right-to-left skipping trusted
+proxies, so a client that prepends a forged entry does not move its own address.
+
+Addresses are canonicalized through `ratelimit.NormalizeIP` before being used as
+a subject: ports and IPv6 zones are stripped, and IPv4-mapped IPv6 collapses to
+IPv4. Without that, one client behind one NAT gets a separate budget for each
+spelling of its address.
+
+An address that cannot be resolved is refused with `CLIENT_IP_UNAVAILABLE`
+rather than given an invented subject, because every unresolved request would
+otherwise share one counter.
+
+### Verification
+
+`internal/ratelimit` — IP canonicalization and its equivalence classes; policy
+validation; `Retry-After` rounding including a sweep proving it is never
+negative; fail-closed on an unreachable Redis; key derivation carrying neither
+the subject nor its namespace collisions.
+
+`internal/middleware` — 429 with `Retry-After`; 503 with no `Retry-After`;
+`Retry-After` rounding across whole, fractional, zero and negative waits;
+six different forwarding headers (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`,
+`Client-IP`, `CF-Connecting-IP`, `True-Client-IP`) all ignored with no proxy
+configured; a configured proxy believed; distinct clients given distinct
+identities; a client prepending to the chain not moving its own address; the
+configured policy applied; an unparseable forwarded value refused rather than
+used.
+
+`internal/config` — the default peer source; proxy mode requiring an allowlist;
+every rejection above, including non-canonical bare addresses; canonical bare
+addresses and ranges of any spelling still accepted; a copied allowlist that
+cannot be mutated through the returned settings; `Load` refusing to start on an
+untrustworthy configuration.
+
+`internal/integration` — against real Postgres and real Redis: TTL on first
+increment; the TTL not extending on later calls; window expiry restoring the
+budget; concurrent requests admitting exactly `Max` (both namespaces, and
+repeated across rounds); concurrent HTTP requests against one address admitting
+exactly 20; one address exhausted not affecting a neighbour; a verification not
+locked by another address's budget; the email and IP budgets refusing
+independently; `Retry-After` present, integral, within the window and
+non-increasing across refusals; a forced TTL-less counter repaired rather than
+reported as a negative wait; Redis failure producing 503 with nothing issued and
+no header; spoofed headers landing on the peer's address; registration creation
+consulting no limiter at all.
+
+**The concurrency tests were proven to detect the race they claim to.** With the
+Lua script replaced by a naive `GET`/`SET` read-modify-write, all three
+concurrency tests fail — including the new per-IP one — and pass again with the
+script restored.
+
+Nothing here was weakened to make a test pass.
+
+---
+
+## Outstanding deployment work — not implemented
+
+These are unresolved because the hosting platform and the email provider have
+**not been selected**. They are deployment tasks, not application gaps, and the
+distinction matters: the mechanisms below exist and are verified, and what is
+missing is the information only a chosen environment can supply.
+
+### 1. Client IP and deployment proxy configuration
+
+- Select the actual hosting platform.
+- Determine whether the application is behind a reverse proxy or load balancer.
+- **Verify the actual forwarding-header behaviour** by sending a forged
+  `X-Forwarded-For` to a deployed instance and observing what the application
+  resolves. Whether a platform appends to or replaces the header determines
+  whether a trusted-proxy configuration is correct at all.
+- Configure `CLIENT_IP_SOURCE` and `TRUSTED_PROXIES` from verified information
+  only.
+- Test real client-address resolution in the chosen environment.
+- Reassess the initial per-IP threshold against real traffic and against
+  shared-address false positives.
+
+**The specific risk that cannot be closed in code.** With the default `peer`
+source, a deployment that is actually behind a proxy resolves every client to the
+proxy's own address, putting them all in one counter. That is a misconfiguration
+with a visible symptom — unrelated users being refused — rather than a silent
+one, and the startup log records the resolved mode so a deployment's actual
+configuration is in the record. It is not eliminated, only made visible.
+
+Two things make it harder to leave unnoticed and are worth knowing:
+
+- `app.Test` (Fiber v3.5.0) serves every request from an in-memory connection
+  whose `RemoteAddr()` is hard-coded to `0.0.0.0`. Per-address behaviour cannot
+  be exercised through it without a configured trusted proxy, which is why the
+  integration tests drive client addresses through a proxy-configured app.
+- Fiber's `isValidProxyIP` classifies a dotted-quad-in-IPv6 form such as
+  `::ffff:198.51.100.5` as neither a valid IPv4 nor a valid IPv6 address, so the
+  walk skips it and falls back to the peer address. Such a client is grouped with
+  the proxy rather than separated. This errs toward over-sharing, never toward
+  evasion, and `NormalizeIP` handles the form correctly when it reaches it.
+
+### 2. Email provider selection and production configuration
+
+- Select the email delivery provider. None has been chosen; non-development
+  builds currently use `email.NewUnconfiguredSender()`, which errors on send.
+- Document its required environment variables and secret management.
+- Complete sender/domain verification and any provider-required IP
+  verification or allowlisting.
+- Document provider-specific errors, delivery failures, quotas and retry
+  behaviour.
+- Configure provider-level sending limits, usage monitoring and budget
+  safeguards where available.
+- Verify that the application's rate limits complement rather than replace
+  provider-level safeguards.
+
+**Consequence of the second one, recorded here so it is not lost:** until a
+provider exists, the per-email budget is the *only* ceiling on what verification
+mail this application can trigger. It is a real control and it is verified, but
+it is an application-level one, not a provider-level one.
+
+### 3. Production readiness
+
+- Verify Redis availability, TLS and connection configuration, and failure
+  behaviour for the selected hosting platform. The limiter fails closed, so a
+  Redis outage currently stops PIN issuance entirely rather than letting it
+  through unthrottled — deliberate, and worth confirming is the intended
+  availability trade-off for the chosen environment.
+- Reassess both the per-email and per-IP policies after observing realistic usage.
+- Ensure deployment documentation does not imply that the email provider or the
+  hosting platform has already been selected. Neither has.
+
+---
+
 ## Testing and verification status
 
 The current tree has been verified with:
@@ -857,10 +1098,19 @@ The current tree has been verified with:
 - `sqlc generate` — pass
 - `mockgen` — pass
 - `swag init -g cmd/api/main.go -parseInternal` — pass
+- `gofmt -l` on every file changed — clean
+
+The generators were re-run after the change and produced byte-identical output,
+so no generated file is stale.
 
 Integration tests require Docker and use the project's PostgreSQL test container.
 The queue-facing integration tests additionally start a Redis testcontainer,
-lazily and only when one is needed.
+lazily and only when one is needed. The rate-limit integration tests use that
+same lazily-started Redis rather than a second one.
+
+The rate-limit and concurrency tests were additionally re-run repeatedly
+(`-count=6` for the integration ones, `-count=8` for the unit ones) and showed no
+flakes.
 
 The enrichment foundation was also separately verified with:
 
@@ -1037,6 +1287,48 @@ Do not change these casually. Revisit only with an explicit decision.
     `TestCollectionAPI_ListSavedItems_DocumentedShape` walks `docs/swagger.json` and a
     real body side by side at every level, failing if either gains or loses a key.
 
+20. **A forward header is believed only behind a verified allowlist, and the
+    declaration of where a client's address comes from is one setting rather than
+    two.** `CLIENT_IP_SOURCE` is `peer` or `proxy`, and everything else — the
+    framework's proxy trust, its allowlist, which header is read, and whether the
+    forwarded chain is parsed and validated — is derived from it. There is no
+    combination in which a header is read without a verified allowlist beside it,
+    which is what makes "the header was present" and "the header was believed"
+    the same thing. Do not read `X-Forwarded-For`, `X-Real-IP` or any similar
+    header outside `middleware.IPRateLimit`'s use of `c.IP()`, and never as an
+    identity, a rate-limit subject, or a logging key on its own.
+
+21. **`EnableIPValidation` is mandatory whenever a header is read.** Fiber v3.5.0's
+    `extractIPFromHeader` returns the header's raw bytes when it is off, so a
+    chain such as `203.0.113.7, 198.51.100.4` would become the client's identity
+    — a separate counter for every chain a client chose to send. Turning it off
+    next to proxy trust is a vulnerability, not a performance setting.
+
+22. **A limiter that cannot answer refuses; it never allows.** A Redis outage, an
+    unusable policy, or a client address that cannot be resolved all produce 503
+    rather than a pass. Allowing on failure would let anyone remove the ceiling by
+    causing one. Do not add a fallback that admits the request when the counter
+    is unreachable.
+
+23. **The two PIN budgets are separate dimensions and neither replaces the other.**
+    The per-email budget stops one address being mailed repeatedly, which an
+    attacker with many addresses defeats; the per-IP budget stops one address
+    reaching the endpoints repeatedly, which an attacker with many proxies
+    defeats. Merging them would leave a way in. `pin_issued_count` remains
+    issuance history and is not a counter for either.
+
+24. **The IP budget runs in front of the handler, not in the service.** A service
+    never sees a request that failed to parse its UUID or named a verification
+    that does not exist, so a limit enforced there would count only well-formed
+    requests and would be free to burn with the cheapest kind of request there
+    is. Moving it into the service would silently weaken it.
+
+25. **`Retry-After` is the counter's remaining window, never the configured one.**
+    It is read by the same atomic script that increments the counter, rounded up,
+    and never negative. A refused request must not extend the window, and a 503
+    must carry no `Retry-After` at all — there is no known recovery time and a
+    fabricated one would be a guess presented as a fact.
+
 ---
 
 ## Next Step
@@ -1049,12 +1341,24 @@ decisions 8, 9, 13, 13a and 13b rather than reopened here.
 
 Current order:
 
-1. Endpoint rate limiting.
-2. Decide whether to run a one-off backfill of items enriched before automatic
+1. Deployment work that cannot start until the hosting platform is chosen:
+   verify real forwarding-header behaviour, configure trusted proxies from
+   verified information, and confirm client-address resolution in that
+   environment. See "Outstanding deployment work" above.
+2. Email provider selection and production configuration, which the per-email
+   budget currently stands in for. See "Outstanding deployment work" above.
+3. Decide whether to run a one-off backfill of items enriched before automatic
    organization existed. It is a product decision, not a mechanism gap, and it
    would be a separate deliberate operation rather than anything the worker does
    on its own.
-3. Cloud Run deployment specifics for the worker, when a target is chosen.
+4. Rate limiting for endpoints other than the two PIN endpoints, once there is
+   real traffic to size the limits against.
+5. Cloud Run deployment specifics for the worker, when a target is chosen.
+
+Rate limiting for the PIN endpoints is implemented and verified: per-email and
+per-IP budgets, Redis-backed atomic counters, `Retry-After`, and fail-closed
+behaviour on Redis failure. What remains for it is deployment configuration, not
+application code.
 
 Search pagination, autocomplete, search suggestions, and Saved Item update/edit
 remain outside the current scope. Collection *deletion* now exists, but only as the

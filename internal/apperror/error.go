@@ -2,17 +2,21 @@ package apperror
 
 import (
 	"errors"
+	"math"
 	"net/http"
+	"time"
 )
 
 const (
-	CodeBadRequest    = "BAD_REQUEST"
-	CodeUnauthorized  = "UNAUTHORIZED"
-	CodeForbidden     = "FORBIDDEN"
-	CodeNotFound      = "RESOURCE_NOT_FOUND"
-	CodeConflict      = "CONFLICT"
-	CodeInternal      = "INTERNAL_SERVER_ERROR"
-	CodeValidation    = "VALIDATION_ERROR"
+	CodeBadRequest   = "BAD_REQUEST"
+	CodeUnauthorized = "UNAUTHORIZED"
+	CodeForbidden    = "FORBIDDEN"
+	CodeNotFound     = "RESOURCE_NOT_FOUND"
+	CodeConflict     = "CONFLICT"
+	CodeInternal     = "INTERNAL_SERVER_ERROR"
+	CodeValidation   = "VALIDATION_ERROR"
+	CodeTooMany      = "TOO_MANY_REQUESTS"
+	CodeUnavailable  = "SERVICE_UNAVAILABLE"
 )
 
 const (
@@ -23,6 +27,8 @@ const (
 	MessageConflict     = "conflict"
 	MessageInternal     = "internal server error"
 	MessageValidation   = "request validation failed"
+	MessageTooMany      = "too many requests"
+	MessageUnavailable  = "service unavailable"
 )
 
 type ErrorField struct {
@@ -36,6 +42,24 @@ type AppError struct {
 	Message string
 	Fields  []ErrorField
 	Err     error
+
+	// retryAfterSeconds, when set and the status is 429, is written to the
+	// response as a `Retry-After` header.
+	//
+	// It is unexported and read through RetryAfterSeconds because the error
+	// handler is the only thing that should decide how it reaches the wire, and
+	// because a duration that has not been converted yet is not a header value.
+	retryAfterSeconds *int
+}
+
+// RetryAfterSeconds reports the wait a rate-limited caller was given, and
+// whether there was one at all.
+//
+// The second return is the point: a 429 the server cannot say anything useful
+// about recovery has no value, and a response that carried a guessed one would be
+// telling a client to come back at a time nobody chose.
+func (e *AppError) RetryAfterSeconds() *int {
+	return e.retryAfterSeconds
 }
 
 func New(status int, code, message string, err error) *AppError {
@@ -228,6 +252,96 @@ func ConflictWith(code, message string, err error) *AppError {
 
 	return New(
 		http.StatusConflict,
+		code,
+		message,
+		err,
+	)
+}
+
+// TooManyRequests returns a generic 429 Too Many Requests error.
+func TooManyRequests(err error) *AppError {
+	return New(
+		http.StatusTooManyRequests,
+		CodeTooMany,
+		MessageTooMany,
+		err,
+	)
+}
+
+// TooManyRequestsWith returns a 429 Too Many Requests error with custom code and
+// message.
+func TooManyRequestsWith(code, message string, err error) *AppError {
+	if code == "" {
+		code = CodeTooMany
+	}
+
+	if message == "" {
+		message = MessageTooMany
+	}
+
+	return New(
+		http.StatusTooManyRequests,
+		code,
+		message,
+		err,
+	)
+}
+
+// RetryAfterSeconds converts a wait into the whole number of seconds a
+// `Retry-After` header carries.
+//
+// It rounds up, because the header's contract is "not before", and rounding down
+// would name a moment the window is still closed. A zero or negative wait becomes
+// zero, which says retry immediately rather than saying something impossible.
+func RetryAfterSeconds(wait time.Duration) *int {
+	seconds := int(math.Ceil(wait.Seconds()))
+	if seconds < 0 {
+		seconds = 0
+	}
+
+	return &seconds
+}
+
+// TooManyRequestsWithRetryAfter returns a 429 carrying a `Retry-After` header
+// value derived from wait.
+//
+// The wait is the time until the rate-limited window resets, which the caller
+// reads from the counter itself rather than assuming from the configured window.
+// Reporting the configured window instead would tell a client to wait out time
+// that had already passed every time the request arrived late in a window.
+func TooManyRequestsWithRetryAfter(
+	code, message string,
+	wait time.Duration,
+) *AppError {
+	appErr := TooManyRequestsWith(code, message, nil)
+	appErr.retryAfterSeconds = RetryAfterSeconds(wait)
+
+	return appErr
+}
+
+// ServiceUnavailable returns a generic 503 Service Unavailable error.
+func ServiceUnavailable(err error) *AppError {
+	return New(
+		http.StatusServiceUnavailable,
+		CodeUnavailable,
+		MessageUnavailable,
+		err,
+	)
+}
+
+// ServiceUnavailableWith returns a 503 Service Unavailable error with custom code
+// and message.
+func ServiceUnavailableWith(code, message string, err error) *AppError {
+	if code == "" {
+		code = CodeUnavailable
+	}
+
+	if message == "" {
+		message = MessageUnavailable
+	}
+
+	return New(
+		http.StatusServiceUnavailable,
 		code,
 		message,
 		err,

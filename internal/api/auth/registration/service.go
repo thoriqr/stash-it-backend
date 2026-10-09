@@ -23,74 +23,77 @@ type SocialRegistrationService interface {
 }
 
 type RegistrationService interface {
-    RegisterManual(
-        ctx context.Context,
-        email string,
-    ) (RegisterManualResult, error)
+	RegisterManual(
+		ctx context.Context,
+		email string,
+	) (RegisterManualResult, error)
 
-    CreatePIN(
-        ctx context.Context,
-        verificationID uuid.UUID,
-    ) (CreatePINResult, error)
+	CreatePIN(
+		ctx context.Context,
+		verificationID uuid.UUID,
+	) (CreatePINResult, error)
 
-    GetVerification(
-        ctx context.Context,
-        verificationID uuid.UUID,
-    ) (GetVerificationResult, error)
+	GetVerification(
+		ctx context.Context,
+		verificationID uuid.UUID,
+	) (GetVerificationResult, error)
 
-    ResendVerification(
-        ctx context.Context,
-        verificationID uuid.UUID,
-    ) (ResendVerificationResult, error)
+	ResendVerification(
+		ctx context.Context,
+		verificationID uuid.UUID,
+	) (ResendVerificationResult, error)
 
-    VerifyRegistration(
-        ctx context.Context,
-        verificationID uuid.UUID,
-        pin string,
-    ) (VerifyRegistrationResult, error)
+	VerifyRegistration(
+		ctx context.Context,
+		verificationID uuid.UUID,
+		pin string,
+	) (VerifyRegistrationResult, error)
 
-    GetRegistrationContinuation(
-        ctx context.Context,
-        token string,
-    ) (GetRegistrationContinuationResult, error)
+	GetRegistrationContinuation(
+		ctx context.Context,
+		token string,
+	) (GetRegistrationContinuationResult, error)
 
-    FinalizeManualRegistration(
-        ctx context.Context,
-        params FinalizeManualRegistrationInput,
-    ) (FinalizeManualRegistrationResult, error)
+	FinalizeManualRegistration(
+		ctx context.Context,
+		params FinalizeManualRegistrationInput,
+	) (FinalizeManualRegistrationResult, error)
 
-		FinalizeSocialRegistration(
-			ctx context.Context,
-			params FinalizeSocialRegistrationInput,
-			metadata session.SessionMetadata,
-		) (FinalizeSocialRegistrationResult, error)
+	FinalizeSocialRegistration(
+		ctx context.Context,
+		params FinalizeSocialRegistrationInput,
+		metadata session.SessionMetadata,
+	) (FinalizeSocialRegistrationResult, error)
 }
 
 type service struct {
-    repository             Repository
-    sessionService         session.SessionCreator
-    accessTokenGenerator   *security.AccessTokenGenerator
-    passwordHasher         *security.PasswordHasher
-    verificationCodeHasher *security.VerificationCodeHasher
-    emailSender            email.Sender
+	repository             Repository
+	sessionService         session.SessionCreator
+	accessTokenGenerator   *security.AccessTokenGenerator
+	passwordHasher         *security.PasswordHasher
+	verificationCodeHasher *security.VerificationCodeHasher
+	emailSender            email.Sender
+	pinRateLimiter         PinRateLimiter
 }
 
 func NewService(
-    repository Repository,
-    sessionService session.SessionCreator,
-    accessTokenGenerator *security.AccessTokenGenerator,
-    passwordHasher *security.PasswordHasher,
-    verificationCodeHasher *security.VerificationCodeHasher,
-    emailSender email.Sender,
+	repository Repository,
+	sessionService session.SessionCreator,
+	accessTokenGenerator *security.AccessTokenGenerator,
+	passwordHasher *security.PasswordHasher,
+	verificationCodeHasher *security.VerificationCodeHasher,
+	emailSender email.Sender,
+	pinRateLimiter PinRateLimiter,
 ) *service {
-    return &service{
-        repository:             repository,
-        sessionService:         sessionService,
-        accessTokenGenerator:   accessTokenGenerator,
-        passwordHasher:         passwordHasher,
-        verificationCodeHasher: verificationCodeHasher,
-        emailSender:            emailSender,
-    }
+	return &service{
+		repository:             repository,
+		sessionService:         sessionService,
+		accessTokenGenerator:   accessTokenGenerator,
+		passwordHasher:         passwordHasher,
+		verificationCodeHasher: verificationCodeHasher,
+		emailSender:            emailSender,
+		pinRateLimiter:         pinRateLimiter,
+	}
 }
 
 type RegisterManualResult struct {
@@ -231,6 +234,15 @@ func (s *service) CreatePIN(
 		return CreatePINResult{}, err
 	}
 
+	// The cooldown above is per verification. This is per address, which is the
+	// only shape that bounds what the address actually costs: an address can hold
+	// several verifications, and each would otherwise hand out its own cooldown.
+	// It sits after the cooldown so a caller that is already being told to wait is
+	// not also charged for asking.
+	if err := s.ensurePinRateAvailable(ctx, verification.Email); err != nil {
+		return CreatePINResult{}, err
+	}
+
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {
 		return CreatePINResult{}, apperror.Internal(err)
@@ -273,7 +285,7 @@ type GetVerificationResult struct {
 	Status                VerificationRequestStatus
 	RegistrationExpiresAt time.Time
 	LastSentAt            *time.Time
-	PinIssuedCount int32
+	PinIssuedCount        int32
 }
 
 func (s *service) GetVerification(
@@ -303,7 +315,7 @@ func (s *service) GetVerification(
 		Status:                VerificationRequestStatus(verification.Status),
 		RegistrationExpiresAt: verification.RegistrationExpiresAt.Time,
 		LastSentAt:            lastSentAt,
-		PinIssuedCount: verification.PinIssuedCount,
+		PinIssuedCount:        verification.PinIssuedCount,
 	}, nil
 }
 
@@ -330,6 +342,11 @@ func (s *service) ResendVerification(
 	// The same check CreatePIN makes, called from the same helper: two issuance
 	// paths that each spelled this rule out would be two rules to keep in step.
 	if err := ensureVerificationCooldownElapsed(verification); err != nil {
+		return ResendVerificationResult{}, err
+	}
+
+	// One budget for the address, whichever endpoint spent it. See CreatePIN.
+	if err := s.ensurePinRateAvailable(ctx, verification.Email); err != nil {
 		return ResendVerificationResult{}, err
 	}
 
@@ -562,19 +579,18 @@ func (s *service) FinalizeManualRegistration(
 	}, nil
 }
 
-
 type FinalizeSocialRegistrationInput struct {
 	ContinuationToken string
 	DisplayName       string
 }
 
 type FinalizeSocialRegistrationResult struct {
-    UserID       uuid.UUID
-    Email        string
-    DisplayName  string
-    Session      sessiondb.Session
-    RefreshToken string
-    AccessToken  string
+	UserID       uuid.UUID
+	Email        string
+	DisplayName  string
+	Session      sessiondb.Session
+	RefreshToken string
+	AccessToken  string
 }
 
 func (s *service) FinalizeSocialRegistration(
@@ -623,29 +639,29 @@ func (s *service) FinalizeSocialRegistration(
 	}
 
 	sessionResult, err := s.sessionService.CreateSession(
-    ctx,
-    user.ID,
-    metadata,
+		ctx,
+		user.ID,
+		metadata,
 	)
 	if err != nil {
-    return FinalizeSocialRegistrationResult{}, err
+		return FinalizeSocialRegistrationResult{}, err
 	}
 
 	accessToken, err := s.accessTokenGenerator.Generate(
-    user.ID,
-    sessionResult.Session.ID,
-    session.AccessTokenLifetime,
-)
+		user.ID,
+		sessionResult.Session.ID,
+		session.AccessTokenLifetime,
+	)
 	if err != nil {
-    return FinalizeSocialRegistrationResult{}, apperror.Internal(err)
+		return FinalizeSocialRegistrationResult{}, apperror.Internal(err)
 	}
 
 	return FinalizeSocialRegistrationResult{
-    UserID:       user.ID,
-    Email:        user.Email,
-    DisplayName:  user.DisplayName,
-    Session:      sessionResult.Session,
-    RefreshToken: sessionResult.RefreshToken,
-    AccessToken:  accessToken,
+		UserID:       user.ID,
+		Email:        user.Email,
+		DisplayName:  user.DisplayName,
+		Session:      sessionResult.Session,
+		RefreshToken: sessionResult.RefreshToken,
+		AccessToken:  accessToken,
 	}, nil
 }

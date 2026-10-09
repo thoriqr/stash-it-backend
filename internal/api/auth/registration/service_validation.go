@@ -1,11 +1,13 @@
 package registration
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	registrationdb "github.com/thoriqr/stash-it-backend/internal/api/auth/registration/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 )
 
 func validateVerificationPending(
@@ -75,54 +77,107 @@ func ensureVerificationCooldownElapsed(
 	return nil
 }
 
-func validateRegistrationContinuation(
-    continuation registrationdb.GetRegistrationContinuationRow,
+// ensurePinRateAvailable reports whether one address may have another PIN issued.
+//
+// It sits after the verification has been resolved, because the budget is the
+// address's and the address only becomes known there. Reading it from the same
+// row the rest of the flow already needs means the check costs no extra query.
+//
+// Both issuance paths call it with the same namespace, so one address spends one
+// budget no matter which endpoint it uses or how many verifications it has.
+//
+// The address is normalized again here. It is already stored normalized, so this
+// changes nothing today; it is here because the key must be the canonical form of
+// the address and that rule belongs to this feature, not to the limiter.
+//
+// A limiter that cannot answer is treated as a refusal. The alternative is to
+// let the request through whenever Redis is unreachable, which hands an attacker
+// the ability to switch protection off by causing a failure. Refusing means an
+// outage stops PIN issuance, which is a visible and recoverable condition, rather
+// than silently removing the ceiling on what an address can be sent.
+func (s *service) ensurePinRateAvailable(
+	ctx context.Context,
+	email string,
 ) error {
-    now := time.Now()
+	result, err := s.pinRateLimiter.Allow(
+		ctx,
+		pinRateLimitNamespace,
+		NormalizeEmail(email),
+		ratelimit.Policy{
+			Max:    PinRateLimitMax,
+			Window: PinRateLimitWindow,
+		},
+	)
+	if err != nil {
+		return apperror.ServiceUnavailableWith(
+			CodePinRateLimitUnavailable,
+			"too many verification codes requested, please try again shortly",
+			err,
+		)
+	}
 
-    if continuation.ConsumedAt.Valid {
-        return apperror.ConflictWith(
-            CodeRegistrationContinuationConsumed,
-            "registration continuation has already been consumed",
-            nil,
-        )
-    }
+	if !result.Allowed {
+		// The wait comes from the counter's own remaining window rather than from
+		// the configured policy, so a caller arriving late into a window is told
+		// to come back when this one actually ends and not a full window later.
+		return apperror.TooManyRequestsWithRetryAfter(
+			CodePinRateLimitExceeded,
+			"too many verification codes requested, please try again later",
+			result.RetryAfter,
+		)
+	}
 
-    if !continuation.ExpiresAt.Valid {
-        return apperror.Internal(
-            fmt.Errorf("registration continuation expiration is missing"),
-        )
-    }
+	return nil
+}
 
-    if !now.Before(continuation.ExpiresAt.Time) {
-        return apperror.ConflictWith(
-            CodeRegistrationContinuationExpired,
-            "registration continuation has expired",
-            nil,
-        )
-    }
+func validateRegistrationContinuation(
+	continuation registrationdb.GetRegistrationContinuationRow,
+) error {
+	now := time.Now()
 
-    if continuation.RegistrationStatus != string(PendingRegistrationPending) {
-        return apperror.ConflictWith(
-            CodeRegistrationNotPending,
-            "registration is no longer pending",
-            nil,
-        )
-    }
+	if continuation.ConsumedAt.Valid {
+		return apperror.ConflictWith(
+			CodeRegistrationContinuationConsumed,
+			"registration continuation has already been consumed",
+			nil,
+		)
+	}
 
-    if !continuation.RegistrationExpiresAt.Valid {
-        return apperror.Internal(
-            fmt.Errorf("registration expiration is missing"),
-        )
-    }
+	if !continuation.ExpiresAt.Valid {
+		return apperror.Internal(
+			fmt.Errorf("registration continuation expiration is missing"),
+		)
+	}
 
-    if !now.Before(continuation.RegistrationExpiresAt.Time) {
-        return apperror.ConflictWith(
-            CodeRegistrationExpired,
-            "registration has expired",
-            nil,
-        )
-    }
+	if !now.Before(continuation.ExpiresAt.Time) {
+		return apperror.ConflictWith(
+			CodeRegistrationContinuationExpired,
+			"registration continuation has expired",
+			nil,
+		)
+	}
 
-    return nil
+	if continuation.RegistrationStatus != string(PendingRegistrationPending) {
+		return apperror.ConflictWith(
+			CodeRegistrationNotPending,
+			"registration is no longer pending",
+			nil,
+		)
+	}
+
+	if !continuation.RegistrationExpiresAt.Valid {
+		return apperror.Internal(
+			fmt.Errorf("registration expiration is missing"),
+		)
+	}
+
+	if !now.Before(continuation.RegistrationExpiresAt.Time) {
+		return apperror.ConflictWith(
+			CodeRegistrationExpired,
+			"registration has expired",
+			nil,
+		)
+	}
+
+	return nil
 }

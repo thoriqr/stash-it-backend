@@ -13,8 +13,8 @@ type Handler struct {
 	service RegistrationService
 }
 
-func NewHandler(service RegistrationService) *Handler  {
-	return &Handler {
+func NewHandler(service RegistrationService) *Handler {
+	return &Handler{
 		service: service,
 	}
 }
@@ -113,6 +113,12 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 // @Description - VERIFICATION_NOT_PENDING
 // @Description - REGISTRATION_NOT_PENDING
 // @Description - REGISTRATION_EXPIRED
+// @Description - VERIFICATION_RESEND_COOLDOWN
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
+// @Description - PIN_RATE_LIMIT_EXCEEDED
+// @Description - PIN_RATE_LIMIT_UNAVAILABLE
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Registration
@@ -122,7 +128,9 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid verification ID"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification or registration conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address or for this email address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no code was issued"
 // @Router /auth/register/verification/{verification_id}/pin [post]
 func (h *Handler) CreatePIN(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
@@ -161,6 +169,11 @@ func (h *Handler) CreatePIN(c fiber.Ctx) error {
 // @Description - REGISTRATION_NOT_PENDING
 // @Description - REGISTRATION_EXPIRED
 // @Description - VERIFICATION_RESEND_COOLDOWN
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
+// @Description - PIN_RATE_LIMIT_EXCEEDED
+// @Description - PIN_RATE_LIMIT_UNAVAILABLE
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Registration
@@ -170,7 +183,9 @@ func (h *Handler) CreatePIN(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid verification ID"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification or registration conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address or for this email address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no code was issued"
 // @Router /auth/register/verification/{verification_id}/resend [post]
 func (h *Handler) ResendVerification(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
@@ -327,39 +342,39 @@ func (h *Handler) GetRegistrationContinuation(c fiber.Ctx) error {
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /auth/register/finalize/manual [post]
 func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
-    var req FinalizeManualRegistrationRequest
+	var req FinalizeManualRegistrationRequest
 
-    if err := httpx.BindBody(c, &req); err != nil {
-        return err
-    }
+	if err := httpx.BindBody(c, &req); err != nil {
+		return err
+	}
 
-    continuationToken, err := extractRegistrationContinuationToken(c)
-    if err != nil {
-        return err
-    }
+	continuationToken, err := extractRegistrationContinuationToken(c)
+	if err != nil {
+		return err
+	}
 
-    result, err := h.service.FinalizeManualRegistration(
-        c.Context(),
-        FinalizeManualRegistrationInput{
-            ContinuationToken: continuationToken,
-            DisplayName:       req.DisplayName,
-            Password:          req.Password,
-        },
-    )
-    if err != nil {
-        return err
-    }
+	result, err := h.service.FinalizeManualRegistration(
+		c.Context(),
+		FinalizeManualRegistrationInput{
+			ContinuationToken: continuationToken,
+			DisplayName:       req.DisplayName,
+			Password:          req.Password,
+		},
+	)
+	if err != nil {
+		return err
+	}
 
-    response := FinalizeManualRegistrationResponse{
-        Email:       result.Email,
-        DisplayName: result.DisplayName,
-    }
+	response := FinalizeManualRegistrationResponse{
+		Email:       result.Email,
+		DisplayName: result.DisplayName,
+	}
 
-    return httpx.Created(
-        c,
-        "registration completed successfully",
-        &response,
-    )
+	return httpx.Created(
+		c,
+		"registration completed successfully",
+		&response,
+	)
 }
 
 // FinalizeSocialRegistration godoc

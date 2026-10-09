@@ -11,6 +11,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
@@ -98,7 +99,55 @@ func (f *FakeEnricher) RequestedURLs() []string {
 }
 
 func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
-	return NewAppWithEnricher(pool, &FakeEnricher{})
+	return NewAppWithLimiter(pool, NewPermissivePinRateLimiter())
+}
+
+// NewAppWithLimiter builds the app with a caller-supplied PIN rate limiter.
+//
+// Rate limiting needs no Redis container for the suite as a whole, and a test that
+// is about registration rather than about the limiter should not have to start
+// one. This constructor lets a test that does care about limiting supply its own
+// limiter: a fake that refuses after a set number of calls, one that fails, or the
+// real Redis-backed one.
+func NewAppWithLimiter(
+	pool *pgxpool.Pool,
+	pinRateLimiter registration.PinRateLimiter,
+) (*fiber.App, *FakeEmailSender) {
+	return newApp(
+		pool,
+		&FakeEnricher{},
+		nil,
+		pinRateLimiter,
+		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+	)
+}
+
+// NewAppWithTrustedProxy builds the app configured as it would be behind a
+// reverse proxy, so a test can drive real client addresses through it.
+//
+// The allowlist is the unspecified address because that is the only peer
+// `app.Test` can present: it serves requests from an in-memory connection with no
+// address of its own. Naming it as the trusted proxy is what makes a forwarded
+// header in the request the thing that decides the client address, which is the
+// only way to test per-address behaviour without a real socket to vary.
+//
+// It is test scaffolding and says nothing about what a deployment should set. A
+// deployment's allowlist has to come from its actual network.
+func NewAppWithTrustedProxy(
+	pool *pgxpool.Pool,
+	pinRateLimiter registration.PinRateLimiter,
+) (*fiber.App, *FakeEmailSender) {
+	return newApp(
+		pool,
+		&FakeEnricher{},
+		nil,
+		pinRateLimiter,
+		config.Config{
+			ClientIPSource:     config.ClientIPSourceProxy,
+			TrustedProxies:     []string{"0.0.0.0"},
+			TrustedProxyHeader: "X-Forwarded-For",
+		},
+	)
 }
 
 // NewAppWithEnricher builds the app with a caller-supplied enricher.
@@ -127,6 +176,31 @@ func NewAppWithEnqueuer(
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
 ) (*fiber.App, *FakeEmailSender) {
+	return newApp(
+		pool,
+		enricher,
+		enqueuer,
+		NewPermissivePinRateLimiter(),
+		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+	)
+}
+
+// newApp builds the app from every injectable dependency.
+//
+// The queue enqueuer and the PIN rate limiter are both passed through, including
+// as nil, because "this process does that for nothing" is a thing a test is
+// allowed to want.
+//
+// proxySettings is derived from the same config the production binary derives its
+// own from, so a test exercises the resolution path the application actually
+// configures rather than a hand-built approximation of it.
+func newApp(
+	pool *pgxpool.Pool,
+	enricher enrichment.MetadataEnricher,
+	enqueuer saveditem.SavedItemEnqueuer,
+	pinRateLimiter registration.PinRateLimiter,
+	cfg config.Config,
+) (*fiber.App, *FakeEmailSender) {
 	validate := validation.New()
 
 	log, err := logger.New("development")
@@ -134,19 +208,23 @@ func NewAppWithEnqueuer(
 		panic(err)
 	}
 
+	proxySettings := cfg.ProxySettings()
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler:    httpx.NewErrorHandler(log),
-		StructValidator: validate,
+		ErrorHandler:       httpx.NewErrorHandler(log),
+		StructValidator:    validate,
+		TrustProxy:         proxySettings.TrustProxy,
+		TrustProxyConfig:   fiber.TrustProxyConfig{Proxies: proxySettings.Proxies},
+		ProxyHeader:        proxySettings.ProxyHeader,
+		EnableIPValidation: proxySettings.EnableIPValidation,
 	})
 
 	app.Use(recoverer.New())
 	app.Use(requestid.New())
 
-	cfg := config.Config{
-		AppEnv:                 "development",
-		VerificationCodeSecret: testVerificationCodeSecret,
-		AccessTokenSecret:      TestAccessTokenSecret,
-	}
+	cfg.AppEnv = "development"
+	cfg.VerificationCodeSecret = testVerificationCodeSecret
+	cfg.AccessTokenSecret = TestAccessTokenSecret
 
 	emailSender := &FakeEmailSender{}
 
@@ -166,6 +244,7 @@ func NewAppWithEnqueuer(
 		log,
 		emailSender,
 		googleTokenVerifier,
+		pinRateLimiter,
 	)
 
 	saveditem.RegisterModule(
