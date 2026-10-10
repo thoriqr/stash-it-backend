@@ -43,8 +43,13 @@ type AppError struct {
 	Fields  []ErrorField
 	Err     error
 
-	// retryAfterSeconds, when set and the status is 429, is written to the
-	// response as a `Retry-After` header.
+	// retryAfterSeconds, when set, is written to the response as a `Retry-After`
+	// header.
+	//
+	// It is nil unless an error was built by a constructor that was given a wait,
+	// which is what keeps a response from ever carrying a header nobody chose.
+	// Only TooManyRequestsWithRetryAfter and ServiceUnavailableWithRetryAfter set
+	// it today.
 	//
 	// It is unexported and read through RetryAfterSeconds because the error
 	// handler is the only thing that should decide how it reaches the wire, and
@@ -346,6 +351,32 @@ func ServiceUnavailableWith(code, message string, err error) *AppError {
 		message,
 		err,
 	)
+}
+
+// ServiceUnavailableWithRetryAfter returns a 503 carrying a `Retry-After` header
+// value derived from wait.
+//
+// This is the one kind of 503 whose recovery time somebody actually knows.
+// ServiceUnavailable alone carries no wait, because a limiter that cannot answer
+// has no window to name and inventing one would tell a client to come back at a
+// moment nobody chose. A server refusing work because it is temporarily out of
+// capacity is a different thing: it can say roughly when a slot frees up, and
+// saying so is what stops a client from retrying straight back into the same
+// refusal.
+//
+// The underlying error is retained here where TooManyRequestsWithRetryAfter does
+// not take one. A caller refused by a rate limit is being told something the
+// response already says, whereas refusing work is a fault worth logging with
+// whatever caused it.
+func ServiceUnavailableWithRetryAfter(
+	code, message string,
+	wait time.Duration,
+	err error,
+) *AppError {
+	appErr := ServiceUnavailableWith(code, message, err)
+	appErr.retryAfterSeconds = RetryAfterSeconds(wait)
+
+	return appErr
 }
 
 // Internal returns a generic 500 Internal Server Error.

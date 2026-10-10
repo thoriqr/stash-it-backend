@@ -48,24 +48,26 @@ func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
 			log.Warn("request failed", fields...)
 		}
 
-		// A rate-limited caller is told when to come back, and only that caller.
+		// A caller that was told to come back is told when, and only when
+		// something actually said so.
 		//
 		// The value is written here rather than inside the service because this is
 		// the single place a response is written: a value carried on the error and
 		// never emitted would leave a client guessing when its own window reopens,
-		// which is exactly the behaviour a rate limit exists to make predictable.
+		// which is exactly the behaviour a limit exists to make predictable.
 		//
-		// It is gated on 429 rather than on the field alone. A 503 from an
-		// unreachable counter has no recovery time anyone could name, so
-		// fabricating one would be a lie told to a client that is already being
-		// told to try again shortly.
-		if appErr.Status == fiber.StatusTooManyRequests {
-			if retryAfter := appErr.RetryAfterSeconds(); retryAfter != nil {
-				c.Set(
-					fiber.HeaderRetryAfter,
-					strconv.Itoa(*retryAfter),
-				)
-			}
+		// The gate is the value's presence, not the status. A header is written only
+		// when the error was built carrying one, and nothing here invents one: a 503
+		// from an unreachable counter has no recovery time anyone could name, so it
+		// carries none and the response stays bare. What must never happen is a
+		// fabricated value, not a configured one reaching the wire — so gating on
+		// 429 alone would have made a deliberately configured wait unrepresentable
+		// rather than keeping anyone honest.
+		if retryAfter := appErr.RetryAfterSeconds(); retryAfter != nil {
+			c.Set(
+				fiber.HeaderRetryAfter,
+				strconv.Itoa(*retryAfter),
+			)
 		}
 
 		return c.Status(appErr.Status).JSON(errorResponse{
