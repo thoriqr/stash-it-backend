@@ -81,9 +81,13 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 // @Description - authenticated: the user is authenticated and access/refresh tokens are returned.
 // @Description - account_link_required: the user must confirm linking the Google account.
 // @Description - registration_required: the user must continue the registration flow.
+// @Description The Google authentication routes share one per-client-address budget.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_GOOGLE_TOKEN
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Login
 // @Accept json
@@ -96,7 +100,9 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 // @Success 200 {object} LoginGoogleSuccessAPIResponse
 // @Failure 400 {object} swagger.ValidationError "Validation error"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid Google ID token"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, so the ID token was never verified"
 // @Router /auth/login/google [post]
 func (h *Handler) LoginGoogle(c fiber.Ctx) error {
 	var req LoginGoogleRequest
@@ -140,9 +146,13 @@ func (h *Handler) LoginGoogle(c fiber.Ctx) error {
 // GetAccountLinkConfirmation godoc
 // @Summary Get account link confirmation
 // @Description Retrieve an active Google account link confirmation.
+// @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - ACCOUNT_LINK_CONFIRMATION_INVALID
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Login
 // @Produce json
@@ -150,7 +160,9 @@ func (h *Handler) LoginGoogle(c fiber.Ctx) error {
 // @Success 200 {object} GetAccountLinkConfirmationAPIResponse
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid confirmation ID"
 // @Failure 409 {object} swagger.APIErrorResponse "Account link confirmation is invalid"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, so the confirmation was never read"
 // @Router /auth/login/google/account-link/{confirmation_id} [get]
 func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 	confirmationID, err := uuid.Parse(c.Params("confirmation_id"))
@@ -189,10 +201,14 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 // ConfirmAccountLink godoc
 // @Summary Confirm Google account link
 // @Description Confirm a Google account link and create an authenticated session.
+// @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - ACCOUNT_LINK_CONFIRMATION_INVALID
 // @Description - AUTH_IDENTITY_ALREADY_EXISTS
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Login
 // @Produce json
@@ -204,7 +220,9 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 // @Success 200 {object} LoginGoogleSuccessAPIResponse
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid confirmation ID or session metadata"
 // @Failure 409 {object} swagger.APIErrorResponse "Account link confirmation is invalid or auth identity already exists"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, so the confirmation was never read"
 // @Router /auth/login/google/account-link/{confirmation_id}/confirm [post]
 func (h *Handler) ConfirmAccountLink(c fiber.Ctx) error {
 	confirmationID, err := uuid.Parse(c.Params("confirmation_id"))

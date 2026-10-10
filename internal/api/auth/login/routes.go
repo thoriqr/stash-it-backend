@@ -22,10 +22,11 @@ func Routes(
 	// Mounting before the handler makes the count cover the attempts rather than
 	// only the attempts that were well-formed.
 	//
-	// It applies to manual login only. The Google routes are untouched: that flow
-	// verifies a token against the provider and has no password to guess, so
-	// spending an authentication budget on it would penalise a user for
-	// something they did not do wrong.
+	// It applies to manual login only, because it is an authentication budget:
+	// the manual-login flow has a password to guess, and this is what bounds how
+	// often a secret may be tried. The Google routes carry their own budget
+	// below, and the two are separate counters under separate namespaces, so
+	// neither flow's traffic can lock the other out.
 	loginIPLimit := middleware.IPRateLimit(
 		rateLimiter,
 		loginIPRateLimitNamespace,
@@ -35,17 +36,47 @@ func Routes(
 		},
 	)
 
+	// The same placement argument applies to the Google routes, for a different
+	// reason. They have no secret to guess, so nothing here stops a credential
+	// being brute-forced; what it stops is the cost of serving the route. A
+	// request that never reaches a valid Google token still verifies one against
+	// Google's published keys, and a caller holding one valid token can otherwise
+	// make the application write sessions, account link confirmations and pending
+	// registrations for as long as it keeps asking.
+	//
+	// Mounted in front of the handler, so the count covers the attempts rather
+	// than the ones that were well-formed: a body that does not parse, an id that
+	// is not a UUID and a token that does not verify are all counted, and all
+	// three are the cheapest requests to send.
+	//
+	// One handler instance mounted on all three routes, so the whole Google flow
+	// spends a single budget. A middleware handler holds no per-request state, so
+	// sharing one is safe, and it is what makes the sharing obvious at the call
+	// site rather than something a reader has to infer from three identical
+	// arguments. A caller who has been refused on Google login is not someone who
+	// should be handed a fresh allowance by moving to the confirmation route.
+	googleAuthIPLimit := middleware.IPRateLimit(
+		rateLimiter,
+		googleAuthIPRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    GoogleAuthIPRateLimitMax,
+			Window: GoogleAuthIPRateLimitWindow,
+		},
+	)
+
 	router.Post("/login", loginIPLimit, h.LoginManual)
 
-	router.Post("/login/google", h.LoginGoogle)
+	router.Post("/login/google", googleAuthIPLimit, h.LoginGoogle)
 
 	router.Get(
 		"/login/google/account-link/:confirmation_id",
+		googleAuthIPLimit,
 		h.GetAccountLinkConfirmation,
 	)
 
 	router.Post(
 		"/login/google/account-link/:confirmation_id/confirm",
+		googleAuthIPLimit,
 		h.ConfirmAccountLink,
 	)
 }

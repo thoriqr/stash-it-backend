@@ -354,47 +354,51 @@ func TestLoginIPRateLimit_SpoofedHeadersCannotBypassTheLimit(t *testing.T) {
 
 // The budget belongs to the client address, not to the route, so a request the
 // limiter refuses on one login route would consume the same allowance a caller
-// has on the others. There is only one limited route today; what is pinned here
-// is that the Google routes, which are unlimited by decision, do not spend it.
-func TestLoginIPRateLimit_GoogleLoginIsNotCounted(t *testing.T) {
+// has on the others. Manual login is the only route behind this budget; the fact
+// that the Google routes are behind a separate one is pinned in
+// auth_login_google_rate_limit_test.go, which also states it from this side.
+func TestLoginIPRateLimit_GoogleRoutesAreNotCounted(t *testing.T) {
 	ctx := context.Background()
 	db := logintestdb.New(testPool)
 
 	require.NoError(t, db.TruncateLoginData(ctx))
 
-	app, _ := newIPLimitedApp(t)
+	limiter := testutil.NewCountingPinRateLimiter()
+
+	app, _ := testutil.NewAppWithTrustedProxy(testPool, limiter)
 
 	const address = "198.51.100.75"
 
 	// An id that is not one. The limiter is mounted in front of path parsing, so
-	// had the Google routes been given it, the budget would already have been
-	// spent by the time the id turned out to be unusable.
-	for range login.LoginIPRateLimitMax {
-		req := httptest.NewRequest(
-			http.MethodPost,
-			"/auth/login/google/account-link/not-a-uuid",
-			strings.NewReader(""),
-		)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Forwarded-For", address)
-
-		resp, err := app.Test(req, fiber.TestConfig{Timeout: 30 * time.Second})
-		require.NoError(t, err)
-		require.NotEqual(
+	// each of these spends the Google budget in full before the id turns out to be
+	// unusable — which is the whole point of mounting it there.
+	for _, route := range googleRateLimitPaths() {
+		resp, err := googleRequest(
 			t,
-			http.StatusTooManyRequests,
+			app,
+			route.method,
+			route.path,
+			address,
+		)
+		require.NoError(t, err)
+
+		require.Equal(
+			t,
+			http.StatusBadRequest,
 			resp.StatusCode,
-			"Google login was refused by a budget it is not behind",
+			"%s %s reached its handler, so it is behind no budget",
+			route.method,
+			route.path,
 		)
 	}
 
-	// The manual login budget is untouched, so the whole allowance is still there.
-	result := postMalformedLogin(t, app, address)
-
-	require.NotEqual(
+	// Every one landed on the Google budget, and the manual-login budget was
+	// never consulted.
+	require.Equal(
 		t,
-		http.StatusTooManyRequests,
-		result.status,
-		"the Google routes spent the manual login budget: %s", result.code,
+		3,
+		limiter.CallsIn(testutil.GoogleAuthIPNamespace),
 	)
+	require.Zero(t, limiter.CallsIn(testutil.LoginIPNamespace))
+	require.Empty(t, limiter.SubjectsIn(testutil.LoginIPNamespace))
 }

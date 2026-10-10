@@ -105,7 +105,7 @@ const docTemplate = `{
         },
         "/auth/login/google": {
             "post": {
-                "description": "Authenticate a user using a Google ID token.\nThe response contains one of three outcomes:\n- authenticated: the user is authenticated and access/refresh tokens are returned.\n- account_link_required: the user must confirm linking the Google account.\n- registration_required: the user must continue the registration flow.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_GOOGLE_TOKEN\n- INTERNAL_SERVER_ERROR",
+                "description": "Authenticate a user using a Google ID token.\nThe response contains one of three outcomes:\n- authenticated: the user is authenticated and access/refresh tokens are returned.\n- account_link_required: the user must confirm linking the Google account.\n- registration_required: the user must continue the registration flow.\nThe Google authentication routes share one per-client-address budget.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_GOOGLE_TOKEN\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -170,8 +170,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Request limiting is unavailable, so the ID token was never verified",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -181,7 +193,7 @@ const docTemplate = `{
         },
         "/auth/login/google/account-link/{confirmation_id}": {
             "get": {
-                "description": "Retrieve an active Google account link confirmation.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- INTERNAL_SERVER_ERROR",
+                "description": "Retrieve an active Google account link confirmation.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -217,8 +229,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Request limiting is unavailable, so the confirmation was never read",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -228,7 +252,7 @@ const docTemplate = `{
         },
         "/auth/login/google/account-link/{confirmation_id}/confirm": {
             "post": {
-                "description": "Confirm a Google account link and create an authenticated session.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- AUTH_IDENTITY_ALREADY_EXISTS\n- INTERNAL_SERVER_ERROR",
+                "description": "Confirm a Google account link and create an authenticated session.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- AUTH_IDENTITY_ALREADY_EXISTS\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -288,8 +312,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Request limiting is unavailable, so the confirmation was never read",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

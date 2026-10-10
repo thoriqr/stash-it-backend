@@ -1180,9 +1180,13 @@ paths:
         - authenticated: the user is authenticated and access/refresh tokens are returned.
         - account_link_required: the user must confirm linking the Google account.
         - registration_required: the user must continue the registration flow.
+        The Google authentication routes share one per-client-address budget.
         Possible error codes:
         - VALIDATION_ERROR
         - INVALID_GOOGLE_TOKEN
+        - IP_RATE_LIMIT_EXCEEDED
+        - IP_RATE_LIMIT_UNAVAILABLE
+        - CLIENT_IP_UNAVAILABLE
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Google login request
@@ -1222,8 +1226,18 @@ paths:
           description: Invalid Google ID token
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Too many requests from this client address; Retry-After reports
+            when to try again
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Request limiting is unavailable, so the ID token was never
+            verified
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Login with Google
@@ -1233,9 +1247,13 @@ paths:
     get:
       description: |-
         Retrieve an active Google account link confirmation.
+        Shares the per-client-address budget with the other Google authentication routes.
         Possible error codes:
         - BAD_REQUEST
         - ACCOUNT_LINK_CONFIRMATION_INVALID
+        - IP_RATE_LIMIT_EXCEEDED
+        - IP_RATE_LIMIT_UNAVAILABLE
+        - CLIENT_IP_UNAVAILABLE
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Account link confirmation ID
@@ -1258,8 +1276,18 @@ paths:
           description: Account link confirmation is invalid
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Too many requests from this client address; Retry-After reports
+            when to try again
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Request limiting is unavailable, so the confirmation was never
+            read
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Get account link confirmation
@@ -1269,10 +1297,14 @@ paths:
     post:
       description: |-
         Confirm a Google account link and create an authenticated session.
+        Shares the per-client-address budget with the other Google authentication routes.
         Possible error codes:
         - BAD_REQUEST
         - ACCOUNT_LINK_CONFIRMATION_INVALID
         - AUTH_IDENTITY_ALREADY_EXISTS
+        - IP_RATE_LIMIT_EXCEEDED
+        - IP_RATE_LIMIT_UNAVAILABLE
+        - CLIENT_IP_UNAVAILABLE
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Account link confirmation ID
@@ -1312,8 +1344,18 @@ paths:
             exists
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Too many requests from this client address; Retry-After reports
+            when to try again
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Request limiting is unavailable, so the confirmation was never
+            read
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Confirm Google account link

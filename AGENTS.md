@@ -139,6 +139,25 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
 - Registration / password-reset verification endpoints are intentionally
   unauthenticated; the existing `verification_id` + emailed PIN flow is the
   credential.
+- **Rate limiting is per flow, and a flow's budgets must not be reused by
+  another.** Manual login has `login-ip` (route middleware) and `login-email`
+  (service); all three Google authentication routes share `google-auth-ip` (route
+  middleware). Google login and manual login are two doors into the same
+  application: neither flow's traffic may lock the other out, and because the
+  limiter fails closed, one namespace counting both would let a single exhausted
+  counter take both doors down. Do not merge the namespaces.
+- **The Google budget is a ceiling on cost, not on credential guessing.** The
+  Google routes have no secret to try, so nothing there is about brute force; what
+  it bounds is token verification and the session, confirmation and pending-row
+  writes a caller holding one valid token could otherwise repeat indefinitely. Do
+  not add a per-email budget to these routes: the email would come from a
+  Google-verified claim the caller does not choose, so it could only ever be spent
+  by the legitimate owner, making it a lockout rather than a protection.
+- **Limiter thresholds in `internal/api/auth/login/constants.go` are initial
+  engineering estimates, not measured production values.** No deployment has been
+  selected and no traffic observed. Do not treat them as validated, and do not
+  lower one to match another without saying which shared-address false positive
+  that trades away.
 
 ## Outbound fetches and enrichment
 

@@ -32,6 +32,61 @@ const (
 // later cannot accidentally give it its own budget.
 const loginIPRateLimitNamespace = "login-ip"
 
+// GoogleAuthIPRateLimitMax and GoogleAuthIPRateLimitWindow bound how often one
+// client address may reach any of the Google authentication routes: signing in
+// with a Google ID token, reading an account link confirmation, and confirming
+// one. All three spend this one budget, because they are one flow and a caller
+// moving between them is not a caller trying harder.
+//
+// It is a ceiling on cost, and it guards a different cost than the manual-login
+// budget above. Manual login exists to stop a secret being guessed, and each
+// attempt there costs an Argon2id derivation. The Google routes have no secret to
+// guess — the credential is a signature Google made — but they are still not free
+// to serve. Every request verifies a token against Google's published keys, and
+// a caller holding one valid token can otherwise cause an unbounded number of
+// session writes, account link confirmations and pending registrations by
+// repeating a request that succeeds. Nothing else bounds any of that, so this is
+// the only ceiling on it.
+//
+// It sits above the manual-login value deliberately. A Google refusal has no
+// fallback for the user the way a PIN refusal does: Google login is one of only
+// two ways into the application, and a shared address — a household, an office, a
+// carrier's CGNAT — sees everyone sign in at the same predictable moments. Every
+// refusal here is a false positive rather than a guess running out of attempts,
+// so the value is set where a legitimate burst is comfortably inside budget.
+//
+// Sixty in ten minutes still caps a single address at roughly eight thousand
+// requests a day. **These are initial engineering estimates, not
+// production-validated thresholds.** No deployment has been selected and no
+// traffic has been observed; both values should be reassessed against real
+// traffic and against shared-address false positives before this is relied on.
+const (
+	GoogleAuthIPRateLimitMax    = 60
+	GoogleAuthIPRateLimitWindow = 10 * time.Minute
+)
+
+// googleAuthIPRateLimitNamespace groups the per-address counters in Redis for the
+// Google authentication routes.
+//
+// It is deliberately a different namespace from both loginIPRateLimitNamespace
+// and loginEmailFailureNamespace. Google login and manual login are two doors
+// into the same building, not two rooms in it: someone signing in with Google has
+// not done anything that should cost their manual-login budget, and someone
+// signing in with a password has not earned the right to spend a Google one.
+// Sharing either budget would make one flow's flood lock the other flow out.
+const googleAuthIPRateLimitNamespace = "google-auth-ip"
+
+// No per-email budget guards any Google route, and the absence is a decision
+// rather than an omission.
+//
+// The email the flow spends would be the one inside Google's verified claim, and
+// the caller does not choose it: reaching this code at all required a token
+// Google signed asserting, with email_verified, that its holder controls that
+// address. An attacker cannot aim such a budget at a victim's mailbox, so a
+// per-email budget here could only ever be spent by the legitimate owner of the
+// address it names. Its only effect would be locking that owner out of one of
+// two ways in, which is a denial of service and not a protection.
+
 // LoginEmailFailureLimit and LoginEmailFailureWindow bound how many failed
 // authentications one email address may have within the window.
 //

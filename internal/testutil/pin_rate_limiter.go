@@ -379,6 +379,14 @@ const (
 	// LoginIPNamespace is the per-client-address login budget, spent before the
 	// handler.
 	LoginIPNamespace = "login-ip"
+
+	// GoogleAuthIPNamespace is the per-client-address budget covering all three
+	// Google authentication routes, spent before the handler and shared between
+	// them. It is a separate counter from LoginIPNamespace, and the two must
+	// stay that way: a caller signing in with Google has not spent anything on
+	// their manual-login budget, and a caller signing in with a password has not
+	// earned a Google one.
+	GoogleAuthIPNamespace = "google-auth-ip"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

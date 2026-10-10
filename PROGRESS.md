@@ -777,10 +777,12 @@ honest consequence of `platform` being free text published by the page.
 
 ### Still not implemented
 
-- Rate limiting for endpoints other than the two PIN endpoints. Per-email and
-  per-IP PIN limiting is implemented and verified — see "Registration rate
-  limiting" below. Login, password reset, saved items, collections, search and
-  enrichment are deliberately unlimited for now.
+- Rate limiting for endpoints other than the PIN endpoints, manual login and the
+  Google authentication routes. Per-email and per-IP PIN limiting is implemented
+  and verified — see "Registration rate limiting" below. Manual login has two
+  budgets and Google authentication has one — see "Login rate limiting" and
+  "Google authentication rate limiting" below. Password reset, saved items,
+  collections, search and enrichment remain deliberately unlimited for now.
 - A possible one-off backfill of items enriched before automatic organization
   existed, which are still in `Unsorted` with a platform. This is an open product
   decision rather than a gap in the mechanism, and it would be a separate
@@ -1018,19 +1020,26 @@ Nothing here was weakened to make a test pass.
 
 ## Login rate limiting and enumeration resistance — implemented
 
-`POST /auth/login` is limited, and the Google routes are not. Two independent
-budgets apply to manual login, and neither replaces the other.
+`POST /auth/login` and the three Google authentication routes are limited, by
+separate budgets under separate namespaces. Two independent budgets apply to
+manual login, and neither replaces the other.
 
-| Budget     | Subject                    | Limit             | Namespace     | Enforced by        |
-| ---------- | -------------------------- | ----------------- | ------------- | ------------------ |
-| per-IP     | resolved client IP address | 30 per 10 minutes | `login-ip`    | route middleware   |
-| per-email  | normalized email address   | 10 per 15 minutes | `login-email` | `login` service    |
+| Budget      | Subject                    | Limit             | Namespace        | Enforced by        |
+| ----------- | -------------------------- | ----------------- | ---------------- | ------------------ |
+| per-IP      | resolved client IP address | 30 per 10 minutes | `login-ip`       | route middleware   |
+| per-email   | normalized email address   | 10 per 15 minutes | `login-email`    | `login` service    |
+| per-IP      | resolved client IP address | 60 per 10 minutes | `google-auth-ip` | route middleware   |
 
-Both are Redis-backed fixed-window counters from the same `internal/ratelimit`
-package the PIN budgets use, sharing one Redis, one Lua script and one connection
-pool. An address spread across a thousand source IPs is never near its per-IP
-ceiling, which is exactly the shape of a credential-stuffing list; the per-email
-budget is what still holds in that case.
+The third row covers `POST /auth/login/google`,
+`GET /auth/login/google/account-link/:confirmation_id` and
+`POST /auth/login/google/account-link/:confirmation_id/confirm`. It is described
+in its own section below.
+
+Both of manual login's budgets are Redis-backed fixed-window counters from the
+same `internal/ratelimit` package the PIN budgets use, sharing one Redis, one Lua
+script and one connection pool. An address spread across a thousand source IPs is
+never near its per-IP ceiling, which is exactly the shape of a credential-stuffing
+list; the per-email budget is what still holds in that case.
 
 The per-IP ceiling sits deliberately above the equivalent PIN ceiling. People
 share addresses — a household, an office, a carrier's CGNAT — and do so most
@@ -1157,7 +1166,7 @@ fastest of five known-account and five unknown-address logins.
 
 `internal/api/auth/login` (routes) — the declared policy applied in front of the
 handler, the subject canonicalized, a spent budget stopping the request, an
-unusable one producing 503, and no Google route spending a budget.
+unusable one producing 503, and no route spending another flow's budget.
 
 `internal/integration` — against real Postgres and real Redis: the per-email
 budget exhausting on the eleventh attempt with nothing issued; `Retry-After`
@@ -1167,7 +1176,8 @@ on a single budget; a successful login restoring it; both 503 paths carrying no
 header and issuing nothing; the per-IP budget refusing without spending the
 per-email one; one address exhausted not affecting a neighbour; concurrent
 requests from one address admitting exactly the budget; spoofed headers landing
-on the peer's address; and Google login spending no budget at all.
+on the peer's address; and the two per-IP budgets staying separate in both
+directions.
 
 **The two tests that measure rather than assert were proven to detect what they
 claim to.** With the Lua script replaced by a client-side `GET`/`SET`
@@ -1175,6 +1185,132 @@ read-modify-write, the concurrency test fails; with `DummyVerify` removed, the
 enumeration floor fails. Both pass again once restored.
 
 Nothing here was weakened to make a test pass.
+
+---
+
+## Google authentication rate limiting — implemented
+
+All three Google authentication routes are limited by one per-client-address
+budget under the `google-auth-ip` namespace:
+
+| Route                                                            | Method |
+| ---------------------------------------------------------------- | ------ |
+| `/auth/login/google`                                             | POST   |
+| `/auth/login/google/account-link/:confirmation_id`               | GET    |
+| `/auth/login/google/account-link/:confirmation_id/confirm`       | POST   |
+
+| Budget | Subject                    | Limit             | Namespace        | Enforced by      |
+| ------ | -------------------------- | ----------------- | ---------------- | ---------------- |
+| per-IP | resolved client IP address | 60 per 10 minutes | `google-auth-ip` | route middleware |
+
+One middleware instance is mounted on all three, so the whole flow spends one
+budget. A caller refused on Google login is not someone who should be handed a
+fresh allowance by moving to the account-link routes. Mounted in front of the
+handler for the same reason as everywhere else: a body that does not parse, an id
+that is not a UUID and a token that does not verify are all counted, and all
+three are the cheapest requests to send.
+
+### Why a budget is needed when there is no secret to guess
+
+The credential here is a signature Google made, so an *authentication* budget has
+nothing to stop — there is no password to brute-force. What the routes are not
+free to serve is cost, and nothing else bounded any of it:
+
+- Every request verifies an ID token against Google's published keys. The
+  verifier's cert cache is process-wide and normally warm, but the cost is
+  real, and it is reachable with no credentials at all.
+- A caller holding **one valid token** can otherwise make the application write
+  `sessions` and `refresh_tokens` rows for as long as it keeps asking. There is
+  no per-user session cap on any login path.
+- Every `account_link_required` outcome inserts a new
+  `account_link_confirmations` row, with no dedup, no cap and no reaper.
+- Every `registration_required` outcome runs a multi-statement transaction
+  creating a pending registration, a pending social identity and a verification
+  request.
+
+So this is a ceiling on resource cost, deliberately *not* on credential guessing,
+and it is placed on the IP because that is the only dimension the caller can vary
+without also giving up the thing being rate-limited.
+
+### Why there is no per-email budget here
+
+The email this flow would key on is the one inside Google's verified claim, and
+the caller does not choose it: reaching that code at all required a token Google
+signed asserting, with `email_verified`, that its holder controls that address. An
+attacker cannot aim such a budget at a victim's mailbox.
+
+A per-email budget here could therefore only ever be spent by the legitimate
+owner of the address it names. Its only effect would be locking that owner out of
+one of two ways in — a denial of service, not a protection. The same reasoning
+applies to `ConfirmAccountLink`, where the email is the confirmation's stored
+`email_snapshot`, which the caller has no influence over.
+
+### Why it is separate from the manual-login budgets
+
+`login-ip` and `google-auth-ip` are two doors into the same application, not two
+rooms in it. Someone signing in with Google has not spent anything on their
+manual-login budget, and someone signing in with a password has not earned a
+Google one. Merging them would mean one flow's flood locked the other flow's users
+out — and because the limiter fails closed, an application that counted both under
+one namespace could have both doors taken down by a single exhausted counter.
+
+### Responses
+
+Identical to the manual-login per-IP budget, because it is the same middleware:
+
+| Situation                   | Status | Code                       | `Retry-After` |
+| --------------------------- | ------ | -------------------------- | ------------- |
+| budget spent                | 429    | `IP_RATE_LIMIT_EXCEEDED`   | yes           |
+| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE`| **no**        |
+| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`    | **no**        |
+
+A 503 means the ID token was never verified. An outage must not become a way to
+have a Google credential checked, and it must not become a way to write a session.
+
+### Thresholds are estimates, not measurements
+
+**60 per 10 minutes is an initial engineering estimate.** No deployment platform
+has been selected and no traffic has been observed, so neither this value nor the
+manual-login one has been validated against real usage or against shared-address
+false positives. It is set at twice `LoginIPRateLimitMax` deliberately: a Google
+refusal is never a guess running out of attempts, so every refusal here is a false
+positive, and Google login is one of only two ways in. 60/10min still caps a single
+address at roughly eight thousand requests a day. Reassess both values — and the
+shared-proxy failure mode described under outstanding deployment work — before
+this is relied on.
+
+### Verification
+
+`internal/api/auth/login` (routes) — all three routes spending one budget under
+the declared policy and namespace; a request within budget reaching the handler
+with the manual-login budgets untouched; a spent budget stopping the request
+before the handler with a bounded `Retry-After`; an unusable budget producing a
+503 with no header; and namespace independence in both directions — a spent Google
+budget refusing only the Google routes, and a spent manual-login budget leaving
+Google login answerable. The independence tests set one namespace's outcome and
+let the other default, so a limiter refusing everything cannot make them pass for
+the wrong reason.
+
+`internal/integration/auth_login_google_rate_limit_test.go` — against real Redis:
+the budget walked to exhaustion, the other two routes then refused on the same
+counter, one address exhausted not affecting a neighbour, `Retry-After` integral,
+within the window and non-increasing across refusals, concurrent requests from one
+address admitting exactly the budget, a spent Google budget leaving manual login
+answerable, and a spent manual-login budget leaving Google login answerable.
+
+Every request in that file is deliberately malformed, so the budget is spent in
+front of the handler and the flood costs the suite no token verifications and no
+database writes. The 400 a malformed request produces is the unambiguous marker
+that the limiter let it through.
+
+`internal/integration/auth_login_ip_rate_limit_test.go` — the Google routes
+charged three times against `google-auth-ip` and never against `login-ip`.
+
+**Redis concurrency is genuinely covered** for this budget:
+`TestGoogleAuthIPRateLimit_ConcurrentRequestsCannotExceedTheBudget` fires three
+times the allowance simultaneously and asserts that exactly the excess was
+refused, which is the property a read-modify-write counter would fail. It has been
+run under `-race` and re-run with `-count=4` without a flake.
 
 ---
 
@@ -1286,10 +1422,11 @@ missing is the information only a chosen environment can supply.
   only.
 - Test real client-address resolution in the chosen environment.
 - Reassess the initial per-IP threshold against real traffic and against
-  shared-address false positives. There are now **two** per-IP policies, not
-  one: `20/10min` for PIN issuance and `30/10min` for manual login. They are
-  separate counters and one being spent says nothing about the other, so both
-  need a traffic-informed threshold.
+  shared-address false positives. There are now **three** per-IP policies, not
+  one: `20/10min` for PIN issuance, `30/10min` for manual login and
+  `60/10min` for Google authentication. They are separate counters and one being
+  spent says nothing about the other, so all three need a traffic-informed
+  threshold.
 
 **The specific risk that cannot be closed in code.** With the default `peer`
 source, a deployment that is actually behind a proxy resolves every client to the
@@ -1316,6 +1453,14 @@ collapsed counter on `POST /auth/login` means one unlucky address exhausts a
 cannot sign in at all. The per-IP budget there is deliberately set higher than
 the PIN one for exactly this reason, but it is mitigation, not a fix.
 
+The same misconfiguration now affects Google authentication too, and that one is
+worth watching separately: a collapsed `google-auth-ip` counter would refuse
+Google sign-in for everyone behind the proxy. It is set to 60/10min — twice the
+manual-login budget — because a Google refusal is never a guess running out of
+attempts, so every refusal it produces is a false positive rather than a useful
+one. It is mitigation, not a fix, and the same `CLIENT_IP_SOURCE` verification
+applies.
+
 ### 2. Email provider selection and production configuration
 
 - Select the email delivery provider. None has been chosen; non-development
@@ -1339,11 +1484,13 @@ it is an application-level one, not a provider-level one.
 
 - Verify Redis availability, TLS and connection configuration, and failure
   behaviour for the selected hosting platform. The limiter fails closed, so a
-  Redis outage currently stops PIN issuance **and manual login** entirely rather
-  than letting either through unthrottled — deliberate, and worth confirming is
-  the intended availability trade-off for the chosen environment. Manual login is
-  the sharper half of that trade: an outage means nobody can sign in, and unlike
-  PIN issuance there is no second way in for the user to fall back on.
+  Redis outage currently stops PIN issuance, **manual login and Google
+  authentication** entirely rather than letting any of them through unthrottled —
+  deliberate, and worth confirming is the intended availability trade-off for the
+  chosen environment. Manual login is the sharper half of that trade: an outage
+  means nobody can sign in, and unlike PIN issuance there is no second way in for
+  the user to fall back on. Google authentication is now the same: it is one of
+  only two doors in, and it is blocked by the same outage for the same reason.
 - Reassess both the per-email and per-IP policies after observing realistic usage.
   For login specifically, `LoginEmailFailureLimit`/`LoginEmailFailureWindow` in
   `internal/api/auth/login/constants.go` is the single value to revisit if
@@ -1400,6 +1547,20 @@ them. The one login test that is timing-sensitive — the enumeration floor in
 is chosen so that a slow or loaded machine makes it pass more readily rather than
 less, but that is a design argument and not a measurement.
 
+**The Google authentication rate-limit tests have been re-run**, and the
+Google-specific ones only: `internal/integration` with `-run
+TestGoogleAuthIPRateLimit` at `-count=4` under `-race` showed no flakes, and the
+new route tests in `internal/api/auth/login` at `-count=6` likewise. The
+manual-login rate-limit tests remain at the single-run status described above, so
+no claim is made for those.
+
+**The rate-limit tests are proven to detect what they claim to.** Unmounting
+`googleAuthIPLimit` from the `GET .../account-link/:confirmation_id` route makes
+both the unit tests and
+`TestGoogleAuthIPRateLimit_AllThreeRoutesSpendOneBudget` fail, and the mount was
+restored afterwards. This mirrors the existing precedent for the manual-login
+concurrency and enumeration tests recorded above.
+
 **The race detector has been run, locally and in full.** `-race` requires cgo, so
 it needs a C compiler; GCC 16.2.0 (MSYS2 UCRT64) is now installed on the Windows
 development machine and the whole suite runs under it:
@@ -1407,6 +1568,8 @@ development machine and the whole suite runs under it:
 - `go test -race ./internal/security/... -count=1` — pass
 - `go test -race ./internal/api/auth/login/... -count=1` — pass
 - `go test -race ./internal/api/auth/registration/... -count=1` — pass
+- `go test -race ./internal/integration/... -count=1` — pass, no `DATA RACE` reports
+- `go test -race ./internal/ratelimit/... ./internal/middleware/... -count=1` — pass
 - `go test -race ./... -count=1` — pass, all 20 packages, no `DATA RACE` reports
 
 The limiter and hasher concurrency tests were additionally re-run five times
@@ -1658,14 +1821,17 @@ Current order:
    organization existed. It is a product decision, not a mechanism gap, and it
    would be a separate deliberate operation rather than anything the worker does
    on its own.
-4. Rate limiting for endpoints other than the two PIN endpoints, once there is
-   real traffic to size the limits against.
+4. Rate limiting for endpoints beyond the PIN endpoints, manual login and the
+   Google authentication routes, once there is real traffic to size the limits
+   against.
 5. Cloud Run deployment specifics for the worker, when a target is chosen.
 
 Rate limiting for the PIN endpoints is implemented and verified: per-email and
 per-IP budgets, Redis-backed atomic counters, `Retry-After`, and fail-closed
-behaviour on Redis failure. What remains for it is deployment configuration, not
-application code.
+behaviour on Redis failure. Manual login has a per-IP and a per-email budget,
+and Google authentication has a per-IP budget, all verified the same way. What
+remains for them is deployment configuration — principally the thresholds, which
+are estimates rather than measurements — not application code.
 
 Search pagination, autocomplete, search suggestions, and Saved Item update/edit
 remain outside the current scope. Collection *deletion* now exists, but only as the
