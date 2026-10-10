@@ -25,6 +25,8 @@ func NewHandler(service *Service) *Handler {
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_CREDENTIALS
+// @Description - LOGIN_RATE_LIMIT_EXCEEDED
+// @Description - LOGIN_RATE_LIMIT_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Login
 // @Accept json
@@ -37,7 +39,9 @@ func NewHandler(service *Service) *Handler {
 // @Success 200 {object} LoginManualAPIResponse
 // @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid email or password"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many attempts from this client address or for this email address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting is unavailable, so credentials were not checked"
 // @Router /auth/login [post]
 func (h *Handler) LoginManual(c fiber.Ctx) error {
 	var req LoginManualRequest
@@ -69,7 +73,6 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 		&response,
 	)
 }
-
 
 // LoginGoogle godoc
 // @Summary Login with Google
@@ -153,9 +156,9 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 	confirmationID, err := uuid.Parse(c.Params("confirmation_id"))
 	if err != nil {
 		return apperror.BadRequestWith(
-		"",
-		"invalid confirmation id",
-		err,
+			"",
+			"invalid confirmation id",
+			err,
 		)
 	}
 
@@ -207,9 +210,9 @@ func (h *Handler) ConfirmAccountLink(c fiber.Ctx) error {
 	confirmationID, err := uuid.Parse(c.Params("confirmation_id"))
 	if err != nil {
 		return apperror.BadRequestWith(
-		"",
-		"invalid confirmation id",
-		err,
+			"",
+			"invalid confirmation id",
+			err,
 		)
 	}
 

@@ -11,7 +11,6 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
@@ -111,7 +110,7 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 // real Redis-backed one.
 func NewAppWithLimiter(
 	pool *pgxpool.Pool,
-	pinRateLimiter registration.PinRateLimiter,
+	pinRateLimiter auth.RateLimiter,
 ) (*fiber.App, *FakeEmailSender) {
 	return newApp(
 		pool,
@@ -135,7 +134,7 @@ func NewAppWithLimiter(
 // deployment's allowlist has to come from its actual network.
 func NewAppWithTrustedProxy(
 	pool *pgxpool.Pool,
-	pinRateLimiter registration.PinRateLimiter,
+	pinRateLimiter auth.RateLimiter,
 ) (*fiber.App, *FakeEmailSender) {
 	return newApp(
 		pool,
@@ -198,7 +197,7 @@ func newApp(
 	pool *pgxpool.Pool,
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
-	pinRateLimiter registration.PinRateLimiter,
+	pinRateLimiter auth.RateLimiter,
 	cfg config.Config,
 ) (*fiber.App, *FakeEmailSender) {
 	validate := validation.New()

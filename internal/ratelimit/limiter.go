@@ -76,6 +76,40 @@ end
 return {n, ttl}
 `)
 
+// releaseOne gives one counted occurrence back to the subject's budget.
+//
+// It exists for the one case where an occurrence was counted before the work it
+// guards could be known to have failed: a caller spends budget first so the
+// expensive work is bounded, then has to undo that spend once the work turns out
+// to have succeeded. Counting the attempt and then removing it states the same
+// fact as never having counted it, without a second round trip or a window in
+// which the budget could be observed in the wrong state.
+//
+// The guards are what make it safe to call at all:
+//
+//   - A missing key is left missing. A bare DECR would create it at -1, and a
+//     negative counter would read as far below any budget and block the subject
+//     for a window it never spent.
+//   - The count never goes below zero, so a duplicate release cannot hand out
+//     budget that was never taken.
+//   - DECR does not touch the expiry, so releasing never extends the window. A
+//     released slot belongs to the window it was taken from, and letting the
+//     expiry slide forward would let a successful call postpone the reset.
+var releaseOne = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+	return 0
+end
+
+local remaining = redis.call('DECR', KEYS[1])
+
+if remaining < 0 then
+	redis.call('SET', KEYS[1], 0)
+	return 0
+end
+
+return remaining
+`)
+
 // Policy is one limiter's budget: how many occurrences are allowed, and over
 // what period.
 type Policy struct {
@@ -225,6 +259,70 @@ func (l *Limiter) Allow(
 		Allowed:    count <= policy.Max,
 		RetryAfter: retryAfter(ttlMillis),
 	}, nil
+}
+
+// Release gives one counted occurrence back to the subject's budget.
+//
+// It is the counterpart to Allow for a caller that must spend budget *before* it
+// knows whether the guarded work will fail. Charging first is what bounds that
+// work: with only a read-only check, a burst of concurrent requests would all pass
+// the check and all go on to do the expensive thing, so the limit would bound how
+// many requests are ultimately refused while bounding none of the work that
+// matters. Charging first and releasing on success bounds the work and still
+// leaves only genuine failures counted.
+//
+// It never removes the window. A released slot returns to the window it came from,
+// so releasing cannot postpone a reset, and a released budget is not a fresh one:
+// the remaining occurrences and the remaining time are unchanged.
+//
+// Releasing something that was never counted is a no-op rather than an error. The
+// guards in the script are what make that safe to rely on — the count is never
+// pushed below zero and a missing key is never created — so a caller that releases
+// twice, or releases without having charged, cannot hand out budget that did not
+// exist. That is the reason this is a method on the limiter rather than a raw
+// delete a caller could point at any key it liked.
+//
+// An error means the release did not happen. For a caller releasing after the
+// work it guarded has already succeeded, that is a stricter count rather than a
+// missing protection: the budget was enforced when it was charged, and an
+// unreleased slot expires with its window. It is still reported, so a Redis outage
+// is visible rather than silently absorbed.
+func (l *Limiter) Release(
+	ctx context.Context,
+	namespace string,
+	subject string,
+) (Result, error) {
+	values, err := releaseOne.Run(
+		ctx,
+		l.client,
+		[]string{l.key(namespace, subject)},
+	).Slice()
+	if err != nil {
+		return Result{}, fmt.Errorf(
+			"releasing rate limit counter for namespace %q: %w",
+			namespace,
+			err,
+		)
+	}
+
+	if len(values) != 1 {
+		return Result{}, fmt.Errorf(
+			"rate limit release script returned %d values for namespace %q, want 1",
+			len(values),
+			namespace,
+		)
+	}
+
+	count, err := toInt64(values[0])
+	if err != nil {
+		return Result{}, fmt.Errorf(
+			"reading released rate limit count for namespace %q: %w",
+			namespace,
+			err,
+		)
+	}
+
+	return Result{Count: count, Allowed: true}, nil
 }
 
 // retryAfter converts a millisecond window remaining into the wait a client

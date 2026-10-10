@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Authenticate a user using email and password and create a new session.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_CREDENTIALS\n- INTERNAL_SERVER_ERROR",
+                "description": "Authenticate a user using email and password and create a new session.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_CREDENTIALS\n- LOGIN_RATE_LIMIT_EXCEEDED\n- LOGIN_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -82,8 +82,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many attempts from this client address or for this email address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so credentials were not checked",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

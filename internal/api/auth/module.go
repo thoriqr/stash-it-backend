@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -15,8 +17,35 @@ import (
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/email"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
+
+// RateLimiter is what every rate-limited route in this module is guarded by.
+//
+// It is declared here rather than reused from a sub-feature because this package
+// is the one that wires them together, and it is the union of what they need
+// rather than any one of them. Registration only ever charges a budget, so its own
+// interface is Allow alone; login charges a budget and hands one back when the
+// work it guarded turned out to have succeeded, so its own interface adds Release.
+//
+// Declaring the union here means the sub-features keep the narrowest interface
+// they actually use, and this one keeps the single Redis, the single script and
+// the single connection behind all of them.
+type RateLimiter interface {
+	Allow(
+		ctx context.Context,
+		namespace string,
+		subject string,
+		policy ratelimit.Policy,
+	) (ratelimit.Result, error)
+
+	Release(
+		ctx context.Context,
+		namespace string,
+		subject string,
+	) (ratelimit.Result, error)
+}
 
 func RegisterModule(
 	app *fiber.App,
@@ -25,7 +54,7 @@ func RegisterModule(
 	log *zap.Logger,
 	emailSender email.Sender,
 	googleTokenVerifier login.GoogleTokenVerifier,
-	pinRateLimiter registration.PinRateLimiter,
+	pinRateLimiter RateLimiter,
 ) {
 	authRouter := app.Group("/auth")
 
@@ -110,6 +139,7 @@ func RegisterModule(
 		googleTokenVerifier,
 		passwordHasher,
 		accessTokenGenerator,
+		pinRateLimiter,
 	)
 
 	loginHandler := login.NewHandler(
@@ -119,6 +149,7 @@ func RegisterModule(
 	login.Routes(
 		authRouter,
 		loginHandler,
+		pinRateLimiter,
 	)
 
 	// Password reset

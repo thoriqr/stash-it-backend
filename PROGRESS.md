@@ -1016,6 +1016,168 @@ Nothing here was weakened to make a test pass.
 
 ---
 
+## Login rate limiting and enumeration resistance — implemented
+
+`POST /auth/login` is limited, and the Google routes are not. Two independent
+budgets apply to manual login, and neither replaces the other.
+
+| Budget     | Subject                    | Limit             | Namespace     | Enforced by        |
+| ---------- | -------------------------- | ----------------- | ------------- | ------------------ |
+| per-IP     | resolved client IP address | 30 per 10 minutes | `login-ip`    | route middleware   |
+| per-email  | normalized email address   | 10 per 15 minutes | `login-email` | `login` service    |
+
+Both are Redis-backed fixed-window counters from the same `internal/ratelimit`
+package the PIN budgets use, sharing one Redis, one Lua script and one connection
+pool. An address spread across a thousand source IPs is never near its per-IP
+ceiling, which is exactly the shape of a credential-stuffing list; the per-email
+budget is what still holds in that case.
+
+The per-IP ceiling sits deliberately above the equivalent PIN ceiling. People
+share addresses — a household, an office, a carrier's CGNAT — and do so most
+heavily at predictable moments, when everyone signs in at once. A login false
+positive is worse than a PIN false positive: the user cannot authenticate at
+all, and there is no second way in.
+
+### Ordering within a request
+
+```
+IP middleware  ->  normalize the address  ->  charge the address budget
+  ->  look the account up  ->  verify the password  ->  create the session
+```
+
+- **The address budget is charged before the lookup, not counted after the
+  failure.** A check-then-count arrangement would let a burst of concurrent
+  requests all read "within budget", all start an Argon2id derivation, and only
+  be refused afterwards: the limit would bound how many requests are *ultimately
+  refused* while bounding none of the work that costs anything. Charging first
+  bounds the work.
+- **A charge is handed back when the work it guarded succeeded.** The release
+  happens before the session is created. Without it, every successful sign-in
+  would spend the failure budget of the address it authenticated, and a
+  legitimate user who signed in a few times could not sign in again.
+- **A request the IP budget refuses never reaches the address budget.** A flood
+  must cost a locked-out account nothing: what was spent was a network budget,
+  not the account's.
+- **A release that fails does not fail the login.** The budget was enforced when
+  it was charged, which is the step that bounds the work and the step that fails
+  closed. An unreleased charge makes the address marginally stricter for the rest
+  of its window and then expires with it. Refusing the login instead would tell a
+  real user their password was wrong while a session row was on its way into the
+  database, and they would retry and create more.
+
+### Responses
+
+| Situation                   | Status | Code                                         | `Retry-After` |
+| --------------------------- | ------ | -------------------------------------------- | ------------- |
+| per-IP budget spent         | 429    | `IP_RATE_LIMIT_EXCEEDED`                     | yes           |
+| per-email budget spent      | 429    | `LOGIN_RATE_LIMIT_EXCEEDED`                  | yes           |
+| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE` / `LOGIN_RATE_LIMIT_UNAVAILABLE` | **no** |
+| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`                      | **no** |
+
+`LOGIN_RATE_LIMIT_EXCEEDED` deliberately does not say which budget refused. The
+path already names the endpoint, and naming the dimension would tell a caller
+whether their guess ran into a shared address or into a specific account — more
+than the response needs to carry.
+
+`Retry-After` follows the same rules as the PIN budgets: read from the counter's
+remaining TTL rather than the configured window, returned by the same atomic
+script that incremented the counter, rounded up, never negative, and not extended
+by a request that is being refused.
+
+**A limiter that cannot answer is a refusal, not permission.** Allowing on
+failure would let anyone remove the ceiling by causing an outage. A 503 names no
+recovery time because there is none to name, and the credentials were never
+tried: an outage must not become a way to have a password checked.
+
+### Enumeration resistance
+
+Three mechanisms, none of which alone is sufficient:
+
+1. **The lookup reports one thing for two cases.** `GetUserForLogin` joins the
+   credential table, so an address with no account and an account with no
+   password credential (Google-only) both come back as `INVALID_CREDENTIALS`.
+   Neither releases the charge, or an attacker could spend someone's budget at
+   leisure by probing addresses that do not exist.
+2. **A dummy verification runs when the lookup finds nothing.** Without it, an
+   unknown address returns before any password work while a wrong password pays
+   for a full Argon2id derivation — a gap large enough to tell an observer which
+   addresses exist, and one that also makes enumerating them cheap.
+   `PasswordHasher.DummyVerify` performs a real derivation against a fixed hash
+   built from the same constants `Hash` uses and computed once through
+   `sync.OnceValue`, so it cannot fall behind the active parameters and is not
+   re-derived per request. It equalizes the dominant term and nothing else: a
+   successful login is still slower, because it adds a session write.
+3. **The address is normalized once**, by `registration.NormalizeEmail`, and that
+   single value is used for both the budget and the lookup, so the two can never
+   disagree about which account is being limited. A budget keyed on the raw
+   submission would hand an attacker `Alice@Example.com` and
+   `alice@example.com` as two independent allowances for one account.
+
+The endpoint has always returned the same code and message for a wrong password
+and for an unknown address. What changed is the cost, not the response.
+
+### Argon2id parameter bounds
+
+`internal/security` bounds what a stored hash may ask the server to do: `m ≤
+128 MiB` and `t ≤ 8`, against active parameters of `m = 64 MiB`, `t = 3`, `p =
+4`. Both are enforced in `parseArgon2Params`, **before** argon2 is reached —
+`argon2.IDKey` allocates its memory up front, so an unbounded value is an
+unbounded allocation and the process does not survive it. The ceilings are
+absolute rather than multiples of the active constants so that they cannot
+quietly become meaningless, and `TestActiveParametersFitWithinBounds` fails if
+the active constants are raised past them, turning "the verifier stopped
+accepting new hashes" into a build failure rather than a production incident.
+
+**There are deliberately no lower bounds.** A hash weaker than the active
+parameters must still verify, or a credential written before the parameters were
+strengthened would lock its user out permanently:
+`PasswordVerificationResult.NeedsRehash` exists but nothing acts on it yet, so
+there would be no way back in short of a reset. A floor is a product decision
+about those users, not a parser decision.
+
+The ceiling has to stay survivable, because the per-client login limiter bounds
+how many verifications a caller may *start*, not how expensive each one is. A
+verification at the ceiling costs about 128 MiB across eight passes — roughly
+five times a legitimate one.
+
+### Verification
+
+`internal/security` — memory, iteration and parallelism ceilings enforced before
+the derivation; the ceilings themselves accepted inclusively; a
+weaker-than-active hash still verifying and reporting `NeedsRehash`; the active
+parameters fitting within the ceilings.
+
+`internal/api/auth/login` (service) — the budget charged on the canonical address
+and released only on success; a wrong password and an unauthenticable account
+both keeping their charge; a spent budget refusing before the lookup (no
+`GetUserForLogin` expectation is registered, so the test fails if the lookup is
+reached at all); an unusable limiter failing closed with no `Retry-After`; a
+release failure not failing the login; and the enumeration floor, measured as the
+fastest of five known-account and five unknown-address logins.
+
+`internal/api/auth/login` (routes) — the declared policy applied in front of the
+handler, the subject canonicalized, a spent budget stopping the request, an
+unusable one producing 503, and no Google route spending a budget.
+
+`internal/integration` — against real Postgres and real Redis: the per-email
+budget exhausting on the eleventh attempt with nothing issued; `Retry-After`
+present, integral, within the window and non-increasing across refusals; one
+address's guesses not spending another's; one address spelled five ways drawing
+on a single budget; a successful login restoring it; both 503 paths carrying no
+header and issuing nothing; the per-IP budget refusing without spending the
+per-email one; one address exhausted not affecting a neighbour; concurrent
+requests from one address admitting exactly the budget; spoofed headers landing
+on the peer's address; and Google login spending no budget at all.
+
+**The two tests that measure rather than assert were proven to detect what they
+claim to.** With the Lua script replaced by a client-side `GET`/`SET`
+read-modify-write, the concurrency test fails; with `DummyVerify` removed, the
+enumeration floor fails. Both pass again once restored.
+
+Nothing here was weakened to make a test pass.
+
+---
+
 ## Outstanding deployment work — not implemented
 
 These are unresolved because the hosting platform and the email provider have
@@ -1035,7 +1197,10 @@ missing is the information only a chosen environment can supply.
   only.
 - Test real client-address resolution in the chosen environment.
 - Reassess the initial per-IP threshold against real traffic and against
-  shared-address false positives.
+  shared-address false positives. There are now **two** per-IP policies, not
+  one: `20/10min` for PIN issuance and `30/10min` for manual login. They are
+  separate counters and one being spent says nothing about the other, so both
+  need a traffic-informed threshold.
 
 **The specific risk that cannot be closed in code.** With the default `peer`
 source, a deployment that is actually behind a proxy resolves every client to the
@@ -1055,6 +1220,12 @@ Two things make it harder to leave unnoticed and are worth knowing:
   walk skips it and falls back to the peer address. Such a client is grouped with
   the proxy rather than separated. This errs toward over-sharing, never toward
   evasion, and `NormalizeIP` handles the form correctly when it reaches it.
+
+**Login makes the consequences of that misconfiguration worse than PIN did.** A
+collapsed counter on `POST /auth/login` means one unlucky address exhausts a
+30-request budget that everyone behind the proxy shares, and the next real user
+cannot sign in at all. The per-IP budget there is deliberately set higher than
+the PIN one for exactly this reason, but it is mitigation, not a fix.
 
 ### 2. Email provider selection and production configuration
 
@@ -1079,10 +1250,22 @@ it is an application-level one, not a provider-level one.
 
 - Verify Redis availability, TLS and connection configuration, and failure
   behaviour for the selected hosting platform. The limiter fails closed, so a
-  Redis outage currently stops PIN issuance entirely rather than letting it
-  through unthrottled — deliberate, and worth confirming is the intended
-  availability trade-off for the chosen environment.
+  Redis outage currently stops PIN issuance **and manual login** entirely rather
+  than letting either through unthrottled — deliberate, and worth confirming is
+  the intended availability trade-off for the chosen environment. Manual login is
+  the sharper half of that trade: an outage means nobody can sign in, and unlike
+  PIN issuance there is no second way in for the user to fall back on.
 - Reassess both the per-email and per-IP policies after observing realistic usage.
+  For login specifically, `LoginEmailFailureLimit`/`LoginEmailFailureWindow` in
+  `internal/api/auth/login/constants.go` is the single value to revisit if
+  account lockouts are reported — an attacker who knows an address can
+  deliberately exhaust that budget and lock the account out for up to the window.
+  The window is kept short precisely so recovery is quick.
+- Confirm the Argon2id active parameters (`m = 64 MiB`, `t = 3`, `p = 4`) are
+  right for the chosen instance size, and that `argon2MaxMemory` (128 MiB) still
+  leaves a verification survivable when several run at once. The ceilings exist
+  so a stored hash cannot ask for unbounded work; the active parameters are what
+  a legitimate verification actually costs.
 - Ensure deployment documentation does not imply that the email provider or the
   hosting platform has already been selected. Neither has.
 
@@ -1108,9 +1291,17 @@ The queue-facing integration tests additionally start a Redis testcontainer,
 lazily and only when one is needed. The rate-limit integration tests use that
 same lazily-started Redis rather than a second one.
 
-The rate-limit and concurrency tests were additionally re-run repeatedly
-(`-count=6` for the integration ones, `-count=8` for the unit ones) and showed no
-flakes.
+The **PIN** rate-limit and concurrency tests were additionally re-run
+repeatedly (`-count=6` for the integration ones, `-count=8` for the unit ones)
+and showed no flakes. That repeated running was done when the PIN budgets were
+added and has not been repeated since.
+
+**The login rate-limit tests have not been run repeatedly.** They are recorded
+here as single `-count=1` runs only, so no flake-resistance claim is made for
+them. The one login test that is timing-sensitive — the enumeration floor in
+`internal/api/auth/login` — compares the fastest of five runs of each path, which
+is chosen so that a slow or loaded machine makes it pass more readily rather than
+less, but that is a design argument and not a measurement.
 
 The enrichment foundation was also separately verified with:
 

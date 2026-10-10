@@ -11,34 +11,43 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
 type Service struct {
-    repository          Repository
-    sessionService      session.SessionCreator
-    registrationService registration.SocialRegistrationService
-    googleTokenVerifier GoogleTokenVerifier
-    passwordHasher      *security.PasswordHasher
-    accessTokenGenerator *security.AccessTokenGenerator
+	repository           Repository
+	sessionService       session.SessionCreator
+	registrationService  registration.SocialRegistrationService
+	googleTokenVerifier  GoogleTokenVerifier
+	passwordHasher       *security.PasswordHasher
+	accessTokenGenerator *security.AccessTokenGenerator
+
+	// rateLimiter guards manual login only. Google login does not read it: that
+	// flow has no password to guess and its credential is verified against the
+	// provider, so applying the manual-login policy to it would limit a user for
+	// something they did not do wrong.
+	rateLimiter LoginRateLimiter
 }
 
 func NewService(
-    repository Repository,
-    sessionService session.SessionCreator,
-    registrationService registration.SocialRegistrationService,
-    googleTokenVerifier GoogleTokenVerifier,
-    passwordHasher *security.PasswordHasher,
-    accessTokenGenerator *security.AccessTokenGenerator,
+	repository Repository,
+	sessionService session.SessionCreator,
+	registrationService registration.SocialRegistrationService,
+	googleTokenVerifier GoogleTokenVerifier,
+	passwordHasher *security.PasswordHasher,
+	accessTokenGenerator *security.AccessTokenGenerator,
+	rateLimiter LoginRateLimiter,
 ) *Service {
-    return &Service{
-        repository:          repository,
-        sessionService:      sessionService,
-        registrationService: registrationService,
-        googleTokenVerifier: googleTokenVerifier,
-        passwordHasher:      passwordHasher,
-        accessTokenGenerator: accessTokenGenerator,
-    }
+	return &Service{
+		repository:           repository,
+		sessionService:       sessionService,
+		registrationService:  registrationService,
+		googleTokenVerifier:  googleTokenVerifier,
+		passwordHasher:       passwordHasher,
+		accessTokenGenerator: accessTokenGenerator,
+		rateLimiter:          rateLimiter,
+	}
 }
 
 type LoginResult struct {
@@ -49,71 +58,180 @@ type LoginResult struct {
 }
 
 func (s *Service) LoginManual(
-    ctx context.Context,
-    email string,
-    password string,
-    metadata session.SessionMetadata,
+	ctx context.Context,
+	email string,
+	password string,
+	metadata session.SessionMetadata,
 ) (LoginResult, error) {
-    // The same normalization registration stored the address with. Without it a
-    // user who registered as Alice@Example.com would be told their password was
-    // wrong when they typed the address they registered with.
-    user, err := s.repository.GetUserForLogin(
-        ctx,
-        registration.NormalizeEmail(email),
-    )
-    if err != nil {
-        return LoginResult{}, err
-    }
+	// The same normalization registration stored the address with. Without it a
+	// user who registered as Alice@Example.com would be told their password was
+	// wrong when they typed the address they registered with.
+	//
+	// Normalized once and used for both the budget and the lookup, so the two can
+	// never disagree about which account is being limited.
+	normalizedEmail := registration.NormalizeEmail(email)
 
-    result, err := s.passwordHasher.Verify(password, user.PasswordHash)
-    if err != nil {
-        return LoginResult{}, apperror.Internal(err)
-    }
+	// Charged before anything else happens, including the database read.
+	//
+	// The budget is the email address's, and the address only exists in the
+	// request body, so this cannot be a route concern the way the per-address one
+	// is. It runs before the lookup so an address that has already spent its
+	// budget is refused without a query and without an Argon2id derivation, which
+	// is the entire cost of this endpoint.
+	//
+	// Charging first rather than counting after the failure is deliberate. A
+	// check-then-count arrangement would let a burst of concurrent requests all
+	// read "within budget", all start a derivation, and only be refused
+	// afterwards: the limit would then bound how many requests are ultimately
+	// refused while bounding none of the work that costs anything. Charging first
+	// bounds the work. The charge is handed back below when this is not a failure.
+	charged, err := s.chargeEmailFailure(ctx, normalizedEmail)
+	if err != nil {
+		return LoginResult{}, err
+	}
 
-    if !result.Match {
-        return LoginResult{}, apperror.UnauthorizedWith(
-            CodeInvalidCredentials,
-            "invalid email or password",
-            nil,
-        )
-    }
+	if !charged.Allowed {
+		return LoginResult{}, apperror.TooManyRequestsWithRetryAfter(
+			CodeLoginRateLimitExceeded,
+			"too many login attempts, please try again later",
+			charged.RetryAfter,
+		)
+	}
 
-    sessionResult, err := s.sessionService.CreateSession(
-        ctx,
-        user.ID,
-        metadata,
-    )
-    if err != nil {
-        return LoginResult{}, err
-    }
+	user, err := s.repository.GetUserForLogin(ctx, normalizedEmail)
+	if err != nil {
+		// The repository reports an address with no account and an account with
+		// no password credential identically, because the lookup joins the
+		// credential table. Both are failed authentications as far as this
+		// budget is concerned, so neither releases the charge, and the caller
+		// receives the same generic response either way.
+		//
+		// The one thing done before returning is the dummy verification. Leaving
+		// immediately would return before any password work, while a wrong
+		// password for a real account pays for a full derivation — a gap large
+		// enough to tell an observer which addresses exist, and one that also
+		// makes enumerating them cheap.
+		s.passwordHasher.DummyVerify(password)
 
-    accessToken, err := s.accessTokenGenerator.Generate(
-        user.ID,
-        sessionResult.Session.ID,
-        session.AccessTokenLifetime,
-    )
-    if err != nil {
-        return LoginResult{}, apperror.Internal(err)
-    }
+		return LoginResult{}, err
+	}
 
-    return LoginResult{
-        User:         user,
-        Session:      sessionResult.Session,
-        AccessToken:  accessToken,
-        RefreshToken: sessionResult.RefreshToken,
-    }, nil
+	result, err := s.passwordHasher.Verify(password, user.PasswordHash)
+	if err != nil {
+		// A stored hash this build cannot parse. The charge stands, because the
+		// caller did not authenticate, and the fault is reported as it always has
+		// been rather than folded into the generic response below. See the note
+		// in PROGRESS.md: making this a 401 as well was considered and left as a
+		// separate decision.
+		return LoginResult{}, apperror.Internal(err)
+	}
+
+	if !result.Match {
+		// A failed authentication. The charge is deliberately left in place: this
+		// is the occurrence the budget exists to count.
+		return LoginResult{}, apperror.UnauthorizedWith(
+			CodeInvalidCredentials,
+			"invalid email or password",
+			nil,
+		)
+	}
+
+	// Authenticated. The charge was taken optimistically, before it was known
+	// whether this would fail, so it is handed back now and the successful login
+	// spends nothing.
+	s.releaseEmailFailure(ctx, normalizedEmail)
+
+	sessionResult, err := s.sessionService.CreateSession(
+		ctx,
+		user.ID,
+		metadata,
+	)
+	if err != nil {
+		return LoginResult{}, err
+	}
+
+	accessToken, err := s.accessTokenGenerator.Generate(
+		user.ID,
+		sessionResult.Session.ID,
+		session.AccessTokenLifetime,
+	)
+	if err != nil {
+		return LoginResult{}, apperror.Internal(err)
+	}
+
+	return LoginResult{
+		User:         user,
+		Session:      sessionResult.Session,
+		AccessToken:  accessToken,
+		RefreshToken: sessionResult.RefreshToken,
+	}, nil
+}
+
+// chargeEmailFailure spends one unit of an address's failure budget.
+func (s *Service) chargeEmailFailure(
+	ctx context.Context,
+	normalizedEmail string,
+) (ratelimit.Result, error) {
+	result, err := s.rateLimiter.Allow(
+		ctx,
+		loginEmailFailureNamespace,
+		normalizedEmail,
+		ratelimit.Policy{
+			Max:    LoginEmailFailureLimit,
+			Window: LoginEmailFailureWindow,
+		},
+	)
+	if err != nil {
+		// Fail closed. A limiter that cannot answer has not said the caller is
+		// within budget, it has said nothing, and letting the request through
+		// would hand anyone the ability to remove the ceiling by causing an
+		// outage.
+		//
+		// The error names the namespace only, so nothing derived from the address
+		// reaches a log line built from it.
+		return ratelimit.Result{}, apperror.ServiceUnavailableWith(
+			CodeLoginRateLimitUnavailable,
+			"login is temporarily unavailable, please try again shortly",
+			err,
+		)
+	}
+
+	return result, nil
+}
+
+// releaseEmailFailure hands back the charge taken by chargeEmailFailure.
+//
+// It deliberately does not fail the login, and does not return an error to be
+// acted on. The budget was enforced when it was charged — that is the step that
+// mattered, and it is the step that fails closed. A charge that is not handed
+// back makes this address marginally stricter for the remainder of its window and
+// then expires with it, which is the safe direction. Refusing an authentication
+// that has already succeeded would instead tell a legitimate user their login
+// failed while a session row was on its way into the database, and they would
+// retry and create more.
+//
+// The condition is self-limiting and is already observable: an unreachable Redis
+// makes the *next* login fail closed with CodeLoginRateLimitUnavailable, so an
+// outage that caused unreleased charges is visible without this reporting its
+// own.
+func (s *Service) releaseEmailFailure(ctx context.Context, normalizedEmail string) {
+	_, _ = s.rateLimiter.Release(
+		ctx,
+		loginEmailFailureNamespace,
+		normalizedEmail,
+	)
 }
 
 type LoginGoogleResult struct {
-    Outcome LoginOutcome
+	Outcome LoginOutcome
 
-    VerificationID uuid.UUID
-    ConfirmationID uuid.UUID
+	VerificationID uuid.UUID
+	ConfirmationID uuid.UUID
 
-    User         *logindb.GetUserForLoginByIDRow
-    Session      *sessiondb.Session
-    AccessToken  string
-    RefreshToken string
+	User         *logindb.GetUserForLoginByIDRow
+	Session      *sessiondb.Session
+	AccessToken  string
+	RefreshToken string
 }
 
 func (s *Service) LoginGoogle(
@@ -169,10 +287,10 @@ func (s *Service) LoginGoogle(
 		confirmation, err := s.repository.CreateAccountLinkConfirmation(
 			ctx,
 			logindb.CreateAccountLinkConfirmationParams{
-				UserID:              user.ID,
-				Provider:            "google",
-				ProviderSubject:     identity.Subject,
-				EmailSnapshot:       pgtype.Text{
+				UserID:          user.ID,
+				Provider:        "google",
+				ProviderSubject: identity.Subject,
+				EmailSnapshot: pgtype.Text{
 					String: email,
 					Valid:  true,
 				},
@@ -197,28 +315,28 @@ func (s *Service) LoginGoogle(
 	}
 
 	verificationID, err := s.registrationService.CreateSocialRegistration(
-    	ctx,
-    	registration.CreateSocialRegistrationInput{
-        	Email:               email,
-        	Provider:            "google",
-        	ProviderSubject:     identity.Subject,
-        	EmailSnapshot:       pgtype.Text{
-            String: email,
-            Valid:  true,
-        	},
-        	DisplayNameSnapshot: pgtype.Text{
-            String: identity.DisplayName,
-            Valid:  identity.DisplayName != "",
-        	},
-    	},
+		ctx,
+		registration.CreateSocialRegistrationInput{
+			Email:           email,
+			Provider:        "google",
+			ProviderSubject: identity.Subject,
+			EmailSnapshot: pgtype.Text{
+				String: email,
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: identity.DisplayName,
+				Valid:  identity.DisplayName != "",
+			},
+		},
 	)
 	if err != nil {
-    return LoginGoogleResult{}, err
+		return LoginGoogleResult{}, err
 	}
 
 	return LoginGoogleResult{
-    Outcome:        LoginOutcomeRegistrationRequired,
-    VerificationID: verificationID,
+		Outcome:        LoginOutcomeRegistrationRequired,
+		VerificationID: verificationID,
 	}, nil
 }
 

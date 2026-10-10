@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -21,6 +22,52 @@ const (
 	argon2Parallelism uint8  = 4
 	argon2SaltLength         = 16
 	argon2KeyLength          = 32
+)
+
+// These bound what a stored hash is allowed to ask the server to do.
+//
+// The cost of one Argon2id derivation is roughly memory times iterations, so the
+// two bounds multiply before they matter. A single verification at the ceiling
+// costs about 128 MiB across eight passes — roughly five times a legitimate one.
+// That is the figure that has to stay survivable, because the per-client login
+// limiter bounds how many verifications a caller may *start*, not how expensive
+// each one is.
+//
+// The ceilings are absolute rather than multiples of the constants above so that
+// they cannot quietly become meaningless. TestActiveParametersFitWithinBounds
+// fails if the active constants are raised past them, which turns "the verifier
+// stopped accepting new hashes" into a build failure instead of a production
+// incident.
+//
+// There are deliberately no lower bounds. A weaker-than-current hash is a real
+// possibility for a credential written before the parameters were strengthened,
+// and refusing to parse it would lock that user out permanently:
+// PasswordVerificationResult.NeedsRehash exists but nothing acts on it yet, so
+// nothing would upgrade such a hash even if it were accepted. A floor is a
+// product decision about what happens to those users, not a parser decision.
+const (
+	// argon2MaxMemory is 128 MiB, twice the active cost. Memory decides how much
+	// of the machine one verification occupies, and it is the term that guidance
+	// suggests raising first, so this is the ceiling with the most room to be
+	// useful.
+	argon2MaxMemory uint32 = 128 * 1024
+
+	// argon2MaxIterations is eight passes against an active three. Iterations buy
+	// resistance far less per unit of CPU than memory does, so a generous multiple
+	// here would let one row cost many times a legitimate verification for very
+	// little extra protection.
+	argon2MaxIterations uint32 = 8
+)
+
+// dummySalt and dummyPassword exist only to produce the fixed hash below.
+//
+// Neither is a secret, and neither is ever compared against a real credential.
+// The password is not a credential anyone can hold, and the salt is a constant so
+// the hash is identical on every process and every run — which is what makes it
+// computable once rather than once per request.
+var (
+	dummySalt     = []byte("stash-it-dummy!!") // exactly argon2SaltLength
+	dummyPassword = "stash-it-unknown-account"
 )
 
 const (
@@ -91,6 +138,51 @@ func (h *PasswordHasher) Verify(
 		Match:       match,
 		NeedsRehash: match && needsRehash(params),
 	}, nil
+}
+
+// dummyHash is a real Argon2id hash, computed once.
+//
+// It is built from the same constants Hash uses rather than written out as a
+// literal, so it cannot fall behind the active parameters. A hand-written
+// constant would keep verifying while the real credentials got stronger, and the
+// whole point of it is to cost what they cost.
+//
+// Once is not an optimisation. Deriving a hash costs about as much as verifying
+// one, so regenerating this per request would make the unknown-account path cost
+// twice what the known-account path does — inverting the entire point.
+var dummyHash = sync.OnceValue(func() string {
+	return encodePHC(
+		dummySalt,
+		argon2.IDKey(
+			[]byte(dummyPassword),
+			dummySalt,
+			argon2Iterations,
+			argon2Memory,
+			argon2Parallelism,
+			argon2KeyLength,
+		),
+	)
+})
+
+// DummyVerify performs a real Argon2id verification against a fixed hash and
+// discards the outcome.
+//
+// It exists because a login that finds no account otherwise returns before doing
+// any password work, while one that finds an account and a wrong password pays
+// for a full derivation. The gap between those two is large enough to tell an
+// observer which addresses exist, and it also makes enumeration cheap: probing
+// addresses that do not exist costs almost nothing.
+//
+// The result is never true for a real caller. Nothing is being authenticated
+// here, and the constant password it was derived from is not one anybody holds,
+// so a match would mean nothing even if it happened.
+//
+// This equalizes the dominant term and nothing else. Verification still varies
+// with the machine's memory behaviour, a known account adds a database row and a
+// session write, and a successful login is slower still. It is a reduction in
+// how much the answer can be read off the clock, not a constant-time login.
+func (h *PasswordHasher) DummyVerify(password string) {
+	_, _ = h.Verify(password, dummyHash())
 }
 
 type argon2Params struct {
@@ -169,15 +261,39 @@ func parseArgon2Params(encoded string) (argon2Params, error) {
 
 		switch keyValue[0] {
 		case "m":
+			// Refused before argon2 sees it. A hash asking for more memory than
+			// the ceiling would otherwise allocate it: the derivation allocates
+			// memory KiB worth of 1 KiB blocks up front, so an unbounded value
+			// is an unbounded allocation and the process does not survive it.
+			if value > uint64(argon2MaxMemory) {
+				return argon2Params{}, fmt.Errorf(
+					"Argon2id memory %d exceeds the maximum of %d KiB",
+					value,
+					argon2MaxMemory,
+				)
+			}
+
 			params.memory = uint32(value)
 
 		case "t":
+			// Refused before argon2 sees it. Iterations multiply the cost of the
+			// allocation above, so this is the term that turns an already large
+			// memory request into an unbounded amount of work.
+			if value > uint64(argon2MaxIterations) {
+				return argon2Params{}, fmt.Errorf(
+					"Argon2id iterations %d exceeds the maximum of %d",
+					value,
+					argon2MaxIterations,
+				)
+			}
+
 			params.iterations = uint32(value)
 
 		case "p":
 			if value > 255 {
 				return argon2Params{}, errors.New("invalid Argon2id parallelism")
 			}
+
 			params.parallelism = uint8(value)
 
 		default:

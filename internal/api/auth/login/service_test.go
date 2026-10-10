@@ -20,6 +20,7 @@ import (
 	sessionmocks "github.com/thoriqr/stash-it-backend/internal/api/auth/session/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 )
 
 type mockGoogleTokenVerifier struct {
@@ -58,6 +59,8 @@ func newTestService(
 		[]byte("test-secret"),
 	)
 
+	rateLimiter := testutil.NewPermissivePinRateLimiter()
+
 	service := login.NewService(
 		repository,
 		sessionCreator,
@@ -65,6 +68,51 @@ func newTestService(
 		googleTokenVerifier,
 		passwordHasher,
 		accessTokenGenerator,
+		rateLimiter,
+	)
+
+	return service,
+		repository,
+		sessionCreator,
+		registrationService,
+		googleTokenVerifier,
+		passwordHasher
+}
+
+// newTestServiceWithLimiter builds a test service with a custom rate limiter.
+func newTestServiceWithLimiter(
+	t *testing.T,
+	rateLimiter login.LoginRateLimiter,
+) (
+	*login.Service,
+	*loginmocks.MockRepository,
+	*sessionmocks.MockSessionCreator,
+	*registrationmocks.MockSocialRegistrationService,
+	*mockGoogleTokenVerifier,
+	*security.PasswordHasher,
+) {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+
+	repository := loginmocks.NewMockRepository(ctrl)
+	sessionCreator := sessionmocks.NewMockSessionCreator(ctrl)
+	registrationService := registrationmocks.NewMockSocialRegistrationService(ctrl)
+	googleTokenVerifier := &mockGoogleTokenVerifier{}
+
+	passwordHasher := security.NewPasswordHasher()
+	accessTokenGenerator := security.NewAccessTokenGenerator(
+		[]byte("test-secret"),
+	)
+
+	service := login.NewService(
+		repository,
+		sessionCreator,
+		registrationService,
+		googleTokenVerifier,
+		passwordHasher,
+		accessTokenGenerator,
+		rateLimiter,
 	)
 
 	return service,
@@ -76,9 +124,9 @@ func newTestService(
 }
 
 // The address login looks up is the one registration stored. The comparison is
-	// exact, so a mixed-case or padded address that is not normalized here finds
-	// no user and is reported as invalid credentials, which is indistinguishable
-	// from a wrong password.
+// exact, so a mixed-case or padded address that is not normalized here finds
+// no user and is reported as invalid credentials, which is indistinguishable
+// from a wrong password.
 func TestService_LoginManual_NormalizesEmail(t *testing.T) {
 	submitted := map[string]string{
 		"mixed case":        "  Alice@Example.COM ",
@@ -621,9 +669,9 @@ func TestService_LoginGoogle(t *testing.T) {
 			CreateSocialRegistration(
 				ctx,
 				registration.CreateSocialRegistrationInput{
-					Email:               "user@example.com",
-					Provider:            "google",
-					ProviderSubject:     "google-subject-123",
+					Email:           "user@example.com",
+					Provider:        "google",
+					ProviderSubject: "google-subject-123",
 					EmailSnapshot: pgtype.Text{
 						String: "user@example.com",
 						Valid:  true,
@@ -856,9 +904,9 @@ func TestService_LoginGoogle(t *testing.T) {
 			CreateSocialRegistration(
 				ctx,
 				registration.CreateSocialRegistrationInput{
-					Email:               "user@example.com",
-					Provider:            "google",
-					ProviderSubject:     "google-subject-123",
+					Email:           "user@example.com",
+					Provider:        "google",
+					ProviderSubject: "google-subject-123",
 					EmailSnapshot: pgtype.Text{
 						String: "user@example.com",
 						Valid:  true,
@@ -899,11 +947,11 @@ func TestService_GetAccountLinkConfirmation(t *testing.T) {
 			GetActiveAccountLinkConfirmation(ctx, confirmationID).
 			Return(
 				logindb.GetActiveAccountLinkConfirmationRow{
-					ID:                  confirmationID,
-					UserID:              userID,
-					Provider:            "google",
-					ProviderSubject:     "google-subject-123",
-					EmailSnapshot:       pgtype.Text{
+					ID:              confirmationID,
+					UserID:          userID,
+					Provider:        "google",
+					ProviderSubject: "google-subject-123",
+					EmailSnapshot: pgtype.Text{
 						String: "google@example.com",
 						Valid:  true,
 					},
