@@ -14,6 +14,7 @@ import (
 	passwordresetdb "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 )
 
 func TestService_FinalizePasswordReset(t *testing.T) {
@@ -72,7 +73,7 @@ func TestService_FinalizePasswordReset(t *testing.T) {
 					t.Errorf("unexpected %#v", params)
 				}
 
-				verified, err := security.NewPasswordHasher().Verify(
+				verified, err := testutil.NewPasswordHasher().Verify(context.Background(),
 					password,
 					params.PasswordHash,
 				)
@@ -87,7 +88,7 @@ func TestService_FinalizePasswordReset(t *testing.T) {
 			ctx,
 			passwordreset.FinalizePasswordResetInput{
 				ContinuationToken: token,
-				Password:         password,
+				Password:          password,
 			},
 		)
 		if err != nil {
@@ -118,7 +119,7 @@ func TestService_FinalizePasswordReset(t *testing.T) {
 			ctx,
 			passwordreset.FinalizePasswordResetInput{
 				ContinuationToken: token,
-				Password:         "new-password",
+				Password:          "new-password",
 			},
 		)
 
@@ -158,7 +159,7 @@ func TestService_FinalizePasswordReset(t *testing.T) {
 			ctx,
 			passwordreset.FinalizePasswordResetInput{
 				ContinuationToken: token,
-				Password:         "new-password",
+				Password:          "new-password",
 			},
 		)
 
@@ -208,7 +209,7 @@ func TestService_FinalizePasswordReset(t *testing.T) {
 			ctx,
 			passwordreset.FinalizePasswordResetInput{
 				ContinuationToken: token,
-				Password:         "new-password",
+				Password:          "new-password",
 			},
 		)
 

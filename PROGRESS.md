@@ -1178,6 +1178,95 @@ Nothing here was weakened to make a test pass.
 
 ---
 
+## Bounded password-work capacity — implemented
+
+Rate limiting and password work are different controls, and only the first of
+them is a rate limit.
+
+A rate limit bounds how often one subject may submit requests. It does not bound
+how much expensive work is running right now, because a limit per subject
+composes: a caller holding a thousand addresses holds a thousand budgets, and
+every one of them can be spent at the same moment. On a constrained instance the
+callers causing the memory pressure are frequently not the ones being limited.
+
+### The mechanism
+
+`internal/security.PasswordWorkLimiter` bounds how many derivations run at once
+across every subject and every feature. It keeps no queue, no per-caller state
+and no goroutine of its own.
+
+| Setting                     | Env                        | Default | Range  |
+| --------------------------- | -------------------------- | ------- | ------ |
+| `PasswordWorkConcurrency`   | `PASSWORD_WORK_CONCURRENCY` | `1`    | 1–64   |
+| `PasswordWorkWait`          | `PASSWORD_WORK_WAIT_MS`    | `1000`  | 0–60000 |
+
+Both are range-checked at startup and a supplied-but-unusable value stops the
+process rather than being corrected — the same rule `WORKER_CONCURRENCY` follows.
+The ceilings are typo guards, not tuning values: at the active parameters each
+derivation costs 64 MiB, so even the ceiling is more than a small instance could
+hold.
+
+`Acquire` returns the release belonging to that acquisition rather than the
+limiter exposing an unowned `Release()`. That pairing is the ownership guarantee:
+a release that runs again for an acquisition that already completed would
+otherwise hand back a slot a different, live operation was relying on, and the
+limiter would admit one more derivation than its limit. The three outcomes are
+kept separable — success, `ErrPasswordWorkCapacityTimeout`, and `ctx.Err()` —
+because a caller that went away must not be told it was merely busy.
+
+### Where it is enforced
+
+Inside the shared `PasswordHasher`, not at the call sites. `Hash`, `Verify` and
+`DummyVerify` all take a slot and give it back, so a call site cannot reach
+Argon2id without passing through the bound. One limiter is shared by login and
+registration; two would each allow their own number and the total would be the
+sum.
+
+The dummy verification is bounded too, and it has to be: it costs exactly what a
+real verification costs, so a mitigation exempt from the bound would be the
+cheapest way to hold more derivations at once than the instance was built for.
+
+`Verify` decodes the stored hash before acquiring, so a row nobody can parse
+cannot hold a slot against every real request.
+
+### Responses
+
+| Situation                    | Status | Code                        | `Retry-After` |
+| ---------------------------- | ------ | --------------------------- | ------------- |
+| no password-work capacity    | 503    | `PASSWORD_WORK_UNAVAILABLE` | yes, the configured wait |
+
+It is neither `INVALID_CREDENTIALS` nor a rate-limit code. The password was never
+checked, so reporting a bad password would be a lie the caller acts on, and
+reporting a rate limit would name a budget that was not spent and a window that
+does not exist. A caller that went away keeps its own context error rather than
+being converted to this.
+
+Password reset's `Hash` is bounded too — it goes through the same hasher — but
+its refusal is not yet translated into this response; it is currently reported as
+an internal fault. That is the next task.
+
+### Verification
+
+`internal/security` — every operation refusing when the slot is held from
+outside, a refused operation returning nothing usable, cancellation and an
+unparseable hash each reported as themselves rather than as exhaustion, capacity
+returned on success, refusal and error paths, `DummyVerify` not re-entering the
+limiter (which at concurrency one would be a deadlock rather than a slow request),
+the reported wait, and a hasher refusing to be built without a limiter.
+
+`internal/api/auth/login` and `internal/api/auth/registration` — capacity
+exhaustion producing 503 with a bounded `Retry-After` on both the known-account
+and unknown-account paths, not being mistaken for invalid credentials, a rate
+limit, an input error or a fault, the public message describing none of the
+mechanism, and the same request succeeding once capacity returns with the email
+budget still accounting exactly one failure for the refused attempt and one
+release for the successful one.
+
+Every one of these holds the single slot from the test rather than waiting for a
+real derivation, so none depends on how long Argon2id takes on the machine.
+
+---
+
 ## Outstanding deployment work — not implemented
 
 These are unresolved because the hosting platform and the email provider have
@@ -1266,6 +1355,13 @@ it is an application-level one, not a provider-level one.
   leaves a verification survivable when several run at once. The ceilings exist
   so a stored hash cannot ask for unbounded work; the active parameters are what
   a legitimate verification actually costs.
+- Confirm `PASSWORD_WORK_CONCURRENCY` against the chosen instance. The default
+  of `1` suits a constrained instance, where a single derivation is already a
+  large share of the memory available. At one vCPU a measurement on the target
+  showed two concurrent derivations taking twice as long as one — fully
+  serialized — while holding twice the memory, so on that shape the limit costs
+  nothing to keep at one. A deployment with memory to spare should raise it and
+  measure rather than take the default on trust.
 - Ensure deployment documentation does not imply that the email provider or the
   hosting platform has already been selected. Neither has.
 
@@ -1278,6 +1374,7 @@ The current tree has been verified with:
 - `go build ./...` — pass
 - `go vet ./...` — pass
 - `go test ./... -count=1` — pass
+- `go test -race ./... -count=1` — pass, 20 packages, no data race reported
 - `sqlc generate` — pass
 - `mockgen` — pass
 - `swag init -g cmd/api/main.go -parseInternal` — pass
@@ -1302,6 +1399,25 @@ them. The one login test that is timing-sensitive — the enumeration floor in
 `internal/api/auth/login` — compares the fastest of five runs of each path, which
 is chosen so that a slow or loaded machine makes it pass more readily rather than
 less, but that is a design argument and not a measurement.
+
+**The race detector has been run, locally and in full.** `-race` requires cgo, so
+it needs a C compiler; GCC 16.2.0 (MSYS2 UCRT64) is now installed on the Windows
+development machine and the whole suite runs under it:
+
+- `go test -race ./internal/security/... -count=1` — pass
+- `go test -race ./internal/api/auth/login/... -count=1` — pass
+- `go test -race ./internal/api/auth/registration/... -count=1` — pass
+- `go test -race ./... -count=1` — pass, all 20 packages, no `DATA RACE` reports
+
+The limiter and hasher concurrency tests were additionally re-run five times
+each under the detector, since a single run is weak evidence where the code is
+contended by design.
+
+**CI still does not run it.** `.github/workflows/test.yml` runs
+`go test ./... -v` on `ubuntu-latest` without `-race`, so the verification above
+is local to a machine with a C compiler and is not reproduced on every change.
+Adding `-race` to that step needs no further configuration on `ubuntu-latest` and
+is outstanding.
 
 The enrichment foundation was also separately verified with:
 

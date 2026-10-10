@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -75,10 +77,43 @@ const (
 	phcVersion   = "v=19"
 )
 
-type PasswordHasher struct{}
+// PasswordHasher hashes and verifies passwords under one shared password-work
+// capacity limit.
+//
+// The limit is not a rate limit and is not a property of any one caller. Every
+// derivation this type performs costs the same memory regardless of which
+// feature asked for it or which account it was for, so the bound belongs here,
+// where it cannot be forgotten by a call site: Hash, Verify and DummyVerify all
+// take a slot and give it back, and a caller cannot reach the derivation without
+// going through them.
+type PasswordHasher struct {
+	workLimiter *PasswordWorkLimiter
+}
 
-func NewPasswordHasher() *PasswordHasher {
-	return &PasswordHasher{}
+// NewPasswordHasher returns a hasher that spends the given limiter's capacity.
+//
+// The limiter is required rather than defaulted. A hasher with no limit would
+// look exactly like one that had been given a generous one, and the difference
+// only appears on an instance small enough for it to matter — which is the worst
+// possible time to discover it. Passing nil therefore fails here, at wiring,
+// rather than quietly disabling the protection for the life of the process.
+func NewPasswordHasher(workLimiter *PasswordWorkLimiter) *PasswordHasher {
+	if workLimiter == nil {
+		panic(
+			"security: PasswordHasher requires a PasswordWorkLimiter",
+		)
+	}
+
+	return &PasswordHasher{workLimiter: workLimiter}
+}
+
+// Wait reports how long a caller waits for capacity before being refused.
+//
+// It is the bound the caller puts on the Retry-After it sends, which is why it
+// comes from the limiter rather than being repeated at each call site: a second
+// copy of this number somewhere else is a second thing that can disagree.
+func (h *PasswordHasher) Wait() time.Duration {
+	return h.workLimiter.wait
 }
 
 type PasswordVerificationResult struct {
@@ -86,7 +121,19 @@ type PasswordVerificationResult struct {
 	NeedsRehash bool
 }
 
-func (h *PasswordHasher) Hash(password string) (string, error) {
+func (h *PasswordHasher) Hash(
+	ctx context.Context,
+	password string,
+) (string, error) {
+	// Taken before the salt is generated, so the whole operation is inside the
+	// bound rather than starting after it. Released on every path out, including
+	// the error below.
+	release, err := h.workLimiter.Acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
 	salt := make([]byte, argon2SaltLength)
 
 	if _, err := rand.Read(salt); err != nil {
@@ -108,6 +155,7 @@ func (h *PasswordHasher) Hash(password string) (string, error) {
 }
 
 func (h *PasswordHasher) Verify(
+	ctx context.Context,
 	password string,
 	encodedHash string,
 ) (PasswordVerificationResult, error) {
@@ -116,28 +164,16 @@ func (h *PasswordHasher) Verify(
 		return PasswordVerificationResult{}, err
 	}
 
-	// Use the parameters stored with the hash instead of the current
-	// defaults so that older password hashes remain verifiable after
-	// the application's Argon2id parameters are strengthened.
-	actualHash := argon2.IDKey(
-		[]byte(password),
-		salt,
-		params.iterations,
-		params.memory,
-		params.parallelism,
-		uint32(len(expectedHash)),
-	)
+	// Decoding happens first and costs nothing: a stored hash this build cannot
+	// parse is a fault, and making it also spend capacity would let a row nobody
+	// can parse hold a slot against every real request.
+	release, err := h.workLimiter.Acquire(ctx)
+	if err != nil {
+		return PasswordVerificationResult{}, err
+	}
+	defer release()
 
-	match := subtle.ConstantTimeCompare(actualHash, expectedHash) == 1
-
-	// Rehashing is optional and is not performed here.
-	// A future login flow can use NeedsRehash after a successful
-	// verification to silently upgrade an outdated password hash
-	// without requiring the user to change their password.
-	return PasswordVerificationResult{
-		Match:       match,
-		NeedsRehash: match && needsRehash(params),
-	}, nil
+	return h.verify(password, params, salt, expectedHash), nil
 }
 
 // dummyHash is a real Argon2id hash, computed once.
@@ -164,6 +200,43 @@ var dummyHash = sync.OnceValue(func() string {
 	)
 })
 
+// verify performs the derivation and comparison for a hash that has already been
+// decoded. It assumes a slot is held, because it is what holds one.
+//
+// It exists so DummyVerify can do a real derivation without taking a second
+// slot: routing the dummy path through Verify would make the method that holds
+// capacity ask for capacity again, and at a concurrency of one that is a
+// guaranteed deadlock rather than a slow request.
+func (h *PasswordHasher) verify(
+	password string,
+	params argon2Params,
+	salt []byte,
+	expectedHash []byte,
+) PasswordVerificationResult {
+	// Use the parameters stored with the hash instead of the current
+	// defaults so that older password hashes remain verifiable after
+	// the application's Argon2id parameters are strengthened.
+	actualHash := argon2.IDKey(
+		[]byte(password),
+		salt,
+		params.iterations,
+		params.memory,
+		params.parallelism,
+		uint32(len(expectedHash)),
+	)
+
+	match := subtle.ConstantTimeCompare(actualHash, expectedHash) == 1
+
+	// Rehashing is optional and is not performed here.
+	// A future login flow can use NeedsRehash after a successful
+	// verification to silently upgrade an outdated password hash
+	// without requiring the user to change their password.
+	return PasswordVerificationResult{
+		Match:       match,
+		NeedsRehash: match && needsRehash(params),
+	}
+}
+
 // DummyVerify performs a real Argon2id verification against a fixed hash and
 // discards the outcome.
 //
@@ -177,12 +250,38 @@ var dummyHash = sync.OnceValue(func() string {
 // here, and the constant password it was derived from is not one anybody holds,
 // so a match would mean nothing even if it happened.
 //
+// It spends capacity exactly as Verify does, and it has to. The derivation is
+// the same cost, so a mitigation exempt from the bound would be the cheapest way
+// to make the process hold more derivations at once than it was built to.
+//
+// It reports failure rather than swallowing it. A caller refused here was not
+// told its credentials were wrong — its password was never checked — and saying
+// so would be a different answer than the one it earned.
+//
 // This equalizes the dominant term and nothing else. Verification still varies
 // with the machine's memory behaviour, a known account adds a database row and a
 // session write, and a successful login is slower still. It is a reduction in
 // how much the answer can be read off the clock, not a constant-time login.
-func (h *PasswordHasher) DummyVerify(password string) {
-	_, _ = h.Verify(password, dummyHash())
+func (h *PasswordHasher) DummyVerify(
+	ctx context.Context,
+	password string,
+) error {
+	encoded := dummyHash()
+
+	params, salt, expectedHash, err := decodePHC(encoded)
+	if err != nil {
+		return err
+	}
+
+	release, err := h.workLimiter.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	_ = h.verify(password, params, salt, expectedHash)
+
+	return nil
 }
 
 type argon2Params struct {

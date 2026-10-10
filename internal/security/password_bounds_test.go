@@ -90,7 +90,7 @@ func encodeClaiming(
 var boundsTestSalt = []byte("0123456789abcdef")
 
 func TestPasswordHasher_RejectsMemoryAboveTheCeiling(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
 	for _, memory := range []uint32{
 		argon2MaxMemory + 1,
@@ -99,7 +99,7 @@ func TestPasswordHasher_RejectsMemoryAboveTheCeiling(t *testing.T) {
 		^uint32(0),
 	} {
 		t.Run(fmt.Sprintf("m=%d", memory), func(t *testing.T) {
-			result, err := hasher.Verify("password", encodeClaiming(
+			result, err := hasher.Verify(t.Context(), "password", encodeClaiming(
 				"password",
 				boundsTestSalt,
 				memory,
@@ -115,7 +115,7 @@ func TestPasswordHasher_RejectsMemoryAboveTheCeiling(t *testing.T) {
 }
 
 func TestPasswordHasher_RejectsIterationsAboveTheCeiling(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
 	for _, iterations := range []uint32{
 		argon2MaxIterations + 1,
@@ -123,7 +123,7 @@ func TestPasswordHasher_RejectsIterationsAboveTheCeiling(t *testing.T) {
 		^uint32(0),
 	} {
 		t.Run(fmt.Sprintf("t=%d", iterations), func(t *testing.T) {
-			result, err := hasher.Verify("password", encodeClaiming(
+			result, err := hasher.Verify(t.Context(), "password", encodeClaiming(
 				"password",
 				boundsTestSalt,
 				argon2Memory,
@@ -143,9 +143,9 @@ func TestPasswordHasher_RejectsIterationsAboveTheCeiling(t *testing.T) {
 // parameters are stored in, so accepting it would derive with a different
 // parallelism than the one the hash was written with.
 func TestPasswordHasher_RejectsParallelismAboveTheCeiling(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
-	result, err := hasher.Verify("password", encodeClaiming(
+	result, err := hasher.Verify(t.Context(), "password", encodeClaiming(
 		"password",
 		boundsTestSalt,
 		argon2Memory,
@@ -161,7 +161,7 @@ func TestPasswordHasher_RejectsParallelismAboveTheCeiling(t *testing.T) {
 // hash — a machine twice as strong as this one could have written it — and
 // refusing it would turn a security measure into an availability one.
 func TestPasswordHasher_AcceptsParametersOnTheCeilings(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
 	const password = "password"
 
@@ -189,7 +189,7 @@ func TestPasswordHasher_AcceptsParametersOnTheCeilings(t *testing.T) {
 
 	for name, params := range cases {
 		t.Run(name, func(t *testing.T) {
-			result, err := hasher.Verify(password, encodeAt(
+			result, err := hasher.Verify(t.Context(), password, encodeAt(
 				password,
 				boundsTestSalt,
 				params.memory,
@@ -208,7 +208,7 @@ func TestPasswordHasher_AcceptsParametersOnTheCeilings(t *testing.T) {
 // before the parameters were strengthened, and NeedsRehash exists but nothing
 // acts on it, so there would be no way back in short of a reset.
 func TestPasswordHasher_AcceptsParametersBelowTheActiveCost(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
 	const (
 		password              = "password"
@@ -216,7 +216,7 @@ func TestPasswordHasher_AcceptsParametersBelowTheActiveCost(t *testing.T) {
 		weakIterations uint32 = 1
 	)
 
-	result, err := hasher.Verify(password, encodeAt(
+	result, err := hasher.Verify(t.Context(), password, encodeAt(
 		password,
 		boundsTestSalt,
 		weakMemory,

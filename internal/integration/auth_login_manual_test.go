@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	login "github.com/thoriqr/stash-it-backend/internal/api/auth/login"
-	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	logintestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/login/generated"
 )
 
@@ -34,9 +34,9 @@ func TestLoginManual_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	passwordHasher := security.NewPasswordHasher()
+	passwordHasher := testutil.NewPasswordHasher()
 
-	passwordHash, err := passwordHasher.Hash(password)
+	passwordHash, err := passwordHasher.Hash(context.Background(), password)
 	require.NoError(t, err)
 
 	require.NoError(
@@ -107,7 +107,7 @@ func TestLoginManual_InvalidCredentials(t *testing.T) {
 	require.NoError(t, db.TruncateLoginData(ctx))
 
 	email := "login@example.com"
-	passwordHasher := security.NewPasswordHasher()
+	passwordHasher := testutil.NewPasswordHasher()
 
 	userID, err := db.CreateLoginUser(
 		ctx,
@@ -118,7 +118,7 @@ func TestLoginManual_InvalidCredentials(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	passwordHash, err := passwordHasher.Hash("password123")
+	passwordHash, err := passwordHasher.Hash(context.Background(), "password123")
 	require.NoError(t, err)
 
 	require.NoError(
@@ -189,9 +189,9 @@ func TestLoginManual_MixedCaseEmailRegisteredAddress(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	passwordHasher := security.NewPasswordHasher()
+	passwordHasher := testutil.NewPasswordHasher()
 
-	passwordHash, err := passwordHasher.Hash("password123")
+	passwordHash, err := passwordHasher.Hash(context.Background(), "password123")
 	require.NoError(t, err)
 
 	require.NoError(

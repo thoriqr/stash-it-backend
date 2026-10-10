@@ -2,6 +2,7 @@ package registration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -515,6 +516,26 @@ type FinalizeManualRegistrationInput struct {
 	Password          string
 }
 
+// passwordWorkError maps a refusal to do password work at all onto the response
+// the caller receives.
+//
+// Only a capacity timeout becomes this. A cancelled context stays a context
+// error and anything else stays a fault, because the three ask the caller to do
+// different things: this one means come back shortly, a cancellation means stop,
+// and a fault means nothing the caller can act on.
+func passwordWorkError(err error, wait time.Duration) error {
+	if !errors.Is(err, security.ErrPasswordWorkCapacityTimeout) {
+		return err
+	}
+
+	return apperror.ServiceUnavailableWithRetryAfter(
+		CodePasswordWorkUnavailable,
+		"the server is busy, please try again shortly",
+		wait,
+		err,
+	)
+}
+
 type FinalizeManualRegistrationResult struct {
 	UserID      uuid.UUID
 	Email       string
@@ -547,8 +568,19 @@ func (s *service) FinalizeManualRegistration(
 		)
 	}
 
-	passwordHash, err := s.passwordHasher.Hash(params.Password)
+	passwordHash, err := s.passwordHasher.Hash(ctx, params.Password)
 	if err != nil {
+		if errors.Is(err, security.ErrPasswordWorkCapacityTimeout) {
+			// The password was never hashed, so nothing about this registration
+			// has been decided. Reporting it as a fault would tell the caller the
+			// server broke; reporting it as invalid input would tell them their
+			// password was wrong, which nothing has checked.
+			return FinalizeManualRegistrationResult{}, passwordWorkError(
+				err,
+				s.passwordHasher.Wait(),
+			)
+		}
+
 		return FinalizeManualRegistrationResult{}, apperror.Internal(err)
 	}
 

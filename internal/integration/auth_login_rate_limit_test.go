@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	login "github.com/thoriqr/stash-it-backend/internal/api/auth/login"
-	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	logintestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/login/generated"
 )
@@ -58,7 +57,7 @@ func createLoginAccount(t *testing.T, email string, password string) uuid.UUID {
 	)
 	require.NoError(t, err)
 
-	passwordHash, err := security.NewPasswordHasher().Hash(password)
+	passwordHash, err := testutil.NewPasswordHasher().Hash(context.Background(), password)
 	require.NoError(t, err)
 
 	require.NoError(

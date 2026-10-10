@@ -176,6 +176,27 @@ func main() {
 		return
 	}
 
+	// The password-work limiter is built here, beside the rate limiter, because
+	// both are process-wide resources that guard something costlier than a
+	// database round trip. It is built from configuration rather than defaulted
+	// in the security package so that a deployment's instance size decides the
+	// number rather than a constant chosen when the package was written.
+	//
+	// The configuration loader has already range-checked both values, so a
+	// failure here would mean the two disagree. It is handled anyway: a limiter
+	// that does not exist must not become a hasher with no bound, which would
+	// look exactly like a working one right up until the instance ran out of
+	// memory.
+	passwordWorkLimiter, err := security.NewPasswordWorkLimiter(
+		cfg.PasswordWorkConcurrency,
+		cfg.PasswordWorkWait,
+	)
+	if err != nil {
+		log.Error("password work limiter unavailable at startup", zap.Error(err))
+
+		return
+	}
+
 	auth.RegisterModule(
 		app,
 		pool,
@@ -184,6 +205,7 @@ func main() {
 		emailSender,
 		googleTokenVerifier,
 		pinRateLimiter,
+		passwordWorkLimiter,
 	)
 
 	// The enqueuer is injected rather than built inside saved_item so that the save

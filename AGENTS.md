@@ -114,6 +114,22 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
   strengthened. Do not introduce bcrypt. Verification codes are HMAC'd with a
   configured secret. Never store or log plaintext secrets, tokens, passwords, or
   codes.
+- **Password work is bounded by a shared capacity limit, not by a rate limit.**
+  `security.PasswordWorkLimiter` limits how many derivations run at once across
+  the whole process, and it lives **inside the shared `PasswordHasher`** — so
+  `Hash`, `Verify` and `DummyVerify` are all bounded and a new call site cannot
+  reach Argon2id without passing through the bound. Build one limiter and one
+  hasher in `internal/api/auth/module.go` and share them; a limiter per feature
+  would make the total the sum of the parts. `DummyVerify` is bounded too and has
+  to be: it costs the same derivation, so an exemption would be the cheapest way
+  to exceed the limit. This is **not** `ratelimit.Limiter`: a rate limit bounds
+  how often a subject submits, which composes across subjects and bounds nothing
+  about what is running now. `Acquire` hands back a per-acquisition release
+  closure rather than the limiter exposing an unowned `Release()`, because a
+  release that ran twice would otherwise free a slot a live operation was
+  relying on. Exhaustion is `503` with a bounded `Retry-After`; it is not
+  invalid credentials, because the password was never checked, and it is not a
+  429, because no budget was spent.
 - Email is normalized once, by `registration.NormalizeEmail` (trim, then
   lowercase). Registration stores the normalized form, so every read path has to
   compare against it; PostgreSQL's `=` on `TEXT` is case sensitive.
@@ -506,6 +522,11 @@ in `documentation/`.
   must not collide on either.
 - Prefer asserting error codes over error strings and testing business behavior
   at the service/repository level rather than testing handler plumbing.
+- Run `go test -race` on any package whose change adds or alters concurrent code.
+  It needs cgo and a C compiler; where none is installed, say so plainly rather
+  than implying the detector ran. **Repeated runs are not a substitute**: `-count`
+  exercises deadlock and liveness, not data races, and a concurrency change
+  verified only that way has not been verified.
 
 ## Verify changes
 

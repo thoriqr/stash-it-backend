@@ -12,6 +12,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	"go.uber.org/mock/gomock"
 )
 
@@ -57,7 +58,7 @@ func newTestServiceWithLimiter(
 		repository,
 		sessionCreator,
 		accessTokenGenerator,
-		security.NewPasswordHasher(),
+		testutil.NewPasswordHasher(),
 		verificationCodeHasher,
 		emailSender,
 		pinRateLimiter,

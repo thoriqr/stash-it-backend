@@ -2,6 +2,7 @@ package login
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,13 +112,33 @@ func (s *Service) LoginManual(
 		// password for a real account pays for a full derivation — a gap large
 		// enough to tell an observer which addresses exist, and one that also
 		// makes enumerating them cheap.
-		s.passwordHasher.DummyVerify(password)
+		//
+		// A failure here is reported instead of the repository's error, because
+		// it means something different: the password was never checked. Reporting
+		// invalid credentials for a request that never looked at one would be a
+		// lie the caller would act on, and it would be the same lie whichever
+		// kind of account they had, so it leaks nothing either way.
+		if dummyErr := s.passwordHasher.DummyVerify(ctx, password); dummyErr != nil {
+			return LoginResult{}, passwordWorkError(
+				dummyErr,
+				s.passwordHasher.Wait(),
+			)
+		}
 
 		return LoginResult{}, err
 	}
 
-	result, err := s.passwordHasher.Verify(password, user.PasswordHash)
+	result, err := s.passwordHasher.Verify(ctx, password, user.PasswordHash)
 	if err != nil {
+		if errors.Is(err, security.ErrPasswordWorkCapacityTimeout) {
+			// The password was never checked, which is a different answer from the
+			// one below and has to reach the caller as one.
+			return LoginResult{}, passwordWorkError(
+				err,
+				s.passwordHasher.Wait(),
+			)
+		}
+
 		// A stored hash this build cannot parse. The charge stands, because the
 		// caller did not authenticate, and the fault is reported as it always has
 		// been rather than folded into the generic response below. See the note
@@ -219,6 +240,33 @@ func (s *Service) releaseEmailFailure(ctx context.Context, normalizedEmail strin
 		ctx,
 		loginEmailFailureNamespace,
 		normalizedEmail,
+	)
+}
+
+// passwordWorkError maps a refusal to do password work at all onto the response
+// the caller receives.
+//
+// Only a capacity timeout becomes this. A cancelled context stays a context
+// error and a hash this build cannot parse stays a fault, because the three ask
+// the caller to do different things: this one means come back shortly, a
+// cancellation means stop, and a parse fault means nothing the caller can act
+// on. Folding the first two together would tell a caller that went away that it
+// was merely busy, and would send it back to retry a request nobody is waiting
+// for.
+//
+// The wait is passed rather than read from a package constant because it is the
+// deployment's configured value, and the header it produces has to be the same
+// number the caller was actually kept waiting for.
+func passwordWorkError(err error, wait time.Duration) error {
+	if !errors.Is(err, security.ErrPasswordWorkCapacityTimeout) {
+		return err
+	}
+
+	return apperror.ServiceUnavailableWithRetryAfter(
+		CodePasswordWorkUnavailable,
+		"the server is busy, please try again shortly",
+		wait,
+		err,
 	)
 }
 

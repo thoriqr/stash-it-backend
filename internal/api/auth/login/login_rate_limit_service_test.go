@@ -48,7 +48,7 @@ func expectLoginableUser(
 ) {
 	t.Helper()
 
-	passwordHash, err := passwordHasher.Hash(password)
+	passwordHash, err := passwordHasher.Hash(context.Background(), password)
 	require.NoError(t, err)
 
 	userID := uuid.New()

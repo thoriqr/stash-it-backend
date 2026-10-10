@@ -408,7 +408,10 @@ func (s *Service) FinalizePasswordReset(
 		return err
 	}
 
-	passwordHash, err := s.passwordHasher.Hash(params.Password)
+	// The context is passed because the shared hasher takes one: it spends the
+	// process-wide password-work capacity, and acquiring that capacity is what
+	// needs the caller's deadline. Nothing else about this flow changes.
+	passwordHash, err := s.passwordHasher.Hash(ctx, params.Password)
 	if err != nil {
 		return apperror.Internal(err)
 	}

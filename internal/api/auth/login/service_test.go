@@ -54,7 +54,7 @@ func newTestService(
 	registrationService := registrationmocks.NewMockSocialRegistrationService(ctrl)
 	googleTokenVerifier := &mockGoogleTokenVerifier{}
 
-	passwordHasher := security.NewPasswordHasher()
+	passwordHasher := testutil.NewPasswordHasher()
 	accessTokenGenerator := security.NewAccessTokenGenerator(
 		[]byte("test-secret"),
 	)
@@ -100,7 +100,7 @@ func newTestServiceWithLimiter(
 	registrationService := registrationmocks.NewMockSocialRegistrationService(ctrl)
 	googleTokenVerifier := &mockGoogleTokenVerifier{}
 
-	passwordHasher := security.NewPasswordHasher()
+	passwordHasher := testutil.NewPasswordHasher()
 	accessTokenGenerator := security.NewAccessTokenGenerator(
 		[]byte("test-secret"),
 	)
@@ -143,7 +143,7 @@ func TestService_LoginManual_NormalizesEmail(t *testing.T) {
 			ctx := context.Background()
 			userID := uuid.New()
 
-			passwordHash, err := passwordHasher.Hash("correct-password")
+			passwordHash, err := passwordHasher.Hash(context.Background(), "correct-password")
 			if err != nil {
 				t.Fatalf("failed to hash password: %v", err)
 			}
@@ -256,7 +256,7 @@ func TestService_LoginManual(t *testing.T) {
 
 		password := "correct-password"
 
-		passwordHash, err := passwordHasher.Hash(password)
+		passwordHash, err := passwordHasher.Hash(context.Background(), password)
 		if err != nil {
 			t.Fatalf("failed to hash password: %v", err)
 		}
@@ -363,7 +363,7 @@ func TestService_LoginManual(t *testing.T) {
 
 		ctx := context.Background()
 
-		passwordHash, err := passwordHasher.Hash("correct-password")
+		passwordHash, err := passwordHasher.Hash(context.Background(), "correct-password")
 		if err != nil {
 			t.Fatalf("failed to hash password: %v", err)
 		}
@@ -416,7 +416,7 @@ func TestService_LoginManual(t *testing.T) {
 		userID := uuid.New()
 		metadata := session.SessionMetadata{}
 
-		passwordHash, err := passwordHasher.Hash("correct-password")
+		passwordHash, err := passwordHasher.Hash(context.Background(), "correct-password")
 		if err != nil {
 			t.Fatalf("failed to hash password: %v", err)
 		}

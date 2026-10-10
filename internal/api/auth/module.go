@@ -55,11 +55,18 @@ func RegisterModule(
 	emailSender email.Sender,
 	googleTokenVerifier login.GoogleTokenVerifier,
 	pinRateLimiter RateLimiter,
+	passwordWorkLimiter *security.PasswordWorkLimiter,
 ) {
 	authRouter := app.Group("/auth")
 
 	// Shared security dependencies
-	passwordHasher := security.NewPasswordHasher()
+	//
+	// One limiter and one hasher, shared by every feature below. The limiter has
+	// to be shared rather than built per feature: the bound it enforces is on
+	// derivations happening at once across the whole process, and two limiters
+	// would each allow their own number, so the total would be the sum. Building
+	// it here is what makes "one derivation at a time" mean one.
+	passwordHasher := security.NewPasswordHasher(passwordWorkLimiter)
 
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte(cfg.VerificationCodeSecret),

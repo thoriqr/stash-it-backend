@@ -4,20 +4,33 @@ import (
 	"encoding/base64"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/argon2"
 )
 
+// newTestHasher returns a hasher whose capacity limit is wide enough that the
+// test is never the thing being measured, and finite so that every derivation
+// here goes through the limiter production uses.
+func newTestHasher(t *testing.T) *PasswordHasher {
+	t.Helper()
+
+	limiter, err := NewPasswordWorkLimiter(4, time.Second)
+	require.NoError(t, err)
+
+	return NewPasswordHasher(limiter)
+}
+
 func TestPasswordHasher_HashAndVerify(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 	password := "correct-password"
 
-	encodedHash, err := hasher.Hash(password)
+	encodedHash, err := hasher.Hash(t.Context(), password)
 	require.NoError(t, err)
 	require.NotEmpty(t, encodedHash)
 
-	result, err := hasher.Verify(password, encodedHash)
+	result, err := hasher.Verify(t.Context(), password, encodedHash)
 	require.NoError(t, err)
 
 	require.True(t, result.Match)
@@ -25,12 +38,12 @@ func TestPasswordHasher_HashAndVerify(t *testing.T) {
 }
 
 func TestPasswordHasher_Verify_WrongPassword(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
-	encodedHash, err := hasher.Hash("correct-password")
+	encodedHash, err := hasher.Hash(t.Context(), "correct-password")
 	require.NoError(t, err)
 
-	result, err := hasher.Verify("wrong-password", encodedHash)
+	result, err := hasher.Verify(t.Context(), "wrong-password", encodedHash)
 	require.NoError(t, err)
 
 	require.False(t, result.Match)
@@ -38,9 +51,9 @@ func TestPasswordHasher_Verify_WrongPassword(t *testing.T) {
 }
 
 func TestPasswordHasher_Verify_InvalidHash(t *testing.T) {
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
-	result, err := hasher.Verify("password", "invalid-hash")
+	result, err := hasher.Verify(t.Context(), "password", "invalid-hash")
 	require.Error(t, err)
 	require.False(t, result.Match)
 	require.False(t, result.NeedsRehash)
@@ -74,9 +87,9 @@ func TestPasswordHasher_Verify_NeedsRehash(t *testing.T) {
 		base64.RawStdEncoding.EncodeToString(hash),
 	)
 
-	hasher := NewPasswordHasher()
+	hasher := newTestHasher(t)
 
-	result, err := hasher.Verify(password, encodedHash)
+	result, err := hasher.Verify(t.Context(), password, encodedHash)
 	require.NoError(t, err)
 
 	require.True(t, result.Match)

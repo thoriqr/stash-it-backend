@@ -20,6 +20,7 @@ import (
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
+	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -117,6 +118,28 @@ func NewAppWithLimiter(
 		&FakeEnricher{},
 		nil,
 		pinRateLimiter,
+		NewPasswordWorkLimiter(),
+		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+	)
+}
+
+// NewAppWithLimiters builds the app with both limiters supplied by the caller.
+//
+// It exists for a test about password-work capacity, which has to hand the app a
+// limiter whose slots are already taken: there is no other way to make a request
+// find none, and waiting for a real derivation to occupy one would make the test
+// depend on how long Argon2id takes on the machine running it.
+func NewAppWithLimiters(
+	pool *pgxpool.Pool,
+	pinRateLimiter auth.RateLimiter,
+	passwordWorkLimiter *security.PasswordWorkLimiter,
+) (*fiber.App, *FakeEmailSender) {
+	return newApp(
+		pool,
+		&FakeEnricher{},
+		nil,
+		pinRateLimiter,
+		passwordWorkLimiter,
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
 }
@@ -141,6 +164,7 @@ func NewAppWithTrustedProxy(
 		&FakeEnricher{},
 		nil,
 		pinRateLimiter,
+		NewPasswordWorkLimiter(),
 		config.Config{
 			ClientIPSource:     config.ClientIPSourceProxy,
 			TrustedProxies:     []string{"0.0.0.0"},
@@ -180,6 +204,7 @@ func NewAppWithEnqueuer(
 		enricher,
 		enqueuer,
 		NewPermissivePinRateLimiter(),
+		NewPasswordWorkLimiter(),
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
 }
@@ -198,6 +223,7 @@ func newApp(
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
 	pinRateLimiter auth.RateLimiter,
+	passwordWorkLimiter *security.PasswordWorkLimiter,
 	cfg config.Config,
 ) (*fiber.App, *FakeEmailSender) {
 	validate := validation.New()
@@ -244,6 +270,7 @@ func newApp(
 		emailSender,
 		googleTokenVerifier,
 		pinRateLimiter,
+		passwordWorkLimiter,
 	)
 
 	saveditem.RegisterModule(

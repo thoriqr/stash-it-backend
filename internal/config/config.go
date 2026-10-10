@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -34,6 +35,18 @@ type Config struct {
 	ClientIPSource     ClientIPSource
 	TrustedProxies     []string
 	TrustedProxyHeader string
+
+	// PasswordWorkConcurrency is how many password derivations may run at once,
+	// and PasswordWorkWait how long a caller waits for capacity before being
+	// refused.
+	//
+	// They are loaded and validated here rather than at the composition root so
+	// that a deployment whose values are unusable refuses to start. The process
+	// can be running perfectly well with the defaults, so a value that is present
+	// and wrong would otherwise be discovered as a lockout rather than as a
+	// configuration error.
+	PasswordWorkConcurrency int
+	PasswordWorkWait        time.Duration
 }
 
 func Load() (Config, error) {
@@ -84,6 +97,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	passwordWorkConcurrency, passwordWorkWait, err := loadPasswordWork()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -94,5 +112,8 @@ func Load() (Config, error) {
 		ClientIPSource:         clientIPSource,
 		TrustedProxies:         trustedProxies,
 		TrustedProxyHeader:     trustedProxyHeader,
+
+		PasswordWorkConcurrency: passwordWorkConcurrency,
+		PasswordWorkWait:        passwordWorkWait,
 	}, nil
 }

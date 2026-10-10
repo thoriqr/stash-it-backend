@@ -14,6 +14,7 @@ import (
 	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	passwordresetdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/password_reset/generated"
 )
 
@@ -28,7 +29,7 @@ func TestPasswordReset_EndToEndRevokesSessions(t *testing.T) {
 	userID, err := db.CreatePasswordResetUser(ctx, email)
 	require.NoError(t, err)
 
-	oldHash, err := security.NewPasswordHasher().Hash("old-password")
+	oldHash, err := testutil.NewPasswordHasher().Hash(context.Background(), "old-password")
 	require.NoError(t, err)
 
 	require.NoError(
@@ -188,7 +189,7 @@ func TestPasswordReset_EndToEndRevokesSessions(t *testing.T) {
 	finalState, err := db.GetPasswordResetFinalState(ctx, email)
 	require.NoError(t, err)
 
-	passwordResult, err := security.NewPasswordHasher().Verify(
+	passwordResult, err := testutil.NewPasswordHasher().Verify(context.Background(),
 		"new-password",
 		finalState.PasswordHash,
 	)
