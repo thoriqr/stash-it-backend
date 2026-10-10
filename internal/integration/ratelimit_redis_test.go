@@ -119,6 +119,107 @@ func TestRateLimiter_TTLIsNotExtendedByLaterCalls(t *testing.T) {
 	)
 }
 
+// A release with nothing left to give back is the one case the clamp covers, and
+// it is the one case that used to write to the counter. Nothing the API can
+// reach produces it — every Release is preceded by an Allow that incremented the
+// counter — so the state is staged directly rather than waited for.
+//
+// The counter is set to zero *with* a TTL because SET replaces a key outright:
+// staged without one, the key would already be permanent and the test would be
+// measuring the staging rather than the release.
+//
+// Redis reports -1 for a key with no expiry and -2 for a key that has gone, so a
+// positive TTL afterwards is the assertion that distinguishes "kept its window"
+// from "the release left a key nothing will ever reap".
+func TestRateLimiter_ReleaseWithNothingLeftToGiveBackKeepsItsTTL(t *testing.T) {
+	limiter, client := newRateLimiter(t)
+	ctx := t.Context()
+
+	_, err := limiter.Allow(ctx, "login-email", "alice@example.com", ratelimitTestPolicy)
+	require.NoError(t, err)
+
+	keys, err := client.Keys(ctx, "rl:*").Result()
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+
+	staged, err := client.Set(
+		ctx,
+		keys[0],
+		0,
+		ratelimitTestPolicy.Window,
+	).Result()
+	require.NoError(t, err)
+	require.Equal(t, "OK", staged)
+
+	before, err := client.TTL(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Positive(t, before, "the counter must have a window to lose")
+
+	result, err := limiter.Release(ctx, "login-email", "alice@example.com")
+	require.NoError(t, err)
+	require.Zero(t, result.Count)
+
+	value, err := client.Get(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Equal(t, "0", value, "a release must never hand out budget that was not taken")
+
+	after, err := client.TTL(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Positive(
+		t,
+		after,
+		"a clamped release must not leave a counter with no expiry, which "+
+			"would accumulate forever and rate-limit the subject permanently",
+	)
+	require.LessOrEqual(
+		t,
+		after,
+		before,
+		"a released slot belongs to the window it was taken from",
+	)
+}
+
+// The ordinary case the clamp sits beside: a counter that still holds a slot
+// gives exactly one of it back, and its window is left alone.
+//
+// Without this, the guard above is only ever seen refusing, and a Release that
+// stopped decrementing altogether would still pass it.
+func TestRateLimiter_ReleaseGivesBackExactlyOneSlotAndKeepsTheWindow(t *testing.T) {
+	limiter, client := newRateLimiter(t)
+	ctx := t.Context()
+
+	for range 2 {
+		_, err := limiter.Allow(ctx, "login-email", "alice@example.com", ratelimitTestPolicy)
+		require.NoError(t, err)
+	}
+
+	keys, err := client.Keys(ctx, "rl:*").Result()
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+
+	before, err := client.TTL(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Positive(t, before)
+
+	result, err := limiter.Release(ctx, "login-email", "alice@example.com")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.Count)
+
+	value, err := client.Get(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Equal(t, "1", value)
+
+	after, err := client.TTL(ctx, keys[0]).Result()
+	require.NoError(t, err)
+	require.Positive(t, after)
+	require.LessOrEqual(
+		t,
+		after,
+		before,
+		"releasing must not slide the window forward",
+	)
+}
+
 // The property the whole component exists for. Every goroutine is released at the
 // same moment, so they all issue INCR against the same key as nearly as
 // concurrently as a scheduler allows.

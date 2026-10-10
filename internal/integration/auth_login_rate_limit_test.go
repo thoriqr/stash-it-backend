@@ -32,7 +32,9 @@ import (
 // The limiter here is the recording fake rather than Redis, so these assert the
 // wiring: which namespace each budget is spent under, which subject, and what the
 // refusal looks like on the wire. The counter itself is proven against a real
-// Redis in auth_login_ip_rate_limit_test.go and in ratelimit_redis_test.go.
+// Redis in auth_login_ip_rate_limit_test.go and in ratelimit_redis_test.go, and
+// the per-address budget is walked end to end over real Redis in
+// auth_login_email_rate_limit_redis_test.go.
 
 type loginResponse struct {
 	status     int

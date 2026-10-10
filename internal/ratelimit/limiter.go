@@ -95,19 +95,27 @@ return {n, ttl}
 //   - DECR does not touch the expiry, so releasing never extends the window. A
 //     released slot belongs to the window it was taken from, and letting the
 //     expiry slide forward would let a successful call postpone the reset.
+//
+// The zero guard is what keeps the second and third of those true at once. It
+// used to be enforced by decrementing first and putting the counter back when it
+// went negative, and putting a counter back means writing it: SET replaces a key
+// outright, expiry included, so a clamped counter lost the window its slot came
+// from and — having had no expiry left to restore — became a key Redis never
+// reaps. A counter is the one thing in this package that must not outlive its
+// window. Refusing to go below zero in the first place needs no write at all, so
+// the counter and its window are left exactly as they were found.
 var releaseOne = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then
 	return 0
 end
 
-local remaining = redis.call('DECR', KEYS[1])
+local current = tonumber(redis.call('GET', KEYS[1]))
 
-if remaining < 0 then
-	redis.call('SET', KEYS[1], 0)
+if current == nil or current <= 0 then
 	return 0
 end
 
-return remaining
+return redis.call('DECR', KEYS[1])
 `)
 
 // Policy is one limiter's budget: how many occurrences are allowed, and over
@@ -292,11 +300,19 @@ func (l *Limiter) Release(
 	namespace string,
 	subject string,
 ) (Result, error) {
-	values, err := releaseOne.Run(
+	// The script answers with the count on its own, not with a table, so the
+	// reply is a single value rather than a slice. toInt64 is the same reader
+	// Allow uses and refuses a shape it does not recognise, which is what a
+	// reply that changes under a client should be.
+	//
+	// Reading this as a slice would fail on every call rather than on an edge
+	// case: a bare number comes back as an integer, and a slice is only ever
+	// what a Lua table arrives as.
+	value, err := releaseOne.Run(
 		ctx,
 		l.client,
 		[]string{l.key(namespace, subject)},
-	).Slice()
+	).Result()
 	if err != nil {
 		return Result{}, fmt.Errorf(
 			"releasing rate limit counter for namespace %q: %w",
@@ -305,15 +321,7 @@ func (l *Limiter) Release(
 		)
 	}
 
-	if len(values) != 1 {
-		return Result{}, fmt.Errorf(
-			"rate limit release script returned %d values for namespace %q, want 1",
-			len(values),
-			namespace,
-		)
-	}
-
-	count, err := toInt64(values[0])
+	count, err := toInt64(value)
 	if err != nil {
 		return Result{}, fmt.Errorf(
 			"reading released rate limit count for namespace %q: %w",
