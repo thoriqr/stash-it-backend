@@ -44,6 +44,42 @@ func validateVerificationPending(
 	return nil
 }
 
+// ensureVerificationCooldownElapsed rejects a verification code that was sent
+// too recently to send another.
+//
+// Both issuance paths go through here, because they send the same kind of message
+// to the same address and have the same cost: CreatePIN issues the first code,
+// ResendVerification issues a replacement. Only one of them enforcing the rule
+// would leave the other as the way around it, and the two routes are
+// unauthenticated, so whoever holds a verification id may call either one.
+//
+// It also does the work of a per-code attempt limit that would otherwise be
+// trivially re-armed: a fresh code is a fresh row whose attempt counter starts at
+// zero, so issuing is as much a way to keep guessing as it is a way to receive.
+//
+// A verification that has never sent a code has no cooldown to observe, so the
+// first issuance is always allowed and this does not change what a caller
+// starting a password reset can do.
+func ensureVerificationCooldownElapsed(
+	verification passwordresetdb.GetVerificationRow,
+) error {
+	if !verification.LastSentAt.Valid {
+		return nil
+	}
+
+	if time.Now().Before(
+		verification.LastSentAt.Time.Add(verificationResendCooldown),
+	) {
+		return apperror.ConflictWith(
+			CodeVerificationResendCooldown,
+			"verification code was sent too recently",
+			nil,
+		)
+	}
+
+	return nil
+}
+
 func validatePasswordResetContinuation(
 	continuation passwordresetdb.GetPasswordResetContinuationRow,
 ) error {

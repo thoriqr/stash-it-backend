@@ -126,6 +126,10 @@ func TestService_ResendVerification(t *testing.T) {
 
 		verificationID := uuid.New()
 
+		// IssueVerificationCode is deliberately left unanticipated: the cooldown
+		// is checked before anything is issued, so reaching the repository is
+		// itself a failure. Asserting the same on the email side below makes the
+		// refusal observably free of both.
 		test.repository.
 			EXPECT().
 			GetVerification(ctx, verificationID).
@@ -164,6 +168,13 @@ func TestService_ResendVerification(t *testing.T) {
 				"expected error code %q, got %q",
 				passwordreset.CodeVerificationResendCooldown,
 				appErr.Code,
+			)
+		}
+
+		if len(test.emailSender.Messages) != 0 {
+			t.Errorf(
+				"expected no email message, got %d",
+				len(test.emailSender.Messages),
 			)
 		}
 	})

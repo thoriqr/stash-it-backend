@@ -132,25 +132,63 @@ func (s *Service) CreatePIN(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (CreatePINResult, error) {
+	issuedID, err := s.issueVerificationCode(ctx, verificationID)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	return CreatePINResult{
+		VerificationID: issuedID,
+	}, nil
+}
+
+// issueVerificationCode is the whole of PIN issuance, and both entry points are
+// the same act expressed differently.
+//
+// CreatePIN is named for the first code and ResendVerification for a
+// replacement, but the server does not tell them apart. The endpoint is
+// unauthenticated and verification_id plus the emailed PIN are the credential,
+// so anyone holding one may call either, repeatedly, for as long as the rules
+// below allow. A caller that has never had a code has no cooldown to observe,
+// which means /resend issues a first code and /pin issues a replacement on
+// exactly the same terms.
+//
+// Keeping the workflow in one place is therefore not tidiness. Two copies of
+// this sequence are two rules to keep in step, and these two were already out of
+// step: /pin performed every step below without observing the cooldown /resend
+// enforced, which made the choice of route the way around it. The order inside
+// the sequence is load-bearing for the same reason — the cooldown is checked
+// before the code is generated and before anything is written, so a refusal
+// costs no row, no generated code and no message.
+func (s *Service) issueVerificationCode(
+	ctx context.Context,
+	verificationID uuid.UUID,
+) (uuid.UUID, error) {
 	verification, err := s.repository.GetVerification(
 		ctx,
 		verificationID,
 	)
 	if err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	if err := validateVerificationPending(verification); err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
+	}
+
+	if err := ensureVerificationCooldownElapsed(verification); err != nil {
+		return uuid.Nil, err
 	}
 
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {
-		return CreatePINResult{}, apperror.Internal(err)
+		return uuid.Nil, apperror.Internal(err)
 	}
 
 	codeHash := s.verificationCodeHasher.Hash(code)
 
+	// Read the clock once, after the code exists and before the row is written,
+	// so the stored expiry is the lifetime the code was actually issued with.
 	now := time.Now()
 
 	codeExpiresAt := pgtype.Timestamptz{
@@ -167,21 +205,19 @@ func (s *Service) CreatePIN(
 		},
 	)
 	if err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	message := newVerificationPINEmail(
-	verification.Email,
-	code,
-)
+		verification.Email,
+		code,
+	)
 
 	if err := s.emailSender.Send(ctx, message); err != nil {
-		return CreatePINResult{}, apperror.Internal(err)
+		return uuid.Nil, apperror.Internal(err)
 	}
 
-	return CreatePINResult{
-		VerificationID: verificationID,
-	}, nil
+	return verificationID, nil
 }
 
 type ResendVerificationResult struct {
@@ -192,70 +228,13 @@ func (s *Service) ResendVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (ResendVerificationResult, error) {
-	verification, err := s.repository.GetVerification(
-		ctx,
-		verificationID,
-	)
+	issuedID, err := s.issueVerificationCode(ctx, verificationID)
 	if err != nil {
 		return ResendVerificationResult{}, err
-	}
-
-	if err := validateVerificationPending(verification); err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	now := time.Now()
-
-	// Resend cooldown must have elapsed.
-	if verification.LastSentAt.Valid {
-		resendAt := verification.LastSentAt.Time.Add(
-			verificationResendCooldown,
-		)
-
-		if now.Before(resendAt) {
-			return ResendVerificationResult{}, apperror.ConflictWith(
-				CodeVerificationResendCooldown,
-				"verification code was sent too recently",
-				nil,
-			)
-		}
-	}
-
-	code, err := s.verificationCodeHasher.Generate()
-	if err != nil {
-		return ResendVerificationResult{}, apperror.Internal(err)
-	}
-
-	codeHash := s.verificationCodeHasher.Hash(code)
-
-	codeExpiresAt := pgtype.Timestamptz{
-		Time:  now.Add(verificationCodeExpiresIn),
-		Valid: true,
-	}
-
-	_, err = s.repository.IssueVerificationCode(
-		ctx,
-		IssueVerificationCodeParams{
-			VerificationID: verificationID,
-			CodeHash:       codeHash,
-			CodeExpiresAt:  codeExpiresAt,
-		},
-	)
-	if err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	message := newVerificationPINEmail(
-		verification.Email,
-		code,
-	)
-
-	if err := s.emailSender.Send(ctx, message); err != nil {
-		return ResendVerificationResult{}, apperror.Internal(err)
 	}
 
 	return ResendVerificationResult{
-		VerificationID: verificationID,
+		VerificationID: issuedID,
 	}, nil
 }
 
