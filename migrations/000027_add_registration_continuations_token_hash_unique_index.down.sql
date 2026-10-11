@@ -1,0 +1,1 @@
+DROP INDEX registration_continuations_token_hash_idx;

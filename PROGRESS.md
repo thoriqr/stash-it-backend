@@ -782,12 +782,16 @@ honest consequence of `platform` being free text published by the page.
 
 ### Still not implemented
 
-- Rate limiting for endpoints other than the PIN endpoints, manual login and the
-  Google authentication routes. Per-email and per-IP PIN limiting is implemented
-  and verified — see "Registration rate limiting" below. Manual login has two
-  budgets and Google authentication has one — see "Login rate limiting" and
-  "Google authentication rate limiting" below. Password reset, saved items,
-  collections, search and enrichment remain deliberately unlimited for now.
+- Rate limiting for endpoints other than the PIN endpoints, verification and
+  manual finalization, manual login and the Google authentication routes. Every
+  registration route that sends a message or does expensive work is now
+  limited: see "Registration rate limiting" and "Registration verification and
+  finalization" below. Manual login has two budgets and Google authentication
+  has one. Password reset, saved items, collections, search and enrichment
+  remain deliberately unlimited for now. `GetVerification` and
+  `GetRegistrationContinuation` are deliberately unlimited as well: both are
+  pure reads, and one of them is what a client polls to learn when it may
+  resend.
 - A possible one-off backfill of items enriched before automatic organization
   existed, which are still in `Unsorted` with a platform. This is an open product
   decision rather than a gap in the mechanism, and it would be a separate
@@ -854,6 +858,159 @@ status codes alone:
 
 Queue-facing tests read Asynq's own accounting through an `Inspector` rather than
 by counting Redis keys, so they cannot pass by reading nothing.
+
+---
+
+## Registration verification and finalization — hardened
+
+Two changes to the middle and end of the registration flow: the two
+single-use transitions are now covered by concurrency tests against real
+PostgreSQL, and the two routes that were unbounded now carry their own
+per-client-address budgets.
+
+### Concurrency coverage for the single-use transitions
+
+`VerifyRegistration` and `FinalizeManualRegistration` are single-use by
+design, and both validate **outside** their transaction and mutate **inside**
+it. Two requests carrying the same credential can therefore both pass every
+check the service makes before either reaches the database. What separates
+them is the database, and until now nothing proved it.
+
+Two integration tests now do, in
+`internal/integration/auth_register_concurrency_test.go`:
+
+| Race                            | Asserted                                                             |
+| ------------------------------- | -------------------------------------------------------------------- |
+| Two `verify` calls, same valid PIN | exactly one 200, one 409; **one** continuation; **one** consumed code; `verification_requests.status = 'verified'`; registration still `pending` |
+| Two `finalize` calls, same token   | exactly one 201, one 409 `USER_ALREADY_EXISTS`; **one** user, **one** credential, **one** Unsorted collection; continuation consumed; registration `completed` |
+
+Both use the suite's existing `runConcurrently` barrier — every goroutine is
+built and parked before any is released — and every assertion is read from
+the database rather than inferred from a status code. No sleep is used as
+synchronization anywhere in the file.
+
+**What these tests do and do not prove, measured rather than assumed.** Each
+guard was removed in turn and the suite re-run:
+
+- `ConsumeVerificationCode`'s `consumed_at IS NULL` predicate,
+- `MarkVerificationRequestVerified`'s `status = 'pending'` predicate,
+- the unique index on `registration_continuations(pending_registration_id)`,
+
+and the verification test passed with each one gone. It holds the invariant
+of "exactly one continuation", but it does not discriminate *which* guard
+produces it, because in a losing request the rejection usually happens at
+the service's first read — `GetVerification` already returns
+`VERIFICATION_NOT_PENDING` — before the transaction is ever opened. The
+guards are therefore redundant to one another, which is the correct
+arrangement for a security-relevant transition, and the continuation count
+remains the assertion that matters. What a guard removal would break is a
+request that reaches the transaction without having observed the winner, a
+narrower window than a barrier against two HTTP requests can open.
+
+The finalization test is sharper: its loser provably loses the unique index
+on `users.email`, which the request log shows directly
+(`duplicate key value violates unique constraint "users_email_unique"`).
+
+### Two new per-client-address budgets
+
+`VerifyRegistration` and `FinalizeManualRegistration` previously had no
+rate limit at all. Each now carries its own, under its own namespace:
+
+| Budget      | Route                                            | Limit            | Namespace    |
+| ----------- | ------------------------------------------------ | ---------------- | ------------ |
+| per-IP      | `POST /auth/register/verification/:id/verify`    | 20 per 10 minutes| `verify-ip`   |
+| per-IP      | `POST /auth/register/finalize/manual`             | 10 per 15 minutes| `finalize-ip` |
+
+Both are mounted **in front of the handler**, for the reason every other
+budget in this repository is: a verification id that is not a UUID, or a
+finalization carrying no token at all, never becomes a request the handler
+sees, and those are the cheapest requests to send. Both inherit the shared
+middleware's fail-closed behaviour and `Retry-After` semantics unchanged —
+`CLIENT_IP_SOURCE`, trusted-proxy handling and client-IP validation are
+untouched.
+
+**Neither budget is about guessing.** The per-code attempt limit already caps
+PIN guesses at five, and it is enforced by the database rather than by
+anything here. `verify-ip` bounds the cost of a wrong attempt: a verification
+lookup, a code lookup, an HMAC comparison and a write to the attempt counter,
+none of which was bounded anywhere. `finalize-ip` bounds the only route in
+the flow that performs an **Argon2id derivation**. The shared
+`PasswordWorkLimiter` bounds how many derivations run at once across the
+process, but that is a capacity limit, not a rate limit: it stops the process
+being overrun without stopping one caller from occupying every slot
+indefinitely.
+
+**Each namespace is deliberately separate from every other flow's.** Verify
+and finalize are adjacent steps of one registration and are two different
+acts, so exhausting one must not spend the other — a user who mistypes a PIN
+has to be able to finalize once they get it right. Both are separate from
+`pin-ip`, because verification does not send a message and must not spend
+the allowance that governs mailing a new code. Both are separate from the
+login budgets, because reaching a verification route is not an
+authentication attempt and an exhausted registration budget must not lock
+anyone out of signing in with a password they already have.
+
+**No per-email budget was added, deliberately.** The email is not known
+before the expensive work: `VerifyRegistration` learns it only by resolving
+the verification, and finalization reads it from the continuation row. A
+per-email key here would be an attacker-chosen value, letting an attacker
+lock a legitimate registrant out of their own verification — the same
+lockout reasoning that keeps `google-auth-ip` free of a per-email dimension.
+
+`GetVerification` and `GetRegistrationContinuation` remain **deliberately
+unlimited**. Both are pure reads; limiting them would cost a polling client
+its budget without bounding any expensive work, and `GetVerification` is
+exactly what a client calls to learn when it may resend.
+
+**The thresholds are initial engineering estimates, not production-validated
+values.** No deployment has been selected and no traffic observed. Revisit
+once they have run against real traffic and real shared addresses.
+
+### `registration_continuations.token_hash` is now indexed
+
+Migration `000027_add_registration_continuations_token_hash_unique_index`
+adds a unique index on `registration_continuations(token_hash)`, and
+`internal/database/baseline/schema.sql` now reflects it.
+
+The lookup column was previously unindexed while the sibling
+`password_reset_continuations` had carried `password_reset_continuations_token_hash_idx`
+since migration 000014. Every continuation read — `GetRegistrationContinuation`,
+and therefore both the continuation route and both finalization routes —
+was a sequential scan on a table that grows with every registration, reached
+from unauthenticated endpoints. The baseline is updated so integration tests
+exercise the same index production does.
+
+### Verification
+
+`internal/integration` — both concurrency races against real PostgreSQL, with
+database-state assertions; the two new budgets against real Redis through
+HTTP; each budget spent and refusing with a `Retry-After` derived from the
+counter and never extending the window; one address's flood not affecting a
+neighbour; verify and finalize proven separate in **both** directions; the
+new namespaces proven not to touch `pin-ip`, `pin-email`, `login-ip`,
+`login-email` or `google-auth-ip`, asserted from the limiter's own
+accounting rather than from response codes; the unlimited read routes proven
+to consult no limiter at all; an unusable limiter refusing both new routes
+with 503 and no `Retry-After`; and a malformed verification id proven to be
+counted in full while still being answered 400 by the handler.
+
+**The namespace tests were proven to detect what they claim.** With
+`finalize-ip` temporarily pointed at `pin-ip`, `NewNamespacesDoNotSpendExistingBudgets`
+fails and passes again once restored.
+
+### Deployment considerations
+
+- Both new budgets fail **closed**. A Redis outage stops verification and
+  finalization outright, which is intended, but it is a new way for an
+  outage to be visible in registration. The registration flow already
+  depends on Redis for PIN issuance; the dependency is now total rather than
+  partial.
+- All five thresholds — `pin-email`, `pin-ip`, `verify-ip`, `finalize-ip` —
+  remain unvalidated against production traffic. A shared address behind
+  CGNAT is charged all of them, and `finalize-ip` is the tightest.
+- The race detector could not be run in the environment this work was done
+  in (`CGO_ENABLED=0`, no C compiler). The concurrency tests are proven
+  correct against real PostgreSQL but have not been run under `-race`.
 
 ---
 
@@ -1994,6 +2151,37 @@ Do not change these casually. Revisit only with an explicit decision.
     and never negative. A refused request must not extend the window, and a 503
     must carry no `Retry-After` at all — there is no known recovery time and a
     fabricated one would be a guess presented as a fact.
+
+26. **`verify-ip` and `finalize-ip` are budgets on cost, and each is separate from
+    every other flow's.** Verification sends nothing and is bounded because a
+    wrong attempt still costs lookups and a write; finalization is the only route
+    in the flow that performs an Argon2id derivation, and the shared
+    `PasswordWorkLimiter` bounds concurrency rather than rate, so it cannot stop
+    one caller from occupying every slot indefinitely. Neither reuses `pin-ip`,
+    and neither shares a counter with the other: adjacent steps of one
+    registration are two acts, and a user who mistyped a PIN must still be able
+    to finalize. Do not merge these namespaces, and do not add a per-email budget
+    to either — the email is not known before the expensive work, so the key
+    would be attacker-chosen and would let one caller lock a legitimate
+    registrant out of their own registration.
+
+27. **`GetVerification` and `GetRegistrationContinuation` stay unlimited.** Both
+    are pure reads, so a limit there would cost a polling client its budget
+    without bounding any expensive work. `GetVerification` is specifically what a
+    client calls to learn when it may resend; refusing it would break the flow
+    rather than protect it. Adding a budget to either needs an explicit decision.
+
+28. **The single-use transitions are guarded redundantly, and the tests assert the
+    outcome rather than a particular guard.** `CompleteVerification` checks both
+    `consumed_at IS NULL` and `status = 'pending'` with `rowsAffected == 1`, and
+    the continuation is additionally protected by a unique index on
+    `pending_registration_id`; finalization is protected by the users insert losing
+    `users_email_unique`. Removing any one guard leaves the observable outcome
+    unchanged, because a losing request is usually refused at the service's first
+    read before the transaction opens. That redundancy is deliberate. Do not
+    remove a guard on the grounds that another remains — and do not expect the
+    concurrency tests to fail if one is removed, since they assert exactly one
+    continuation and exactly one user rather than which guard produced them.
 
 ---
 

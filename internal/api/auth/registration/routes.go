@@ -51,8 +51,45 @@ func Routes(
 		h.ResendVerification,
 	)
 
+	// Verification is bounded separately from issuance, and for a different
+	// reason. Issuing sends a message and is bounded by a per-address budget as
+	// well as this one; verifying sends nothing, but it does cost a verification
+	// lookup, a code lookup, an HMAC comparison and a write on failure. Nothing
+	// else bounds that, so this route carries its own budget.
+	//
+	// It is mounted in front of the handler for the same reason as everywhere
+	// else: a verification id that is not a UUID never becomes a request the
+	// handler sees, and that is the cheapest request to send.
+	verifyIPLimit := middleware.IPRateLimit(
+		pinRateLimiter,
+		verifyIPRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    VerifyIPRateLimitMax,
+			Window: VerifyIPRateLimitWindow,
+		},
+	)
+
+	// Finalization is bounded separately again, and this is the one route here
+	// that performs an Argon2id derivation. The shared PasswordWorkLimiter bounds
+	// how many derivations run at once across the process, which protects the
+	// process but does not stop one caller from holding every slot indefinitely;
+	// this bounds how often a caller may ask.
+	//
+	// Mounted in front of the handler so a request naming no continuation token,
+	// or carrying one that is already consumed, still costs the client a budget
+	// rather than being free.
+	finalizeIPLimit := middleware.IPRateLimit(
+		pinRateLimiter,
+		finalizeIPRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    FinalizeIPRateLimitMax,
+			Window: FinalizeIPRateLimitWindow,
+		},
+	)
+
 	router.Post(
 		"/register/verification/:verification_id/verify",
+		verifyIPLimit,
 		h.VerifyRegistration,
 	)
 
@@ -63,6 +100,7 @@ func Routes(
 
 	router.Post(
 		"/register/finalize/manual",
+		finalizeIPLimit,
 		h.FinalizeManualRegistration,
 	)
 

@@ -225,6 +225,9 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // @Description - REGISTRATION_EXPIRED
 // @Description - VERIFICATION_CODE_ATTEMPTS_EXCEEDED
 // @Description - INVALID_VERIFICATION_CODE
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Registration
@@ -236,7 +239,9 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid request"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so nothing was verified"
 // @Router /auth/register/verification/{verification_id}/verify [post]
 func (h *Handler) VerifyRegistration(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
@@ -329,6 +334,9 @@ func (h *Handler) GetRegistrationContinuation(c fiber.Ctx) error {
 // @Description - REGISTRATION_EXPIRED
 // @Description - INVALID_REGISTRATION_TYPE
 // @Description - USER_ALREADY_EXISTS
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Registration
 // @Accept json
@@ -339,7 +347,9 @@ func (h *Handler) GetRegistrationContinuation(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Validation error"
 // @Failure 401 {object} swagger.APIErrorResponse "Registration continuation token is required"
 // @Failure 409 {object} swagger.APIErrorResponse "Registration cannot be finalized"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no password work was started"
 // @Router /auth/register/finalize/manual [post]
 func (h *Handler) FinalizeManualRegistration(c fiber.Ctx) error {
 	var req FinalizeManualRegistrationRequest

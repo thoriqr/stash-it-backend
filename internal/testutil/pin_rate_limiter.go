@@ -387,6 +387,25 @@ const (
 	// their manual-login budget, and a caller signing in with a password has not
 	// earned a Google one.
 	GoogleAuthIPNamespace = "google-auth-ip"
+
+	// VerifyIPNamespace is the per-client-address budget on the PIN verification
+	// route, spent before the handler.
+	//
+	// It is separate from PinIPNamespace because verifying and issuing are
+	// different acts with different costs, and separate from the login budgets
+	// because reaching the verify route is not an authentication attempt.
+	VerifyIPNamespace = "verify-ip"
+
+	// FinalizeIPNamespace is the per-client-address budget on the manual
+	// finalization route, spent before the handler.
+	//
+	// It is the tightest of the registration budgets because finalization is the
+	// only route in that flow that performs an Argon2id derivation. It is separate
+	// from VerifyIPNamespace so exhausting one step of registration cannot spend
+	// the allowance of another, and separate from the login budgets because a
+	// continuation token is a capability to create an account rather than a
+	// credential to present.
+	FinalizeIPNamespace = "finalize-ip"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

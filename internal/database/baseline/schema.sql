@@ -419,6 +419,9 @@ CREATE INDEX registration_continuations_pending_registration_idx
 CREATE UNIQUE INDEX registration_continuations_pending_registration_unique_idx
     ON registration_continuations (pending_registration_id);
 
+CREATE UNIQUE INDEX registration_continuations_token_hash_idx
+    ON registration_continuations (token_hash);
+
 
 CREATE UNIQUE INDEX password_reset_continuations_token_hash_idx
     ON password_reset_continuations (token_hash);
