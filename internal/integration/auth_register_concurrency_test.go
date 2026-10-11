@@ -17,9 +17,9 @@ import (
 	registrationtestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/registration/generated"
 )
 
-// These tests pin the two state transitions that are single-use by design.
+// These tests pin the three state transitions that are single-use by design.
 //
-// Both operations validate outside their transaction and mutate inside it, so
+// Every one of them validates outside its transaction and mutates inside it, so
 // two requests carrying the same credential can both pass every check the
 // service makes before either reaches the database. What stops the second one
 // is the database:
@@ -31,6 +31,10 @@ import (
 //     protected by a unique index on pending_registration_id.
 //   - FinalizeManualRegistration opens with the users insert, which loses the
 //     unique index on email, and maps that violation to USER_ALREADY_EXISTS.
+//   - FinalizeSocialRegistration opens the same way, and then adds a second
+//     guard the manual flow does not have: auth_identities is unique on
+//     (provider, provider_subject), so even an account inserted under a
+//     different address could not be linked to an identity already claimed.
 //
 // Every assertion below is read from the database rather than inferred from a
 // status code. The status codes say how the losers were told; the counts say what
@@ -474,4 +478,465 @@ func countUnsortedCollections(t *testing.T, email string) int64 {
 	require.NoError(t, err)
 
 	return count
+}
+
+// countAuthIdentitiesForProviderSubject counts the auth identities bound to one
+// provider subject.
+//
+// It is scoped by provider and subject rather than by user, because that pair is
+// what auth_identities is unique on: an identity duplicated onto a second account
+// would not be visible from any single user's rows, and a duplicate is precisely
+// what this count exists to catch.
+func countAuthIdentitiesForProviderSubject(
+	t *testing.T,
+	provider string,
+	providerSubject string,
+) int64 {
+	t.Helper()
+
+	var count int64
+
+	err := testPool.QueryRow(
+		context.Background(),
+		`SELECT COUNT(*)
+		 FROM auth_identities ai
+		 WHERE ai.provider = $1
+		   AND ai.provider_subject = $2`,
+		provider,
+		providerSubject,
+	).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+// countPasswordCredentialsForEmail counts the password credentials one address
+// owns.
+//
+// A social registration creates none. Asserting the count is zero is how the test
+// tells "the loser rolled its whole transaction back" apart from "the loser
+// committed an account with no way to sign in", which is the partial state this
+// transition must never leave behind.
+func countPasswordCredentialsForEmail(
+	t *testing.T,
+	email string,
+) int64 {
+	t.Helper()
+
+	var count int64
+
+	err := testPool.QueryRow(
+		context.Background(),
+		`SELECT COUNT(*)
+		 FROM password_credentials pc
+		 JOIN users u ON u.id = pc.user_id
+		 WHERE u.email = $1`,
+		email,
+	).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+// countPendingSocialIdentitiesForRegistration counts the pending social
+// identities attached to one pending registration.
+//
+// pending_social_identities is unique on pending_registration_id, so more than
+// one would mean CreateSocialRegistration ran twice for the same registration and
+// the second attempt failed to reuse the first. Both attempts carry the same
+// provider and subject, so a duplicate here is invisible to the identity counts.
+func countPendingSocialIdentitiesForRegistration(
+	t *testing.T,
+	email string,
+) int64 {
+	t.Helper()
+
+	var count int64
+
+	err := testPool.QueryRow(
+		context.Background(),
+		`SELECT COUNT(*)
+		 FROM pending_social_identities psi
+		 JOIN pending_registrations pr
+		   ON pr.id = psi.pending_registration_id
+		 WHERE pr.email = $1`,
+		email,
+	).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+// socialFinalizeRaceOutcome is one request's result in a social finalization
+// race. The token is only carried so the winner can be checked for a session;
+// nothing about the outcome depends on which index won.
+type socialFinalizeRaceOutcome struct {
+	status int
+	code   string
+}
+
+// socialFinalizeToken posts one finalization carrying the given continuation
+// token and reports what the caller was told.
+func socialFinalizeToken(
+	t *testing.T,
+	continuationToken string,
+) socialFinalizeRaceOutcome {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "Race Tester"
+		}`),
+	)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(
+		"X-Registration-Continuation",
+		continuationToken,
+	)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+
+	outcome := socialFinalizeRaceOutcome{status: resp.StatusCode}
+
+	if outcome.status < 400 {
+		return outcome
+	}
+
+	var errBody registerAPIError
+
+	require.NoError(
+		t,
+		json.NewDecoder(resp.Body).Decode(&errBody),
+	)
+
+	outcome.code = errBody.Error.Code
+
+	return outcome
+}
+
+// openSocialRegistrationWithContinuation drives the real social flow through
+// every endpoint a client would use and returns the continuation token, so the
+// race below contends for a token the production path actually issued rather than
+// one seeded straight into the database.
+//
+// Google login is what creates the pending registration, the pending social
+// identity and the verification request; the PIN is read out of the mail that was
+// actually sent, because it is six random digits and no value may be assumed; and
+// verification is what mints the continuation. Going through the whole flow is
+// also what makes the loser in the race meaningful: the winner and the loser are
+// contending for state produced by production code, not by a fixture.
+func openSocialRegistrationWithContinuation(
+	t *testing.T,
+	email string,
+) string {
+	t.Helper()
+
+	testEmailSender.Messages = nil
+
+	loginReq := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/login/google",
+		strings.NewReader(`{
+			"id_token": "test-google-id-token"
+		}`),
+	)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("X-Platform", "web")
+
+	loginResp, err := testApp.Test(loginReq)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		http.StatusOK,
+		loginResp.StatusCode,
+	)
+
+	var loginBody struct {
+		Data struct {
+			Outcome        string `json:"outcome"`
+			VerificationID string `json:"verification_id"`
+		} `json:"data"`
+	}
+
+	require.NoError(
+		t,
+		json.NewDecoder(loginResp.Body).Decode(&loginBody),
+	)
+	require.Equal(
+		t,
+		"registration_required",
+		loginBody.Data.Outcome,
+	)
+
+	verificationID, err := uuid.Parse(
+		loginBody.Data.VerificationID,
+	)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		http.StatusCreated,
+		requestCreatePIN(t, verificationID).StatusCode,
+	)
+	require.Len(t, testEmailSender.Messages, 1)
+
+	issuedPIN := strings.TrimPrefix(
+		testEmailSender.Messages[0].Text,
+		"Your registration verification code is: ",
+	)
+
+	require.Len(
+		t,
+		issuedPIN,
+		6,
+		"a verification code is six digits",
+	)
+
+	verifyReq := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/verification/"+
+			verificationID.String()+"/verify",
+		strings.NewReader(`{"pin":"`+issuedPIN+`"}`),
+	)
+	verifyReq.Header.Set("Content-Type", "application/json")
+
+	verifyResp, err := testApp.Test(verifyReq)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		http.StatusOK,
+		verifyResp.StatusCode,
+	)
+
+	var verifyBody struct {
+		Data struct {
+			RegistrationContinuationToken string `json:"registration_continuation_token"`
+		} `json:"data"`
+	}
+
+	require.NoError(
+		t,
+		json.NewDecoder(verifyResp.Body).Decode(&verifyBody),
+	)
+	require.NotEmpty(
+		t,
+		verifyBody.Data.RegistrationContinuationToken,
+	)
+
+	// The flow must have produced a social registration for the address the app's
+	// fake verifier asserts, or the counts below would be scoping to an email that
+	// never entered the race at all.
+	require.Equal(
+		t,
+		email,
+		testEmailSender.Messages[0].To.Email,
+		"the PIN must have been mailed to the address under test",
+	)
+
+	return verifyBody.Data.RegistrationContinuationToken
+}
+
+// Two requests carrying the same continuation token must produce exactly one
+// account. The continuation is a single-use capability and both requests can read
+// it as unconsumed before either commits, so the database is what separates them.
+//
+// The winner and the loser are told different things, and which is which depends
+// only on scheduling:
+//
+//   - A request whose GetRegistrationContinuation runs after the winner commits
+//     reads consumed_at set and is refused REGISTRATION_CONTINUATION_CONSUMED at
+//     the service's validation, before any transaction is opened.
+//   - A request that read the continuation first, and only then lost, is refused
+//     inside the transaction when its users insert loses the unique index on
+//     email. That is USER_ALREADY_EXISTS, which is what actually happened: the
+//     winner created the account.
+//
+// Pinning either one exactly would assert on scheduling rather than on behaviour,
+// so both are accepted and the invariant is asserted from the database instead.
+func TestFinalizeSocialRegistration_ConcurrentSameTokenCreatesExactlyOneAccount(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	const (
+		email = "google@example.com"
+
+		// The identity the integration app's fake verifier always asserts. These
+		// name the fixture rather than credentials: nothing verifies them.
+		provider        = "google"
+		providerSubject = "google-subject-123"
+	)
+
+	continuationToken := openSocialRegistrationWithContinuation(
+		t,
+		email,
+	)
+
+	// The flow produced exactly one pending social identity before the race
+	// began. Asserted now so a duplicate caused by the race cannot be confused
+	// with one the setup left behind.
+	require.Equal(
+		t,
+		int64(1),
+		countPendingSocialIdentitiesForRegistration(t, email),
+		"the setup must leave exactly one pending social identity",
+	)
+
+	type finalizeOutcome struct {
+		status int
+		code   string
+	}
+
+	outcomes := make([]finalizeOutcome, 2)
+
+	runConcurrently(t, len(outcomes), func(index int) {
+		outcome := socialFinalizeToken(t, continuationToken)
+		outcomes[index] = finalizeOutcome{
+			status: outcome.status,
+			code:   outcome.code,
+		}
+	})
+
+	var succeeded, conflicted int
+
+	loser := ""
+
+	for _, outcome := range outcomes {
+		switch outcome.status {
+		case http.StatusCreated:
+			succeeded++
+		case http.StatusConflict:
+			conflicted++
+			loser = outcome.code
+		}
+	}
+
+	require.Equal(
+		t,
+		1,
+		succeeded,
+		"exactly one finalization may succeed: %+v",
+		outcomes,
+	)
+	require.Equal(
+		t,
+		1,
+		conflicted,
+		"exactly one must be refused: %+v",
+		outcomes,
+	)
+
+	require.Contains(
+		t,
+		[]string{
+			registration.CodeRegistrationContinuationConsumed,
+			registration.CodeUserAlreadyExists,
+		},
+		loser,
+		"the loser must be refused as a spent continuation or an existing "+
+			"account, never answered as a second success",
+	)
+
+	// Exactly one account, scoped to this address rather than to a global count,
+	// so rows left by another test could neither satisfy nor fail this assertion.
+	var users int64
+
+	require.NoError(t, testPool.QueryRow(
+		ctx,
+		"SELECT COUNT(*) FROM users WHERE email = $1",
+		email,
+	).Scan(&users))
+
+	require.Equal(
+		t,
+		int64(1),
+		users,
+		"a concurrent finalize must not create two users",
+	)
+
+	// Exactly one identity for the provider subject. auth_identities is unique on
+	// (provider, provider_subject), so this is the second of the two guards the
+	// social transition has and the manual one does not.
+	require.Equal(
+		t,
+		int64(1),
+		countAuthIdentitiesForProviderSubject(
+			t,
+			provider,
+			providerSubject,
+		),
+		"a concurrent finalize must not link the same identity twice",
+	)
+
+	// Exactly one Unsorted collection, keyed by system_key rather than by display
+	// name or collection type: type = 'system' describes who created a collection,
+	// not what it is, so only the key identifies it.
+	require.Equal(
+		t,
+		int64(1),
+		countUnsortedCollections(t, email),
+		"exactly one Unsorted collection must exist for the account",
+	)
+
+	// The state read back is the one account's, so the count above is not
+	// satisfied by a row belonging to some other address.
+	state, err := db.GetFinalizedSocialRegistrationState(ctx, email)
+	require.NoError(t, err)
+
+	require.Equal(t, email, state.Email)
+	require.Equal(t, "Race Tester", state.DisplayName)
+
+	require.Equal(
+		t,
+		provider,
+		state.Provider,
+	)
+	require.Equal(
+		t,
+		providerSubject,
+		state.ProviderSubject,
+	)
+	require.NotEqual(t, uuid.Nil, state.AuthIdentityID)
+
+	// A social registration creates no password credential, and a commit that left
+	// one behind would be the partial state the transaction exists to prevent.
+	require.Equal(
+		t,
+		int64(0),
+		countPasswordCredentialsForEmail(t, email),
+		"a social registration must not create a password credential",
+	)
+
+	// Exactly one session. Finalization creates the session after its transaction
+	// commits, so a second one would mean the loser got past the account creation
+	// that is supposed to have stopped it.
+	sessions, err := db.CountUserSessions(ctx, state.UserID)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		int64(1),
+		sessions,
+		"exactly one session must exist for the finalized account",
+	)
+
+	// The continuation is spent and the registration is finished. Without both, the
+	// same token could be presented again.
+	require.True(
+		t,
+		state.ConsumedAt.Valid,
+		"the continuation must be consumed, or it could be replayed",
+	)
+
+	require.Equal(
+		t,
+		string(registration.PendingRegistrationCompleted),
+		state.RegistrationStatus,
+	)
 }

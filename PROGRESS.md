@@ -1014,6 +1014,103 @@ fails and passes again once restored.
 
 ---
 
+## Social registration finalization — concurrency coverage
+
+`FinalizeSocialRegistration` is single-use in exactly the way
+`FinalizeManualRegistration` is, and it had no concurrency coverage at all:
+the social transition was the only one in the flow with a guard that had never
+been exercised against two requests.
+
+`internal/integration/auth_register_concurrency_test.go` now carries
+`TestFinalizeSocialRegistration_ConcurrentSameTokenCreatesExactlyOneAccount`.
+It is a test-only change; no production code was touched.
+
+### The flow is driven end to end
+
+The test does not seed a continuation. It runs the real flow through every
+endpoint a client would use — `POST /auth/login/google`, then
+`POST /register/verification/:id/pin`, then
+`POST /register/verification/:id/verify` — and uses the token that verification
+actually issued. The PIN is read out of the mail that was sent, because it is six
+random digits and no value may be assumed.
+
+The point is that the winner and the loser contend for state the production path
+produced. A seeded token would prove the same database invariant, but not that the
+continuation the real flow mints is the single-use one the code believes it is.
+
+### What the losing request is told
+
+**The observed result is `USER_ALREADY_EXISTS`**, and the request log shows the
+mechanism directly:
+
+```text
+POST /auth/register/finalize/social 409 USER_ALREADY_EXISTS
+ERROR: duplicate key value violates unique constraint "users_email_unique" (SQLSTATE 23505)
+```
+
+The loser opened its transaction, lost the unique index on `users.email`, and the
+violation was mapped by `ConstraintName`. Its whole transaction rolled back,
+including the `users` row it had already inserted.
+
+A second documented outcome exists and the test accepts it without asserting
+which one occurred: a request whose `GetRegistrationContinuation` runs **after**
+the winner commits reads `consumed_at` set and is refused
+`REGISTRATION_CONTINUATION_CONSUMED` at the service's validation, before any
+transaction is opened. Pinning either code exactly would assert on scheduling
+rather than on behaviour, so both are accepted and the invariant is asserted from
+the database — the same reasoning the verification race already uses.
+
+### Database invariants asserted
+
+Every count is scoped to the address or the provider subject under test, never to
+a global total:
+
+| Assertion | Scope |
+| --------- | ----- |
+| exactly one `users` row | `WHERE email = $1` |
+| exactly one `auth_identities` row | `WHERE provider = $1 AND provider_subject = $2` |
+| exactly one Unsorted collection | `c.system_key = 'unsorted'`, **not** name or `type` |
+| exactly one session | for the resulting user id |
+| zero password credentials | a social registration creates none |
+| exactly one `pending_social_identities` | asserted **before** the race, so a duplicate cannot be confused with one the setup left behind |
+| continuation consumed, registration `completed` | `GetFinalizedSocialRegistrationState` |
+
+`auth_identities` is counted by provider and subject rather than by user, because
+that pair is what it is unique on — an identity duplicated onto a second account
+would not be visible from any single user's rows.
+
+The zero-credential assertion is what separates "the loser rolled back" from "the
+loser committed an account with no way to sign in".
+
+### What this does and does not prove
+
+It holds "exactly one account, exactly one identity, exactly one session". Like the
+two races already in that file, **it does not discriminate which guard produced
+the outcome** — in a losing request the rejection often happens at the service's
+first read, before a transaction is ever opened, because the winner has already
+committed. The guards are redundant to one another, which is the correct
+arrangement for a security-relevant transition. Removing one would break only a
+request that reached the transaction without having observed the winner, a narrower
+window than a barrier against two HTTP requests can open.
+
+It does not cover concurrent `CreateSocialRegistration` calls, nor the
+provider/subject mismatch path, which are separate and still untested.
+
+### Verification
+
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- The focused test, then `-count=10` — **passed every run**, no flake.
+- The registration, login and finalization integration tests together — **passed**.
+- `go test ./...` — **exit 0**, no failures across all 64 packages.
+
+**The race detector could not be run on this machine**: `CGO_ENABLED=1` but no C
+compiler is installed (`cgo: C compiler "gcc" not found`). The test is therefore
+proven correct against real PostgreSQL but **has not been run under `-race`**, and
+repeated runs exercise deadlock and liveness rather than data races.
+
+---
+
 ## Registration rate limiting — implemented
 
 Both endpoints that send a message are limited:
