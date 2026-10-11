@@ -1104,10 +1104,16 @@ provider/subject mismatch path, which are separate and still untested.
 - The registration, login and finalization integration tests together — **passed**.
 - `go test ./...` — **exit 0**, no failures across all 64 packages.
 
-**The race detector could not be run on this machine**: `CGO_ENABLED=1` but no C
-compiler is installed (`cgo: C compiler "gcc" not found`). The test is therefore
-proven correct against real PostgreSQL but **has not been run under `-race`**, and
-repeated runs exercise deadlock and liveness rather than data races.
+**The race detector was run**, using the MSYS2 ucrt64 gcc already on the machine's
+`Path`. The focused test under `-race -count=5` passed with no data race; every
+concurrency test in the suite (`-run Concurrent -race -count=3`, 13 tests) passed;
+and the full suite under `go test ./... -race` exited 0 with no data race reported.
+
+Note for anyone reproducing this on Windows: a shell that was already running when
+`Path` gained the compiler directory will not see `gcc`, because each child process
+inherits that shell's already-resolved environment. Prepending the directory to
+`$env:Path` within the command is enough to run the detector; a fresh shell or a
+restarted terminal is not required.
 
 ---
 
