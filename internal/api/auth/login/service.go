@@ -270,6 +270,25 @@ func passwordWorkError(err error, wait time.Duration) error {
 	)
 }
 
+// accountLinkSessionFailed maps a failure that happened after the link was
+// committed onto the response the caller receives.
+//
+// The alternative would be a lie it acts on. The confirmation is single-use, so
+// retrying this endpoint returns ACCOUNT_LINK_CONFIRMATION_INVALID whatever is
+// retried — telling the caller their confirmation was rejected when the link in
+// fact succeeded and only the session is missing.
+//
+// It reports unavailability rather than a fault because nothing about the request
+// is wrong: the same call cannot succeed on a retry, but the caller has a
+// different one that will, and that is what the message says.
+func accountLinkSessionFailed(err error) error {
+	return apperror.ServiceUnavailableWith(
+		CodeAccountLinkSessionFailed,
+		"the account was linked but the session could not be created, please sign in with Google again",
+		err,
+	)
+}
+
 type LoginGoogleResult struct {
 	Outcome LoginOutcome
 
@@ -304,7 +323,7 @@ func (s *Service) LoginGoogle(
 
 	authIdentity, err := s.repository.GetAuthIdentity(
 		ctx,
-		"google",
+		googleAuthProvider,
 		identity.Subject,
 	)
 	if err != nil {
@@ -336,12 +355,11 @@ func (s *Service) LoginGoogle(
 			ctx,
 			logindb.CreateAccountLinkConfirmationParams{
 				UserID:          user.ID,
-				Provider:        "google",
+				Provider:        googleAuthProvider,
 				ProviderSubject: identity.Subject,
-				EmailSnapshot: pgtype.Text{
-					String: email,
-					Valid:  true,
-				},
+				// No email snapshot: the confirmation records who the link is for,
+				// not the address that matched, and the address is read from the
+				// account when a link actually succeeds.
 				DisplayNameSnapshot: pgtype.Text{
 					String: identity.DisplayName,
 					Valid:  identity.DisplayName != "",
@@ -366,7 +384,7 @@ func (s *Service) LoginGoogle(
 		ctx,
 		registration.CreateSocialRegistrationInput{
 			Email:           email,
-			Provider:        "google",
+			Provider:        googleAuthProvider,
 			ProviderSubject: identity.Subject,
 			EmailSnapshot: pgtype.Text{
 				String: email,
@@ -391,10 +409,8 @@ func (s *Service) LoginGoogle(
 type GetAccountLinkConfirmationResult struct {
 	ID                  uuid.UUID
 	Provider            string
-	EmailSnapshot       string
 	DisplayNameSnapshot string
-	UserEmail           string
-	UserDisplayName     string
+	MaskedUserEmail     string
 }
 
 func (s *Service) GetAccountLinkConfirmation(
@@ -406,22 +422,52 @@ func (s *Service) GetAccountLinkConfirmation(
 		return GetAccountLinkConfirmationResult{}, err
 	}
 
+	// The address comes from the account row, not from the Google snapshot. The
+	// two are the same value — the account was found by looking this address up —
+	// so the snapshot would be a second copy of it, and one that names the Google
+	// account rather than the account being linked to.
 	return GetAccountLinkConfirmationResult{
 		ID:                  confirmation.ID,
 		Provider:            confirmation.Provider,
-		EmailSnapshot:       confirmation.EmailSnapshot.String,
 		DisplayNameSnapshot: confirmation.DisplayNameSnapshot.String,
-		UserEmail:           confirmation.UserEmail,
-		UserDisplayName:     confirmation.UserDisplayName,
+		MaskedUserEmail:     maskEmail(confirmation.UserEmail),
 	}, nil
 }
 
+// ConfirmAccountLink completes a pending link for the caller that started it.
+//
+// The confirmation id names the flow. It does not authorize it. Completing a link
+// writes an auth_identities row that permanently grants a second way into an
+// existing account, so the caller must prove they still control the Google
+// identity the confirmation was created for. Without that, anyone holding the id —
+// and the id is carried in a URL path, which is written to access logs, browser
+// history and Referer headers — could link their own Google account to someone
+// else's account and sign in as them.
+//
+// Note what the token does and does not establish. It proves the caller controls
+// this Google identity. It does not prove anything about the pre-existing
+// account: that account was matched because Google asserted, with email_verified,
+// that this identity's address is the one the account holds, and re-asserting that
+// is what keeps the two halves of the flow belonging to the same person. Requiring
+// the account's password is deliberately not done — see PROGRESS.md.
 func (s *Service) ConfirmAccountLink(
 	ctx context.Context,
 	confirmationID uuid.UUID,
+	idToken string,
 	metadata session.SessionMetadata,
 ) (LoginGoogleResult, error) {
-	identity, err := s.repository.ConfirmAccountLink(
+	// The token is verified before the confirmation is even read. An unauthenticated
+	// caller should cost a signature verification and nothing else, and a bad token
+	// should be refused before it can tell the caller whether a confirmation exists.
+	verified, err := s.googleTokenVerifier.Verify(
+		ctx,
+		idToken,
+	)
+	if err != nil {
+		return LoginGoogleResult{}, err
+	}
+
+	confirmation, err := s.repository.GetActiveAccountLinkConfirmation(
 		ctx,
 		confirmationID,
 	)
@@ -429,11 +475,56 @@ func (s *Service) ConfirmAccountLink(
 		return LoginGoogleResult{}, err
 	}
 
-	return s.loginWithUser(
+	// Both fields, and the provider is checked rather than assumed. Provider is a
+	// column this feature only ever writes as googleAuthProvider, but it is still
+	// data rather than code — it is read back out of the row and written into
+	// auth_identities — so a row naming another provider must not be satisfied by
+	// a token from this one.
+	//
+	// Email is not compared, deliberately. The address is a snapshot of what
+	// Google asserted when the confirmation was created and is informational only;
+	// it is not what the identity link is made on, and treating it as if it were
+	// would accept a different account that happens to share an address.
+	//
+	// This comparison is safe to make outside the transaction below because
+	// neither column is ever updated: the only write to a confirmation sets
+	// confirmed_at. The transaction re-checks that the confirmation is still active
+	// and still unused before consuming it, so a caller who wins the race here and
+	// loses it there is refused there rather than linked twice.
+	if confirmation.Provider != googleAuthProvider ||
+		confirmation.ProviderSubject != verified.Subject {
+		return LoginGoogleResult{}, apperror.ConflictWith(
+			CodeAccountLinkIdentityMismatch,
+			"account link confirmation does not match this Google account",
+			nil,
+		)
+	}
+
+	linked, err := s.repository.ConfirmAccountLink(
 		ctx,
-		identity.UserID,
+		confirmationID,
+	)
+	if err != nil {
+		return LoginGoogleResult{}, err
+	}
+
+	// Past this point the link is committed and the confirmation is consumed.
+	result, err := s.loginWithUser(
+		ctx,
+		linked.UserID,
 		metadata,
 	)
+	if err != nil {
+		// Anything that fails now fails after the link was written. Reporting the
+		// underlying fault would tell the caller a session exists when none does,
+		// and reporting the confirmation as invalid would be worse: retrying would
+		// return exactly that, because the confirmation is now spent. Retrying
+		// Google login recovers, because the identity is linked and that route
+		// authenticates it directly.
+		return LoginGoogleResult{}, accountLinkSessionFailed(err)
+	}
+
+	return result, nil
 }
 
 func (s *Service) loginWithUser(

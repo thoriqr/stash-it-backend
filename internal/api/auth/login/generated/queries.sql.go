@@ -17,7 +17,6 @@ INSERT INTO account_link_confirmations (
     user_id,
     provider,
     provider_subject,
-    email_snapshot,
     display_name_snapshot,
     expires_at
 )
@@ -26,15 +25,13 @@ VALUES (
     $2,
     $3,
     $4,
-    $5,
-    $6
+    $5
 )
 RETURNING
     id,
     user_id,
     provider,
     provider_subject,
-    email_snapshot,
     display_name_snapshot,
     created_at,
     expires_at,
@@ -45,7 +42,6 @@ type CreateAccountLinkConfirmationParams struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 	ExpiresAt           pgtype.Timestamptz
 }
@@ -55,7 +51,6 @@ func (q *Queries) CreateAccountLinkConfirmation(ctx context.Context, arg CreateA
 		arg.UserID,
 		arg.Provider,
 		arg.ProviderSubject,
-		arg.EmailSnapshot,
 		arg.DisplayNameSnapshot,
 		arg.ExpiresAt,
 	)
@@ -65,7 +60,6 @@ func (q *Queries) CreateAccountLinkConfirmation(ctx context.Context, arg CreateA
 		&i.UserID,
 		&i.Provider,
 		&i.ProviderSubject,
-		&i.EmailSnapshot,
 		&i.DisplayNameSnapshot,
 		&i.CreatedAt,
 		&i.ExpiresAt,
@@ -144,10 +138,8 @@ SELECT
     alc.user_id,
     alc.provider,
     alc.provider_subject,
-    alc.email_snapshot,
     alc.display_name_snapshot,
-    u.email AS user_email,
-    u.display_name AS user_display_name
+    u.email AS user_email
 FROM account_link_confirmations alc
 JOIN users u ON u.id = alc.user_id
 WHERE alc.id = $1
@@ -161,12 +153,15 @@ type GetAccountLinkConfirmationForUpdateRow struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 	UserEmail           string
-	UserDisplayName     string
 }
 
+// user_email is carried into auth_identities.email_snapshot on a successful
+// link. The value is the same one the removed confirmation snapshot held: the
+// account was found by looking that exact address up, so the two were equal by
+// construction. The column on the identity is kept; only the duplicate on the
+// confirmation was dropped.
 func (q *Queries) GetAccountLinkConfirmationForUpdate(ctx context.Context, id uuid.UUID) (GetAccountLinkConfirmationForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getAccountLinkConfirmationForUpdate, id)
 	var i GetAccountLinkConfirmationForUpdateRow
@@ -175,10 +170,8 @@ func (q *Queries) GetAccountLinkConfirmationForUpdate(ctx context.Context, id uu
 		&i.UserID,
 		&i.Provider,
 		&i.ProviderSubject,
-		&i.EmailSnapshot,
 		&i.DisplayNameSnapshot,
 		&i.UserEmail,
-		&i.UserDisplayName,
 	)
 	return i, err
 }
@@ -189,13 +182,11 @@ SELECT
     alc.user_id,
     alc.provider,
     alc.provider_subject,
-    alc.email_snapshot,
     alc.display_name_snapshot,
     alc.created_at,
     alc.expires_at,
     alc.confirmed_at,
-    u.email AS user_email,
-    u.display_name AS user_display_name
+    u.email AS user_email
 FROM account_link_confirmations alc
 JOIN users u ON u.id = alc.user_id
 WHERE alc.id = $1
@@ -208,15 +199,17 @@ type GetActiveAccountLinkConfirmationRow struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 	ConfirmedAt         pgtype.Timestamptz
 	UserEmail           string
-	UserDisplayName     string
 }
 
+// user_email is selected because it is the masking source for the confirmation
+// screen, and it is the account's own address rather than anything the Google
+// side asserted. user_display_name is deliberately not selected: the screen shows
+// the Google profile name captured on the confirmation, so nothing reads it.
 func (q *Queries) GetActiveAccountLinkConfirmation(ctx context.Context, id uuid.UUID) (GetActiveAccountLinkConfirmationRow, error) {
 	row := q.db.QueryRow(ctx, getActiveAccountLinkConfirmation, id)
 	var i GetActiveAccountLinkConfirmationRow
@@ -225,13 +218,11 @@ func (q *Queries) GetActiveAccountLinkConfirmation(ctx context.Context, id uuid.
 		&i.UserID,
 		&i.Provider,
 		&i.ProviderSubject,
-		&i.EmailSnapshot,
 		&i.DisplayNameSnapshot,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.ConfirmedAt,
 		&i.UserEmail,
-		&i.UserDisplayName,
 	)
 	return i, err
 }

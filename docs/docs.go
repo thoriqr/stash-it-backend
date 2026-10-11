@@ -193,7 +193,7 @@ const docTemplate = `{
         },
         "/auth/login/google/account-link/{confirmation_id}": {
             "get": {
-                "description": "Retrieve an active Google account link confirmation.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Retrieve an active Google account link confirmation.\nThe account email is returned masked, as masked_user_email.\ndisplay_name_snapshot is the Google profile name captured when the confirmation was created.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -252,7 +252,10 @@ const docTemplate = `{
         },
         "/auth/login/google/account-link/{confirmation_id}/confirm": {
             "post": {
-                "description": "Confirm a Google account link and create an authenticated session.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- AUTH_IDENTITY_ALREADY_EXISTS\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Confirm a Google account link and create an authenticated session.\nThe confirmation_id identifies the pending confirmation; it does not authorize it.\nThe id_token is required and must belong to the same Google identity the confirmation was created for,\nmatched on provider and provider subject. Email is never used to match.\nA mismatched or invalid token leaves the confirmation active, so the correct identity can still complete it.\nShares the per-client-address budget with the other Google authentication routes.\nPossible error codes:\n- BAD_REQUEST\n- ACCOUNT_LINK_CONFIRMATION_INVALID\n- ACCOUNT_LINK_IDENTITY_MISMATCH\n- AUTH_IDENTITY_ALREADY_EXISTS\n- INVALID_GOOGLE_TOKEN\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -267,6 +270,15 @@ const docTemplate = `{
                         "name": "confirmation_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Google ID token proving control of the identity being linked",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/login.ConfirmAccountLinkRequest"
+                        }
                     },
                     {
                         "type": "string",
@@ -301,13 +313,19 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid confirmation ID or session metadata",
+                        "description": "Invalid confirmation ID, missing id_token or invalid session metadata",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired Google ID token",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
                     "409": {
-                        "description": "Account link confirmation is invalid or auth identity already exists",
+                        "description": "Confirmation invalid, already used, or the token belongs to a different Google identity",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -325,7 +343,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Request limiting is unavailable, so the confirmation was never read",
+                        "description": "Request limiting is unavailable, or the account was linked but the session could not be created; retry Google login",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -2441,6 +2459,18 @@ const docTemplate = `{
                 }
             }
         },
+        "login.ConfirmAccountLinkRequest": {
+            "type": "object",
+            "required": [
+                "id_token"
+            ],
+            "properties": {
+                "id_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImV4YW1wbGUifQ..."
+                }
+            }
+        },
         "login.GetAccountLinkConfirmationAPIResponse": {
             "type": "object",
             "properties": {
@@ -2460,25 +2490,17 @@ const docTemplate = `{
                     "type": "string",
                     "example": "John Doe"
                 },
-                "email_snapshot": {
-                    "type": "string",
-                    "example": "user@gmail.com"
-                },
                 "id": {
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 },
+                "masked_user_email": {
+                    "type": "string",
+                    "example": "j***@example.com"
+                },
                 "provider": {
                     "type": "string",
                     "example": "google"
-                },
-                "user_display_name": {
-                    "type": "string",
-                    "example": "John Doe"
-                },
-                "user_email": {
-                    "type": "string",
-                    "example": "user@example.com"
                 }
             }
         },

@@ -237,7 +237,6 @@ CREATE TABLE account_link_confirmations (
     provider VARCHAR(32) NOT NULL,
     provider_subject VARCHAR(255) NOT NULL,
 
-    email_snapshot TEXT,
     display_name_snapshot TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

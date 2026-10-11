@@ -86,7 +86,6 @@ INSERT INTO account_link_confirmations (
     user_id,
     provider,
     provider_subject,
-    email_snapshot,
     display_name_snapshot,
     expires_at
 )
@@ -94,11 +93,15 @@ VALUES (
     sqlc.arg(user_id),
     sqlc.arg(provider),
     sqlc.arg(provider_subject),
-    sqlc.arg(email_snapshot),
     sqlc.arg(display_name_snapshot),
     NOW() + INTERVAL '15 minutes'
 )
 RETURNING id;
+
+-- name: ExpireAccountLinkConfirmation :exec
+UPDATE account_link_confirmations
+SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE id = sqlc.arg(id);
 
 -- name: GetAccountLinkConfirmationState :one
 SELECT
@@ -106,7 +109,6 @@ SELECT
     alc.user_id,
     alc.provider,
     alc.provider_subject,
-    alc.email_snapshot,
     alc.display_name_snapshot,
     alc.expires_at,
     alc.confirmed_at,

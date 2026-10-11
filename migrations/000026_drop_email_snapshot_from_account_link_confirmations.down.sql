@@ -1,0 +1,2 @@
+ALTER TABLE account_link_confirmations
+ADD COLUMN email_snapshot TEXT;

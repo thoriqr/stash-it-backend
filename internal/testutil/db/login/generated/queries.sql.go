@@ -31,7 +31,6 @@ INSERT INTO account_link_confirmations (
     user_id,
     provider,
     provider_subject,
-    email_snapshot,
     display_name_snapshot,
     expires_at
 )
@@ -40,7 +39,6 @@ VALUES (
     $2,
     $3,
     $4,
-    $5,
     NOW() + INTERVAL '15 minutes'
 )
 RETURNING id
@@ -50,7 +48,6 @@ type CreateAccountLinkConfirmationParams struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 }
 
@@ -59,7 +56,6 @@ func (q *Queries) CreateAccountLinkConfirmation(ctx context.Context, arg CreateA
 		arg.UserID,
 		arg.Provider,
 		arg.ProviderSubject,
-		arg.EmailSnapshot,
 		arg.DisplayNameSnapshot,
 	)
 	var id uuid.UUID
@@ -148,13 +144,23 @@ func (q *Queries) CreatePasswordCredential(ctx context.Context, arg CreatePasswo
 	return err
 }
 
+const expireAccountLinkConfirmation = `-- name: ExpireAccountLinkConfirmation :exec
+UPDATE account_link_confirmations
+SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE id = $1
+`
+
+func (q *Queries) ExpireAccountLinkConfirmation(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireAccountLinkConfirmation, id)
+	return err
+}
+
 const getAccountLinkConfirmationState = `-- name: GetAccountLinkConfirmationState :one
 SELECT
     alc.id,
     alc.user_id,
     alc.provider,
     alc.provider_subject,
-    alc.email_snapshot,
     alc.display_name_snapshot,
     alc.expires_at,
     alc.confirmed_at,
@@ -171,7 +177,6 @@ type GetAccountLinkConfirmationStateRow struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 	ExpiresAt           pgtype.Timestamptz
 	ConfirmedAt         pgtype.Timestamptz
@@ -187,7 +192,6 @@ func (q *Queries) GetAccountLinkConfirmationState(ctx context.Context, id uuid.U
 		&i.UserID,
 		&i.Provider,
 		&i.ProviderSubject,
-		&i.EmailSnapshot,
 		&i.DisplayNameSnapshot,
 		&i.ExpiresAt,
 		&i.ConfirmedAt,

@@ -330,6 +330,14 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  login.ConfirmAccountLinkRequest:
+    properties:
+      id_token:
+        example: eyJhbGciOiJSUzI1NiIsImtpZCI6ImV4YW1wbGUifQ...
+        type: string
+    required:
+    - id_token
+    type: object
   login.GetAccountLinkConfirmationAPIResponse:
     properties:
       data:
@@ -343,20 +351,14 @@ definitions:
       display_name_snapshot:
         example: John Doe
         type: string
-      email_snapshot:
-        example: user@gmail.com
-        type: string
       id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
+      masked_user_email:
+        example: j***@example.com
+        type: string
       provider:
         example: google
-        type: string
-      user_display_name:
-        example: John Doe
-        type: string
-      user_email:
-        example: user@example.com
         type: string
     type: object
   login.LoginGoogleRequest:
@@ -1247,6 +1249,8 @@ paths:
     get:
       description: |-
         Retrieve an active Google account link confirmation.
+        The account email is returned masked, as masked_user_email.
+        display_name_snapshot is the Google profile name captured when the confirmation was created.
         Shares the per-client-address budget with the other Google authentication routes.
         Possible error codes:
         - BAD_REQUEST
@@ -1295,13 +1299,21 @@ paths:
       - Login
   /auth/login/google/account-link/{confirmation_id}/confirm:
     post:
+      consumes:
+      - application/json
       description: |-
         Confirm a Google account link and create an authenticated session.
+        The confirmation_id identifies the pending confirmation; it does not authorize it.
+        The id_token is required and must belong to the same Google identity the confirmation was created for,
+        matched on provider and provider subject. Email is never used to match.
+        A mismatched or invalid token leaves the confirmation active, so the correct identity can still complete it.
         Shares the per-client-address budget with the other Google authentication routes.
         Possible error codes:
         - BAD_REQUEST
         - ACCOUNT_LINK_CONFIRMATION_INVALID
+        - ACCOUNT_LINK_IDENTITY_MISMATCH
         - AUTH_IDENTITY_ALREADY_EXISTS
+        - INVALID_GOOGLE_TOKEN
         - IP_RATE_LIMIT_EXCEEDED
         - IP_RATE_LIMIT_UNAVAILABLE
         - CLIENT_IP_UNAVAILABLE
@@ -1312,6 +1324,12 @@ paths:
         name: confirmation_id
         required: true
         type: string
+      - description: Google ID token proving control of the identity being linked
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/login.ConfirmAccountLinkRequest'
       - description: Client platform
         in: header
         name: X-Platform
@@ -1336,12 +1354,17 @@ paths:
           schema:
             $ref: '#/definitions/login.LoginGoogleSuccessAPIResponse'
         "400":
-          description: Invalid confirmation ID or session metadata
+          description: Invalid confirmation ID, missing id_token or invalid session
+            metadata
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired Google ID token
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "409":
-          description: Account link confirmation is invalid or auth identity already
-            exists
+          description: Confirmation invalid, already used, or the token belongs to
+            a different Google identity
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "429":
@@ -1354,8 +1377,8 @@ paths:
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "503":
-          description: Request limiting is unavailable, so the confirmation was never
-            read
+          description: Request limiting is unavailable, or the account was linked
+            but the session could not be created; retry Google login
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       summary: Confirm Google account link

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	logindb "github.com/thoriqr/stash-it-backend/internal/api/auth/login/generated"
@@ -221,10 +222,19 @@ func (r *repository) ConfirmAccountLink(
 	identity, err := qtx.CreateAuthIdentity(
 		ctx,
 		logindb.CreateAuthIdentityParams{
-			UserID:              confirmation.UserID,
-			Provider:            confirmation.Provider,
-			ProviderSubject:     confirmation.ProviderSubject,
-			EmailSnapshot:       confirmation.EmailSnapshot,
+			UserID:          confirmation.UserID,
+			Provider:        confirmation.Provider,
+			ProviderSubject: confirmation.ProviderSubject,
+			// The account's own address, which is the address Google asserted for
+			// this identity when the confirmation was created — the confirmation
+			// only exists because that lookup matched. Sourcing it from the account
+			// rather than from a snapshot on the confirmation keeps the snapshot on
+			// auth_identities meaningful without keeping a second copy of the same
+			// string in a table that no longer stores one.
+			EmailSnapshot: pgtype.Text{
+				String: confirmation.UserEmail,
+				Valid:  true,
+			},
 			DisplayNameSnapshot: confirmation.DisplayNameSnapshot,
 		},
 	)

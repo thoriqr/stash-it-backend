@@ -22,6 +22,11 @@ Migration 000025 is applied to the development database, and
 `internal/database/baseline/schema.sql` reflects it, so integration tests exercise
 the same ownership constraint production does.
 
+Migration **000026** (`drop_email_snapshot_from_account_link_confirmations`) is
+likewise applied to the development database, and the baseline reflects it. The
+column existed only as a second copy of an address the confirmation's own join
+already yields; the account-link section below describes what replaced it.
+
 The full path — save, background enrichment, and the automatic organization the
 enrichment hands off to — was also verified end to end against the running stack
 with a manual request walkthrough. Automated tests cover the same flow.
@@ -1242,8 +1247,8 @@ attacker cannot aim such a budget at a victim's mailbox.
 A per-email budget here could therefore only ever be spent by the legitimate
 owner of the address it names. Its only effect would be locking that owner out of
 one of two ways in — a denial of service, not a protection. The same reasoning
-applies to `ConfirmAccountLink`, where the email is the confirmation's stored
-`email_snapshot`, which the caller has no influence over.
+applies to `ConfirmAccountLink`, where the only address in play is the account's
+own, reached through the provider and subject the confirmation already records.
 
 ### Why it is separate from the manual-login budgets
 
@@ -1311,6 +1316,197 @@ charged three times against `google-auth-ip` and never against `login-ip`.
 times the allowance simultaneously and asserts that exactly the excess was
 refused, which is the property a read-modify-write counter would fail. It has been
 run under `-race` and re-run with `-count=4` without a flake.
+
+---
+
+## Account-link confirmation authorization — implemented
+
+`POST /auth/login/google/account-link/:confirmation_id/confirm` now requires the
+Google ID token of the identity being linked, and a `confirmation_id` on its own
+authorizes nothing.
+
+### What the confirmation id was, and what it is
+
+The confirmation id used to be a bearer credential. It was the only thing the
+endpoint checked, and the endpoint's whole effect was to write
+`auth_identities` — a permanent second way into an existing account — and issue a
+session. **It was also carried in a URL path**, which is written to access logs,
+browser history and `Referer` headers. Fifteen minutes of an arbitrary person's
+account, recoverable by anyone who had merely seen the id.
+
+It is now a **flow identifier**. It names which pending confirmation is being
+completed; the credential that authorizes completing it is the Google identity
+the confirmation was created for, re-proved at the moment of confirmation.
+
+### Why requiring the token again is a meaningful change
+
+The obvious objection is that it adds nothing: creating a confirmation already
+required a verified Google token, so anyone who can mint one can also complete
+what they minted. That is true and is not the point. The point is that the check
+**decouples the two halves of the flow**. Before, the id leaked by itself
+converted into a login. After, it does not — the attacker needs the credential
+as well, and the half that leaks by accident is the half that no longer matters.
+
+### What the token does and does not prove
+
+It proves the caller still controls **this Google identity**. It does not prove
+anything about the pre-existing manual account: that account was matched because
+Google asserted, with `email_verified`, that this identity's address is the one
+the account holds, and re-asserting that keeps the two halves of the flow
+belonging to the same person.
+
+**Requiring the account's password is deliberately not done.** This application
+already treats mailbox control as account authority — `POST /auth/password-reset`
+is unauthenticated and issues a PIN to the account's address. Re-proving that
+same control is consistent with the rest of the design; asking for a password
+would be *stricter than password reset*, would break anyone who cannot recall it,
+and would train users to type a password into a "link Google" prompt, which is a
+phishing shape. If the product ever wants linking to require the pre-existing
+credential, that is a deliberate change to the trust model and not a patch.
+
+### The comparison
+
+Both fields, exactly:
+
+| Field | Source of truth | Why |
+| --- | --- | --- |
+| `provider` | `account_link_confirmations.provider` | Data, not code — it is read back out and copied into `auth_identities`. A row naming another provider must not be satisfied by a Google token. |
+| `provider_subject` | `account_link_confirmations.provider_subject` | The identity the link is actually made on. |
+
+Email is **never** compared. It is not an identity, and treating it as one would
+accept a different account that happens to share an address.
+
+The comparison is made outside the transaction, which is safe because neither
+column is ever written — the only `UPDATE` against the table sets `confirmed_at`.
+The transaction still re-checks that the confirmation is active and unused before
+consuming it, so a caller that wins the race to read and loses it to consume is
+refused there rather than linked twice.
+
+### No schema change was needed
+
+`account_link_confirmations.provider` and `.provider_subject` were already
+`NOT NULL`, already immutable, and already selected by both
+`GetActiveAccountLinkConfirmation` and `GetAccountLinkConfirmationForUpdate`. No
+migration, and no regeneration of the production sqlc target.
+
+### Responses
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| `id_token` absent, empty, or not bindable | 400 | `VALIDATION_ERROR` / `BAD_REQUEST` |
+| token missing a claim, invalid signature, expired | 401 | `INVALID_GOOGLE_TOKEN` |
+| valid token, different identity | 409 | `ACCOUNT_LINK_IDENTITY_MISMATCH` |
+| confirmation unknown, expired, or already used | 409 | `ACCOUNT_LINK_CONFIRMATION_INVALID` |
+| identity already linked by another confirmation | 409 | `AUTH_IDENTITY_ALREADY_EXISTS` |
+| linked, but the session could not be created | 503 | `ACCOUNT_LINK_SESSION_FAILED` |
+
+`ACCOUNT_LINK_IDENTITY_MISMATCH` is deliberately distinct from
+`INVALID_GOOGLE_TOKEN` because the two ask for opposite things: an invalid token
+means obtain a new one, a mismatch means retrying will never help. A client that
+cannot tell them apart sits in a retry loop. Neither message names the stored
+identity or the target account.
+
+`ACCOUNT_LINK_SESSION_FAILED` exists because the alternative is a lie the client
+acts on. The link is committed and the confirmation consumed before the session
+is created, so retrying the confirmation can only ever return
+`ACCOUNT_LINK_CONFIRMATION_INVALID` — telling the user their confirmation was
+wrong when the link in fact succeeded. Retrying `POST /auth/login/google` does
+recover, because the identity is now linked and that route authenticates it
+directly. It carries no `Retry-After`: recovery waits out nothing.
+
+### Frontend contract changes
+
+Both are breaking changes to the API.
+
+1. `POST .../confirm` requires a JSON body `{"id_token": "..."}`.
+2. `GET .../account-link/:id` returns **`masked_user_email`** in place of
+   `user_email`, and no longer returns `email_snapshot` or `user_display_name`.
+
+The frontend should read the masked address as a hint only. The backend already
+made the email match, so the screen is a yes/no gate rather than a picker, and a
+masked address leaves the user nothing to mis-pick.
+
+### `email_snapshot` removed — migration 000026
+
+The column was dropped from `account_link_confirmations` by migration
+`000026_drop_email_snapshot_from_account_link_confirmations`. It held the Google
+address the confirmation was created from, and the account the confirmation points
+at is by definition the account holding that same address, so it was a second copy
+of a value the row already points to.
+
+The column on `auth_identities` **remains** and is still written. The value now
+comes from `users.email` on the account the confirmation joins to, which is the
+same string by construction: the account was found by looking that exact
+normalized address up. Dropping the confirmation's copy therefore loses nothing,
+and `TestConfirmAccountLink` asserts the identity still carries it, with the
+fixture's two addresses deliberately different so the source is observable.
+
+`display_name_snapshot` is untouched and stays: it is the Google profile name as
+it read when the confirmation was created, and it is not interchangeable with the
+account's own `users.display_name`.
+
+`users.display_name` was removed from both confirmation queries. It was selected
+but read by nothing — the screen shows `display_name_snapshot`, and the response
+has no field for it — so it was dead weight in the generated row structs rather
+than a field kept for a future caller.
+
+**`auth_identities.email_snapshot` and `pending_social_identities.email_snapshot`
+are different columns on different tables and were not touched.** Migration 000019
+added both, and they remain.
+
+### Verification
+
+`internal/api/auth/login` (service) — a matching identity succeeds; an invalid
+token reaches no repository call at all (gomock strictness is the assertion);
+a different subject and a different provider are each refused with the mismatch
+code; the confirmation's stored values are what is compared rather than the
+token's; an inactive confirmation is refused before the comparison; and both
+post-commit failures — user lookup and session creation — are reported as
+`ACCOUNT_LINK_SESSION_FAILED` with the underlying fault retained.
+
+`internal/api/auth/login` (routes) — six malformed or absent bodies are refused,
+distinguishing the two codes binding produces; a well-formed body reaches the
+token check. **The route test app was given the struct validator it was missing**,
+which it had never had: without it Fiber silently skips every `validate` tag, so
+these assertions would have passed against a build that validated nothing. The
+production binary and the integration app already configured it.
+
+`internal/api/auth/login` (masking) — twelve cases through the service, each
+asserting the output is never the input, plus a check that the marshalled
+response carries neither the old field names nor a full address.
+
+`internal/integration/auth_login_account_link_test.go` — against real PostgreSQL:
+a matching identity is accepted; a different identity and a different provider
+are each refused with nothing written; a rejection leaves the flow usable; a
+missing token writes nothing and the confirmation still works afterwards; single
+use leaves one identity and one session; an expired confirmation is refused by
+both routes; eight concurrent attempts produce exactly one link and exactly one
+session with every other answered as a spent confirmation; and a second
+confirmation for the same identity loses with `AUTH_IDENTITY_ALREADY_EXISTS`,
+which is the one path that previously had no coverage.
+
+**The concurrency test's strength was measured, not assumed.** With `FOR UPDATE`
+removed from `GetAccountLinkConfirmationForUpdate`, a *single* run still passed —
+the unique index on `(provider, provider_subject)` is independently enough to keep
+the losers failing — and only repeated runs caught it. So the test verifies the
+outcome under contention, not which of the three guards produces it. It is
+documented as needing `-count` for that distinction and has been run at
+`-count=5` under `-race` without a flake.
+
+### Known gaps, reported rather than acted on
+
+- **`user_display_name` is still returned in full.** It is the pre-existing
+  account's display name on an unauthenticated route. Reducing it was considered
+  and deferred: this task named the email specifically, and changing an
+  unrequested field would widen the contract change the frontend has to absorb.
+- **`ACCOUNT_LINK_SESSION_FAILED` is implemented but not covered end to end.**
+  The service unit tests assert the mapping; forcing a real session-insert failure
+  through the HTTP app would need fault injection this suite has no facility for.
+- **Expiry still leaves rows behind.** Expired and confirmed confirmations are
+  never deleted, so the table grows without bound. Unchanged by this task.
+- **A caller who loses a Google token mid-flow must re-prompt.** Not a defect,
+  but it is a UX cost this change introduces and the frontend must handle it:
+  a 401 on confirm means "re-obtain the token", not "wrong confirmation".
 
 ---
 

@@ -4,6 +4,17 @@ import "time"
 
 const AccountLinkConfirmationLifetime = 15 * time.Minute
 
+// googleAuthProvider is the value written to auth_identities.provider and
+// account_link_confirmations.provider for every identity this feature creates.
+//
+// It is a constant rather than a literal at each call site because confirming a
+// link compares a token's identity against the provider and subject a
+// confirmation was created with. A comparison written against a different literal
+// than the one that wrote the row would fail open — every confirmation would look
+// like a mismatch — or, worse, fail silently if the two were ever made to agree by
+// accident. One definition is what makes the two sides agree by construction.
+const googleAuthProvider = "google"
+
 // LoginIPRateLimitMax and LoginIPRateLimitWindow bound how often one client
 // address may reach the manual login endpoint.
 //

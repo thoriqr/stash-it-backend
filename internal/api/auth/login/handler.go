@@ -146,6 +146,8 @@ func (h *Handler) LoginGoogle(c fiber.Ctx) error {
 // GetAccountLinkConfirmation godoc
 // @Summary Get account link confirmation
 // @Description Retrieve an active Google account link confirmation.
+// @Description The account email is returned masked, as masked_user_email.
+// @Description display_name_snapshot is the Google profile name captured when the confirmation was created.
 // @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
@@ -185,10 +187,8 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 	response := GetAccountLinkConfirmationResponse{
 		ID:                  result.ID.String(),
 		Provider:            result.Provider,
-		EmailSnapshot:       result.EmailSnapshot,
 		DisplayNameSnapshot: result.DisplayNameSnapshot,
-		UserEmail:           result.UserEmail,
-		UserDisplayName:     result.UserDisplayName,
+		MaskedUserEmail:     result.MaskedUserEmail,
 	}
 
 	return httpx.OK(
@@ -201,28 +201,37 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 // ConfirmAccountLink godoc
 // @Summary Confirm Google account link
 // @Description Confirm a Google account link and create an authenticated session.
+// @Description The confirmation_id identifies the pending confirmation; it does not authorize it.
+// @Description The id_token is required and must belong to the same Google identity the confirmation was created for,
+// @Description matched on provider and provider subject. Email is never used to match.
+// @Description A mismatched or invalid token leaves the confirmation active, so the correct identity can still complete it.
 // @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - ACCOUNT_LINK_CONFIRMATION_INVALID
+// @Description - ACCOUNT_LINK_IDENTITY_MISMATCH
 // @Description - AUTH_IDENTITY_ALREADY_EXISTS
+// @Description - INVALID_GOOGLE_TOKEN
 // @Description - IP_RATE_LIMIT_EXCEEDED
 // @Description - IP_RATE_LIMIT_UNAVAILABLE
 // @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Login
+// @Accept json
 // @Produce json
 // @Param confirmation_id path string true "Account link confirmation ID"
+// @Param request body ConfirmAccountLinkRequest true "Google ID token proving control of the identity being linked"
 // @Param X-Platform header string false "Client platform"
 // @Param X-Installation-ID header string false "Client installation ID (UUID)"
 // @Param X-Device-Name header string false "Client device name"
 // @Param User-Agent header string false "Client user agent"
 // @Success 200 {object} LoginGoogleSuccessAPIResponse
-// @Failure 400 {object} swagger.APIErrorResponse "Invalid confirmation ID or session metadata"
-// @Failure 409 {object} swagger.APIErrorResponse "Account link confirmation is invalid or auth identity already exists"
+// @Failure 400 {object} swagger.APIErrorResponse "Invalid confirmation ID, missing id_token or invalid session metadata"
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired Google ID token"
+// @Failure 409 {object} swagger.APIErrorResponse "Confirmation invalid, already used, or the token belongs to a different Google identity"
 // @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
-// @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, so the confirmation was never read"
+// @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, or the account was linked but the session could not be created; retry Google login"
 // @Router /auth/login/google/account-link/{confirmation_id}/confirm [post]
 func (h *Handler) ConfirmAccountLink(c fiber.Ctx) error {
 	confirmationID, err := uuid.Parse(c.Params("confirmation_id"))
@@ -234,6 +243,12 @@ func (h *Handler) ConfirmAccountLink(c fiber.Ctx) error {
 		)
 	}
 
+	var req ConfirmAccountLinkRequest
+
+	if err := httpx.BindBody(c, &req); err != nil {
+		return err
+	}
+
 	metadata, err := session.ExtractMetadata(c)
 	if err != nil {
 		return err
@@ -242,6 +257,7 @@ func (h *Handler) ConfirmAccountLink(c fiber.Ctx) error {
 	result, err := h.service.ConfirmAccountLink(
 		c.Context(),
 		confirmationID,
+		req.IDToken,
 		metadata,
 	)
 	if err != nil {

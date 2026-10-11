@@ -139,6 +139,25 @@ Implementation lives in `internal/security` and `internal/api/auth/session`.
 - Registration / password-reset verification endpoints are intentionally
   unauthenticated; the existing `verification_id` + emailed PIN flow is the
   credential.
+- **A `confirmation_id` is a flow identifier, never a bearer credential.** It is
+  carried in a URL path, and a path reaches access logs, browser history and
+  `Referer` headers. `ConfirmAccountLink` must verify the Google ID token against
+  `login.GoogleTokenVerifier` and match **both** `provider` and
+  `provider_subject` against the confirmation row. **Never match on an email
+  address**: it is not an identity, and doing so would accept a different account
+  that happens to share one. Do not "simplify" the comparison to an email check
+  or to a subject-only check — the provider column is data, not code.
+- **Linking is gated on mailbox control, not on the existing account's
+  credential.** This matches password reset, which is unauthenticated and proves
+  the same thing. Requiring the manual password would be stricter than the app's
+  own recovery path, would break users who cannot recall it, and would create a
+  phishing-shaped prompt. Do not add it as a "security improvement"; changing
+  this is a deliberate change to the trust model.
+- **The confirmation's own transaction is the single-use authority.** Provider and
+  subject are immutable (only `confirmed_at` is ever written), so the service may
+  compare them outside the transaction, but the `FOR UPDATE` read and the
+  `rowsAffected != 1` guard inside it are what make concurrent attempts produce
+  exactly one link. Do not move, weaken or "optimize away" either.
 - **Rate limiting is per flow, and a flow's budgets must not be reused by
   another.** Manual login has `login-ip` (route middleware) and `login-email`
   (service); all three Google authentication routes share `google-auth-ip` (route

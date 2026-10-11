@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,11 @@ import (
 	login "github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	logintestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/login/generated"
 )
+
+// The Google token the integration app's verifier hands back. The app injects a
+// fake verifier that always resolves to the same account, so this identifies the
+// fixture rather than a credential: nothing verifies it.
+const testGoogleIDToken = "test-google-id-token"
 
 func TestLoginGoogle_Authenticated(t *testing.T) {
 	ctx := context.Background()
@@ -281,10 +287,6 @@ func TestGetAccountLinkConfirmation(t *testing.T) {
 			UserID:          userID,
 			Provider:        "google",
 			ProviderSubject: providerSubject,
-			EmailSnapshot: pgtype.Text{
-				String: "google@example.com",
-				Valid:  true,
-			},
 			DisplayNameSnapshot: pgtype.Text{
 				String: "Google User",
 				Valid:  true,
@@ -303,25 +305,35 @@ func TestGetAccountLinkConfirmation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
+	// Read once and decode from the bytes, so the same response can be asserted
+	// on both structurally and as raw text. The raw form is the one that proves
+	// nothing was left behind in a field the struct does not declare.
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
 	var body struct {
 		Data struct {
 			ID                  string `json:"id"`
 			Provider            string `json:"provider"`
-			EmailSnapshot       string `json:"email_snapshot"`
 			DisplayNameSnapshot string `json:"display_name_snapshot"`
-			UserEmail           string `json:"user_email"`
-			UserDisplayName     string `json:"user_display_name"`
+			MaskedUserEmail     string `json:"masked_user_email"`
 		} `json:"data"`
 	}
 
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.NoError(t, json.Unmarshal(raw, &body))
 
 	require.Equal(t, confirmationID.String(), body.Data.ID)
 	require.Equal(t, "google", body.Data.Provider)
-	require.Equal(t, "google@example.com", body.Data.EmailSnapshot)
 	require.Equal(t, "Google User", body.Data.DisplayNameSnapshot)
-	require.Equal(t, email, body.Data.UserEmail)
-	require.Equal(t, displayName, body.Data.UserDisplayName)
+
+	// The address is redacted, and it comes from the account row. The confirmation
+	// carries no address of its own any more, so this asserts what the field is
+	// rather than that it beat a rival source.
+	require.Equal(t, "g***@example.com", body.Data.MaskedUserEmail)
+
+	// The response carries no field holding the address in full.
+	require.NotContains(t, string(raw), email)
+	require.NotContains(t, string(raw), "email_snapshot")
 }
 
 func TestConfirmAccountLink(t *testing.T) {
@@ -349,10 +361,6 @@ func TestConfirmAccountLink(t *testing.T) {
 			UserID:          userID,
 			Provider:        "google",
 			ProviderSubject: providerSubject,
-			EmailSnapshot: pgtype.Text{
-				String: "google@example.com",
-				Valid:  true,
-			},
 			DisplayNameSnapshot: pgtype.Text{
 				String: "Google User",
 				Valid:  true,
@@ -364,9 +372,10 @@ func TestConfirmAccountLink(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/auth/login/google/account-link/"+confirmationID.String()+"/confirm",
-		nil,
+		strings.NewReader(`{"id_token":"test-google-id-token"}`),
 	)
 
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Platform", "web")
 
 	resp, err := testApp.Test(req)
@@ -421,13 +430,8 @@ func TestConfirmAccountLink(t *testing.T) {
 		confirmationState.ProviderSubject,
 	)
 
-	require.True(t, confirmationState.EmailSnapshot.Valid)
-	require.Equal(
-		t,
-		"google@example.com",
-		confirmationState.EmailSnapshot.String,
-	)
-
+	// The confirmation no longer stores an address of its own; what it carries
+	// is the Google profile name captured when it was created.
 	require.True(t, confirmationState.DisplayNameSnapshot.Valid)
 	require.Equal(
 		t,
@@ -451,10 +455,14 @@ func TestConfirmAccountLink(t *testing.T) {
 	require.Equal(t, "google", identity.Provider)
 	require.Equal(t, providerSubject, identity.ProviderSubject)
 
+	// The identity's address snapshot is the account's address, which is the one
+	// the confirmation matched on. The two addresses differ in this fixture on
+	// purpose, so this asserts where the value is now sourced from rather than
+	// that a column still exists.
 	require.True(t, identity.EmailSnapshot.Valid)
 	require.Equal(
 		t,
-		"google@example.com",
+		email,
 		identity.EmailSnapshot.String,
 	)
 

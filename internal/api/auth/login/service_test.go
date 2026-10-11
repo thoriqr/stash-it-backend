@@ -951,16 +951,11 @@ func TestService_GetAccountLinkConfirmation(t *testing.T) {
 					UserID:          userID,
 					Provider:        "google",
 					ProviderSubject: "google-subject-123",
-					EmailSnapshot: pgtype.Text{
-						String: "google@example.com",
-						Valid:  true,
-					},
 					DisplayNameSnapshot: pgtype.Text{
 						String: "Google User",
 						Valid:  true,
 					},
-					UserEmail:       "user@example.com",
-					UserDisplayName: "Existing User",
+					UserEmail: "user@example.com",
 				},
 				nil,
 			)
@@ -990,14 +985,7 @@ func TestService_GetAccountLinkConfirmation(t *testing.T) {
 			)
 		}
 
-		if result.EmailSnapshot != "google@example.com" {
-			t.Fatalf(
-				"expected email snapshot %q, got %q",
-				"google@example.com",
-				result.EmailSnapshot,
-			)
-		}
-
+		// The Google profile name is reported as captured at creation time.
 		if result.DisplayNameSnapshot != "Google User" {
 			t.Fatalf(
 				"expected display name snapshot %q, got %q",
@@ -1006,19 +994,14 @@ func TestService_GetAccountLinkConfirmation(t *testing.T) {
 			)
 		}
 
-		if result.UserEmail != "user@example.com" {
+		// The account's address, redacted. The Google snapshot deliberately
+		// differs from it in the fixture above, which is what makes this
+		// assertion able to tell the two sources apart.
+		if result.MaskedUserEmail != "u***@example.com" {
 			t.Fatalf(
-				"expected user email %q, got %q",
-				"user@example.com",
-				result.UserEmail,
-			)
-		}
-
-		if result.UserDisplayName != "Existing User" {
-			t.Fatalf(
-				"expected user display name %q, got %q",
-				"Existing User",
-				result.UserDisplayName,
+				"expected masked email %q, got %q",
+				"u***@example.com",
+				result.MaskedUserEmail,
 			)
 		}
 	})
@@ -1052,185 +1035,49 @@ func TestService_GetAccountLinkConfirmation(t *testing.T) {
 	})
 }
 
+// activeConfirmation is the row the repository returns for a live confirmation,
+// carrying an identity the tests then match or deliberately fail to match.
+func activeConfirmation(
+	confirmationID uuid.UUID,
+	userID uuid.UUID,
+	provider string,
+	providerSubject string,
+) logindb.GetActiveAccountLinkConfirmationRow {
+	return logindb.GetActiveAccountLinkConfirmationRow{
+		ID:                  confirmationID,
+		UserID:              userID,
+		Provider:            provider,
+		ProviderSubject:     providerSubject,
+		DisplayNameSnapshot: pgtype.Text{String: "Alice", Valid: true},
+		UserEmail:           "alice@example.com",
+	}
+}
+
 func TestService_ConfirmAccountLink(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		service, repository, sessionCreator, _, _, _ := newTestService(t)
+	const (
+		googleIDToken = "google-id-token"
+		subject       = "google-subject-123"
+	)
+
+	// The happy path. The token's identity is the one the confirmation was
+	// created for, so the link is written and the caller is signed in.
+	t.Run("matching identity succeeds", func(t *testing.T) {
+		service, repository, sessionCreator, _, googleTokenVerifier, _ :=
+			newTestService(t)
 
 		ctx := context.Background()
-
 		confirmationID := uuid.New()
 		userID := uuid.New()
-		sessionID := uuid.New()
 
-		metadata := session.SessionMetadata{}
-
-		repository.EXPECT().
-			ConfirmAccountLink(ctx, confirmationID).
-			Return(
-				logindb.CreateAuthIdentityRow{
-					ID:     uuid.New(),
-					UserID: userID,
-				},
-				nil,
-			)
-
-		user := logindb.GetUserForLoginByIDRow{
-			ID:          userID,
-			Email:       "user@example.com",
-			DisplayName: "Existing User",
+		googleTokenVerifier.identity = login.GoogleIdentity{
+			Subject:       subject,
+			Email:         "alice@example.com",
+			EmailVerified: true,
 		}
 
 		repository.EXPECT().
-			GetUserForLoginByID(ctx, userID).
-			Return(user, nil)
-
-		sessionResult := session.CreateSessionResult{
-			Session: sessiondb.Session{
-				ID:     sessionID,
-				UserID: userID,
-			},
-			RefreshToken: "refresh-token",
-		}
-
-		sessionCreator.EXPECT().
-			CreateSession(ctx, userID, metadata).
-			Return(sessionResult, nil)
-
-		result, err := service.ConfirmAccountLink(
-			ctx,
-			confirmationID,
-			metadata,
-		)
-
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-
-		if result.Outcome != login.LoginOutcomeAuthenticated {
-			t.Fatalf(
-				"expected outcome %q, got %q",
-				login.LoginOutcomeAuthenticated,
-				result.Outcome,
-			)
-		}
-
-		if result.User == nil {
-			t.Fatal("expected user")
-		}
-
-		if result.User.ID != userID {
-			t.Fatalf(
-				"expected user ID %s, got %s",
-				userID,
-				result.User.ID,
-			)
-		}
-
-		if result.Session == nil {
-			t.Fatal("expected session")
-		}
-
-		if result.Session.ID != sessionID {
-			t.Fatalf(
-				"expected session ID %s, got %s",
-				sessionID,
-				result.Session.ID,
-			)
-		}
-
-		if result.RefreshToken != sessionResult.RefreshToken {
-			t.Fatalf(
-				"expected refresh token %q, got %q",
-				sessionResult.RefreshToken,
-				result.RefreshToken,
-			)
-		}
-
-		if result.AccessToken == "" {
-			t.Fatal("expected access token")
-		}
-	})
-
-	t.Run("confirm account link error", func(t *testing.T) {
-		service, repository, _, _, _, _ := newTestService(t)
-
-		ctx := context.Background()
-
-		confirmationID := uuid.New()
-		expectedErr := errors.New("account link confirmation failed")
-
-		repository.EXPECT().
-			ConfirmAccountLink(ctx, confirmationID).
-			Return(
-				logindb.CreateAuthIdentityRow{},
-				expectedErr,
-			)
-
-		_, err := service.ConfirmAccountLink(
-			ctx,
-			confirmationID,
-			session.SessionMetadata{},
-		)
-
-		if !errors.Is(err, expectedErr) {
-			t.Fatalf(
-				"expected error %v, got %v",
-				expectedErr,
-				err,
-			)
-		}
-	})
-
-	t.Run("user lookup error", func(t *testing.T) {
-		service, repository, _, _, _, _ := newTestService(t)
-
-		ctx := context.Background()
-
-		confirmationID := uuid.New()
-		userID := uuid.New()
-		expectedErr := errors.New("user lookup failed")
-
-		repository.EXPECT().
-			ConfirmAccountLink(ctx, confirmationID).
-			Return(
-				logindb.CreateAuthIdentityRow{
-					ID:     uuid.New(),
-					UserID: userID,
-				},
-				nil,
-			)
-
-		repository.EXPECT().
-			GetUserForLoginByID(ctx, userID).
-			Return(
-				logindb.GetUserForLoginByIDRow{},
-				expectedErr,
-			)
-
-		_, err := service.ConfirmAccountLink(
-			ctx,
-			confirmationID,
-			session.SessionMetadata{},
-		)
-
-		if !errors.Is(err, expectedErr) {
-			t.Fatalf(
-				"expected error %v, got %v",
-				expectedErr,
-				err,
-			)
-		}
-	})
-
-	t.Run("session creation error", func(t *testing.T) {
-		service, repository, sessionCreator, _, _, _ := newTestService(t)
-
-		ctx := context.Background()
-
-		confirmationID := uuid.New()
-		userID := uuid.New()
-		metadata := session.SessionMetadata{}
-		expectedErr := errors.New("session creation failed")
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(activeConfirmation(confirmationID, userID, "google", subject), nil)
 
 		repository.EXPECT().
 			ConfirmAccountLink(ctx, confirmationID).
@@ -1247,31 +1094,414 @@ func TestService_ConfirmAccountLink(t *testing.T) {
 			Return(
 				logindb.GetUserForLoginByIDRow{
 					ID:          userID,
-					Email:       "user@example.com",
-					DisplayName: "Existing User",
+					Email:       "alice@example.com",
+					DisplayName: "Alice",
 				},
 				nil,
 			)
 
 		sessionCreator.EXPECT().
-			CreateSession(ctx, userID, metadata).
+			CreateSession(ctx, userID, gomock.Any()).
 			Return(
-				session.CreateSessionResult{},
-				expectedErr,
+				session.CreateSessionResult{
+					Session:      sessiondb.Session{ID: uuid.New(), UserID: userID},
+					RefreshToken: "refresh-token",
+				},
+				nil,
+			)
+
+		result, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if result.Outcome != login.LoginOutcomeAuthenticated {
+			t.Fatalf(
+				"expected outcome %q, got %q",
+				login.LoginOutcomeAuthenticated,
+				result.Outcome,
+			)
+		}
+
+		if result.User == nil || result.User.ID != userID {
+			t.Fatalf("expected the linked user, got %+v", result.User)
+		}
+
+		if result.AccessToken == "" || result.RefreshToken == "" {
+			t.Fatal("expected an access token and a refresh token")
+		}
+	})
+
+	// An invalid or expired token is refused before anything is read, so it
+	// cannot link an identity or create a session, and it cannot even tell the
+	// caller whether the confirmation exists.
+	//
+	// No repository expectation is registered for this case. gomock fails the
+	// test if any is reached, which is the assertion: an unauthenticated caller
+	// costs a signature verification and nothing else.
+	t.Run("invalid token links nothing", func(t *testing.T) {
+		service, _, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		googleTokenVerifier.err = apperror.UnauthorizedWith(
+			login.CodeInvalidGoogleToken,
+			"invalid Google ID token",
+			errors.New("token expired"),
+		)
+
+		_, err := service.ConfirmAccountLink(
+			context.Background(),
+			uuid.New(),
+			"expired-token",
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != login.CodeInvalidGoogleToken {
+			t.Fatalf(
+				"expected code %s, got %s",
+				login.CodeInvalidGoogleToken,
+				appErr.Code,
+			)
+		}
+
+		if appErr.Status != http.StatusUnauthorized {
+			t.Fatalf(
+				"expected status %d, got %d",
+				http.StatusUnauthorized,
+				appErr.Status,
+			)
+		}
+	})
+
+	// The confirmation names the identity that started the flow. A valid token
+	// for a different Google account is refused, and refused separately from an
+	// invalid token so the caller learns that re-prompting will not help.
+	//
+	// The repository's ConfirmAccountLink is deliberately not expected: matching
+	// is refused before anything is consumed.
+	t.Run("different subject is rejected", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+
+		// Same address as the confirmation, different Google account. This is the
+		// case where email equality alone would wrongly succeed.
+		googleTokenVerifier.identity = login.GoogleIdentity{
+			Subject:       "a-completely-different-google-account",
+			Email:         "alice@example.com",
+			EmailVerified: true,
+		}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(activeConfirmation(confirmationID, uuid.New(), "google", subject), nil)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != login.CodeAccountLinkIdentityMismatch {
+			t.Fatalf(
+				"expected code %s, got %s",
+				login.CodeAccountLinkIdentityMismatch,
+				appErr.Code,
+			)
+		}
+
+		if appErr.Status != http.StatusConflict {
+			t.Fatalf(
+				"expected status %d, got %d",
+				http.StatusConflict,
+				appErr.Status,
+			)
+		}
+
+		// The message must not describe the stored identity or the account it
+		// points at, or a mismatched caller learns something from being refused.
+		if appErr.Message != "account link confirmation does not match this Google account" {
+			t.Fatalf("unexpected message %q", appErr.Message)
+		}
+	})
+
+	// Provider is data, not code. It is read back out of the row and written
+	// into auth_identities, so a row naming another provider must not be
+	// satisfied by a token from this one.
+	t.Run("different provider is rejected", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+
+		googleTokenVerifier.identity = login.GoogleIdentity{
+			Subject:       subject,
+			Email:         "alice@example.com",
+			EmailVerified: true,
+		}
+
+		// Identical subject, different provider.
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(
+				activeConfirmation(confirmationID, uuid.New(), "apple", subject),
+				nil,
 			)
 
 		_, err := service.ConfirmAccountLink(
 			ctx,
 			confirmationID,
-			metadata,
+			googleIDToken,
+			session.SessionMetadata{},
 		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if apperror.FromError(err).Code != login.CodeAccountLinkIdentityMismatch {
+			t.Fatalf(
+				"expected code %s, got %s",
+				login.CodeAccountLinkIdentityMismatch,
+				apperror.FromError(err).Code,
+			)
+		}
+	})
+
+	// The comparison is made against what the confirmation stores, never
+	// against the caller's token. A token whose subject matches nothing in the
+	// row is refused however plausible its email is.
+	t.Run("confirmation row is the authority, not the token", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+
+		googleTokenVerifier.identity = login.GoogleIdentity{
+			Subject:       "subject-from-the-token",
+			Email:         "someone-else@example.com",
+			EmailVerified: true,
+		}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(
+				activeConfirmation(
+					confirmationID,
+					uuid.New(),
+					"google",
+					"subject-stored-on-the-confirmation",
+				),
+				nil,
+			)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if apperror.FromError(err).Code != login.CodeAccountLinkIdentityMismatch {
+			t.Fatalf("expected a mismatch, got %s", apperror.FromError(err).Code)
+		}
+	})
+
+	// A confirmation that is unknown, expired or already used is refused before
+	// the comparison, so the response does not distinguish those three cases.
+	t.Run("inactive confirmation is rejected", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+
+		googleTokenVerifier.identity = login.GoogleIdentity{
+			Subject: subject,
+			Email:   "alice@example.com",
+		}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(
+				logindb.GetActiveAccountLinkConfirmationRow{},
+				apperror.ConflictWith(
+					login.CodeAccountLinkConfirmationInvalid,
+					"account link confirmation is invalid",
+					nil,
+				),
+			)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if apperror.FromError(err).Code != login.CodeAccountLinkConfirmationInvalid {
+			t.Fatalf("expected an invalid confirmation, got %s", apperror.FromError(err).Code)
+		}
+	})
+
+	// The transaction's own refusal is passed through unchanged.
+	t.Run("confirm account link error", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+		expectedErr := errors.New("account link confirmation failed")
+
+		googleTokenVerifier.identity = login.GoogleIdentity{Subject: subject}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(activeConfirmation(confirmationID, uuid.New(), "google", subject), nil)
+
+		repository.EXPECT().
+			ConfirmAccountLink(ctx, confirmationID).
+			Return(logindb.CreateAuthIdentityRow{}, expectedErr)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if !errors.Is(err, expectedErr) {
+			t.Fatalf("expected error %v, got %v", expectedErr, err)
+		}
+	})
+
+	// A user that vanished between the commit and the read is reported the same
+	// way as any other post-commit failure, for the same reason: the link is
+	// written and the caller has no session.
+	t.Run("user lookup error after commit", func(t *testing.T) {
+		service, repository, _, _, googleTokenVerifier, _ := newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+		userID := uuid.New()
+		expectedErr := errors.New("user lookup failed")
+
+		googleTokenVerifier.identity = login.GoogleIdentity{Subject: subject}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(activeConfirmation(confirmationID, userID, "google", subject), nil)
+
+		repository.EXPECT().
+			ConfirmAccountLink(ctx, confirmationID).
+			Return(logindb.CreateAuthIdentityRow{ID: uuid.New(), UserID: userID}, nil)
+
+		repository.EXPECT().
+			GetUserForLoginByID(ctx, userID).
+			Return(logindb.GetUserForLoginByIDRow{}, expectedErr)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != login.CodeAccountLinkSessionFailed {
+			t.Fatalf("expected code %s, got %s", login.CodeAccountLinkSessionFailed, appErr.Code)
+		}
+
+		if appErr.Status != http.StatusServiceUnavailable {
+			t.Fatalf(
+				"expected status %d, got %d",
+				http.StatusServiceUnavailable,
+				appErr.Status,
+			)
+		}
+	})
+
+	// Session creation fails after the link is committed. The confirmation is
+	// spent and retrying it would report the confirmation as invalid, so the
+	// caller is told to retry Google login instead — which works, because the
+	// identity is now linked.
+	t.Run("session creation error after commit is actionable", func(t *testing.T) {
+		service, repository, sessionCreator, _, googleTokenVerifier, _ :=
+			newTestService(t)
+
+		ctx := context.Background()
+		confirmationID := uuid.New()
+		userID := uuid.New()
+		expectedErr := errors.New("session creation failed")
+
+		googleTokenVerifier.identity = login.GoogleIdentity{Subject: subject}
+
+		repository.EXPECT().
+			GetActiveAccountLinkConfirmation(ctx, confirmationID).
+			Return(activeConfirmation(confirmationID, userID, "google", subject), nil)
+
+		repository.EXPECT().
+			ConfirmAccountLink(ctx, confirmationID).
+			Return(logindb.CreateAuthIdentityRow{ID: uuid.New(), UserID: userID}, nil)
+
+		repository.EXPECT().
+			GetUserForLoginByID(ctx, userID).
+			Return(
+				logindb.GetUserForLoginByIDRow{
+					ID:    userID,
+					Email: "alice@example.com",
+				},
+				nil,
+			)
+
+		sessionCreator.EXPECT().
+			CreateSession(ctx, userID, gomock.Any()).
+			Return(session.CreateSessionResult{}, expectedErr)
+
+		_, err := service.ConfirmAccountLink(
+			ctx,
+			confirmationID,
+			googleIDToken,
+			session.SessionMetadata{},
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		appErr := apperror.FromError(err)
+
+		if appErr.Code != login.CodeAccountLinkSessionFailed {
+			t.Fatalf("expected code %s, got %s", login.CodeAccountLinkSessionFailed, appErr.Code)
+		}
 
 		if !errors.Is(err, expectedErr) {
-			t.Fatalf(
-				"expected error %v, got %v",
-				expectedErr,
-				err,
-			)
+			t.Fatalf("the underlying fault must be retained, got %v", err)
+		}
+
+		if appErr.Message == "" {
+			t.Fatal("a 503 the client cannot act on is not actionable")
 		}
 	})
 }

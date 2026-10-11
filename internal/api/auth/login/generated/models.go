@@ -14,7 +14,6 @@ type AccountLinkConfirmation struct {
 	UserID              uuid.UUID
 	Provider            string
 	ProviderSubject     string
-	EmailSnapshot       pgtype.Text
 	DisplayNameSnapshot pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz

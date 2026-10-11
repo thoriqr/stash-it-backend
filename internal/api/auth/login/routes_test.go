@@ -15,9 +15,11 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
+	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
 // The per-client-address budgets mounted in front of the authentication routes.
@@ -53,8 +55,26 @@ func newLoginRoutesApp(t *testing.T, limiter *testutil.CountingPinRateLimiter) *
 
 	service, _, _, _, _, _ := newTestService(t)
 
+	return newLoginRoutesAppWithService(t, service, limiter)
+}
+
+// newLoginRoutesAppWithService mounts the feature's routes over a service the
+// test supplies, for the cases that need to arrange what the handler reaches.
+//
+// The struct validator is configured here for the same reason the production
+// binary and the integration app both configure it: without it Fiber silently
+// skips every `validate` tag, and a test asserting that a request was refused for
+// being invalid would pass against a build that never validated anything.
+func newLoginRoutesAppWithService(
+	t *testing.T,
+	service *login.Service,
+	limiter *testutil.CountingPinRateLimiter,
+) *fiber.App {
+	t.Helper()
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler: httpx.NewErrorHandler(zap.NewNop()),
+		ErrorHandler:    httpx.NewErrorHandler(zap.NewNop()),
+		StructValidator: validation.New(),
 	})
 
 	login.Routes(app.Group("/auth"), login.NewHandler(service), limiter)
@@ -413,6 +433,86 @@ func TestRoutes_GoogleAuth_UnavailableBudgetFailsClosed(t *testing.T) {
 			require.Zero(t, limiter.ChargeFor(testutil.LoginIPNamespace))
 		})
 	}
+}
+
+// The confirmation id names the flow; it does not authorize it, so the endpoint
+// that completes it requires the credential that started the flow.
+//
+// These bodies are all refused by binding, before the handler looks at anything
+// else. A confirmation id that reached the service without a token would be a
+// complete bypass of the identity check, which is why this is pinned at the
+// route rather than left to the service test.
+func TestRoutes_ConfirmAccountLink_RequiresAGoogleIDToken(t *testing.T) {
+	const confirmationID = "01a0f359-093b-737a-963a-80f7ca6768ed"
+
+	path := "/auth/login/google/account-link/" + confirmationID + "/confirm"
+
+	refused := []struct {
+		name string
+		body string
+		code string
+	}{
+		// An absent or unparseable body never reaches the validator, so it is
+		// reported as a malformed request rather than as a failed field.
+		{"no body at all", "", "BAD_REQUEST"},
+		{"a body that is not json", "this is not json", "BAD_REQUEST"},
+		{"an empty object", "{}", "VALIDATION_ERROR"},
+		{"an absent id_token", `{"provider":"google"}`, "VALIDATION_ERROR"},
+		{"an empty id_token", `{"id_token":""}`, "VALIDATION_ERROR"},
+		// A field of the wrong JSON type never reaches the validator either: the
+		// decode fails first.
+		{"an id_token that is not a string", `{"id_token":123}`, "BAD_REQUEST"},
+	}
+
+	for _, testCase := range refused {
+		t.Run(testCase.name, func(t *testing.T) {
+			app := newLoginRoutesApp(t, testutil.NewCountingPinRateLimiter())
+
+			outcome := postAt(t, app, http.MethodPost, path, testCase.body)
+
+			require.Equal(
+				t,
+				http.StatusBadRequest,
+				outcome.status,
+				"the handler must refuse this body",
+			)
+
+			require.Equal(t, testCase.code, outcome.code)
+		})
+	}
+}
+
+// A well-formed body gets past binding and reaches the token check, which is the
+// other half of the same property: the field is not merely present but used.
+//
+// The verifier is arranged to refuse, so the outcome is observable without
+// arranging anything the service does afterwards — and no repository expectation
+// is registered, so a request that reached the database would fail the test.
+func TestRoutes_ConfirmAccountLink_AcceptsAWellFormedToken(t *testing.T) {
+	service, _, _, _, googleTokenVerifier, _ := newTestService(t)
+
+	googleTokenVerifier.err = apperror.UnauthorizedWith(
+		login.CodeInvalidGoogleToken,
+		"invalid Google ID token",
+		errors.New("test token does not verify"),
+	)
+
+	app := newLoginRoutesAppWithService(
+		t,
+		service,
+		testutil.NewCountingPinRateLimiter(),
+	)
+
+	outcome := postAt(
+		t,
+		app,
+		http.MethodPost,
+		"/auth/login/google/account-link/01a0f359-093b-737a-963a-80f7ca6768ed/confirm",
+		`{"id_token":"a-well-formed-token"}`,
+	)
+
+	require.Equal(t, http.StatusUnauthorized, outcome.status)
+	require.Equal(t, login.CodeInvalidGoogleToken, outcome.code)
 }
 
 // Google login and manual login are two doors into the same application, not two

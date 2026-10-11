@@ -1,0 +1,2 @@
+ALTER TABLE account_link_confirmations
+DROP COLUMN email_snapshot;
