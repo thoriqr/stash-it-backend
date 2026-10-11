@@ -294,41 +294,74 @@ func TestService_PinRateLimit_UnavailableRefusesAndIssuesNothing(t *testing.T) {
 // The cooldown is checked first, so a caller already being told to wait is not
 // also charged for asking. Without this an address could spend its whole budget on
 // requests that were going to be refused anyway.
+//
+// Both endpoints are asserted because they run one ordered workflow, and the
+// order is the property: a future edit that spends the budget before checking
+// the cooldown would let a refused request cost the address one of its
+// allowances, and nothing else here would notice.
 func TestService_PinRateLimit_CooldownRefusalDoesNotSpendBudget(t *testing.T) {
-	test := newTestService(t)
-
 	ctx := context.Background()
-	verificationID := uuid.New()
 
-	verification := pendingVerification(verificationID, "alice@example.com")
+	cases := map[string]func(testService, context.Context, uuid.UUID) error{
+		"create pin": func(
+			s testService,
+			ctx context.Context,
+			id uuid.UUID,
+		) error {
+			_, err := s.registrationService.CreatePIN(ctx, id)
 
-	// Sent a moment ago, so the cooldown refuses it.
-	verification.LastSentAt = pgtype.Timestamptz{
-		Time:  time.Now(),
-		Valid: true,
+			return err
+		},
+		"resend": func(
+			s testService,
+			ctx context.Context,
+			id uuid.UUID,
+		) error {
+			_, err := s.registrationService.ResendVerification(ctx, id)
+
+			return err
+		},
 	}
 
-	test.repository.EXPECT().
-		GetVerification(ctx, verificationID).
-		Return(verification, nil)
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			test := newTestService(t)
+			verificationID := uuid.New()
 
-	_, err := test.registrationService.CreatePIN(ctx, verificationID)
+			verification := pendingVerification(
+				verificationID,
+				"alice@example.com",
+			)
 
-	require.Error(t, err)
-	require.Equal(
-		t,
-		registration.CodeVerificationResendCooldown,
-		apperror.FromError(err).Code,
-		"the cooldown still refuses a recent send",
-	)
+			// Sent a moment ago, so the cooldown refuses it.
+			verification.LastSentAt = pgtype.Timestamptz{
+				Time:  time.Now(),
+				Valid: true,
+			}
 
-	require.Empty(
-		t,
-		test.pinRateLimiter.Subjects,
-		"a request refused by the cooldown must not spend the address budget",
-	)
+			test.repository.EXPECT().
+				GetVerification(ctx, verificationID).
+				Return(verification, nil)
 
-	require.Empty(t, test.emailSender.Messages)
+			err := call(test, ctx, verificationID)
+
+			require.Error(t, err)
+			require.Equal(
+				t,
+				registration.CodeVerificationResendCooldown,
+				apperror.FromError(err).Code,
+				"the cooldown still refuses a recent send",
+			)
+
+			require.Empty(
+				t,
+				test.pinRateLimiter.Subjects,
+				"a request refused by the cooldown must not spend the address budget",
+			)
+
+			require.Empty(t, test.emailSender.Messages)
+		})
+	}
 }
 
 // The cooldown is untouched by the limiter: a request the limiter allows is still

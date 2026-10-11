@@ -213,44 +213,72 @@ func (s *service) CreatePIN(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (CreatePINResult, error) {
+	issuedID, err := s.issueVerificationCode(ctx, verificationID)
+	if err != nil {
+		return CreatePINResult{}, err
+	}
+
+	return CreatePINResult{
+		VerificationID: issuedID,
+	}, nil
+}
+
+// issueVerificationCode is the whole of PIN issuance, and both entry points are
+// the same act expressed differently.
+//
+// CreatePIN is named for the first code and ResendVerification for a
+// replacement, but the server does not tell them apart. The endpoint is
+// unauthenticated and verification_id plus the emailed PIN are the credential,
+// so anyone holding one may call either, repeatedly, for as long as the rules
+// below allow. A caller that has never had a code has no cooldown to observe,
+// which means /resend issues a first code and /pin issues a replacement on
+// exactly the same terms.
+//
+// Keeping the workflow in one place is therefore not tidiness. Two copies of
+// this sequence are two rules to keep in step, and the order within it is
+// load-bearing in both directions: the cooldown is checked before the address
+// budget, so a caller already being told to wait is not also charged for asking,
+// and both are checked before anything is issued or sent, so a refusal costs no
+// row and no message.
+func (s *service) issueVerificationCode(
+	ctx context.Context,
+	verificationID uuid.UUID,
+) (uuid.UUID, error) {
 	verification, err := s.repository.GetVerification(
 		ctx,
 		verificationID,
 	)
 	if err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	if err := validateVerificationPending(verification); err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
-	// This is the first issuance of a code only by accident of the caller: the
-	// endpoint is unauthenticated, and verification_id plus the emailed PIN are
-	// the credential, so anyone holding one can call it repeatedly. The cooldown
-	// is what stops that from becoming a way to mail an address as fast as the
-	// endpoint can be called, and to reset the per-code attempt limit by having a
-	// fresh code issued.
+	// The cooldown is what stops issuance from becoming a way to mail an address
+	// as fast as the endpoint can be called, and a way to reset the per-code
+	// attempt limit by having a fresh code issued.
 	if err := ensureVerificationCooldownElapsed(verification); err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	// The cooldown above is per verification. This is per address, which is the
 	// only shape that bounds what the address actually costs: an address can hold
 	// several verifications, and each would otherwise hand out its own cooldown.
-	// It sits after the cooldown so a caller that is already being told to wait is
-	// not also charged for asking.
 	if err := s.ensurePinRateAvailable(ctx, verification.Email); err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {
-		return CreatePINResult{}, apperror.Internal(err)
+		return uuid.Nil, apperror.Internal(err)
 	}
 
 	codeHash := s.verificationCodeHasher.Hash(code)
 
+	// Read the clock once, after the code exists and before the row is written, so
+	// the stored expiry is the lifetime the code was actually issued with.
 	now := time.Now()
 
 	codeExpiresAt := pgtype.Timestamptz{
@@ -267,18 +295,16 @@ func (s *service) CreatePIN(
 		},
 	)
 	if err != nil {
-		return CreatePINResult{}, err
+		return uuid.Nil, err
 	}
 
 	message := newVerificationPINEmail(verification.Email, code)
 
 	if err := s.emailSender.Send(ctx, message); err != nil {
-		return CreatePINResult{}, apperror.Internal(err)
+		return uuid.Nil, apperror.Internal(err)
 	}
 
-	return CreatePINResult{
-		VerificationID: verificationID,
-	}, nil
+	return verificationID, nil
 }
 
 type GetVerificationResult struct {
@@ -328,66 +354,13 @@ func (s *service) ResendVerification(
 	ctx context.Context,
 	verificationID uuid.UUID,
 ) (ResendVerificationResult, error) {
-	verification, err := s.repository.GetVerification(
-		ctx,
-		verificationID,
-	)
+	issuedID, err := s.issueVerificationCode(ctx, verificationID)
 	if err != nil {
 		return ResendVerificationResult{}, err
-	}
-
-	if err := validateVerificationPending(verification); err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	// The same check CreatePIN makes, called from the same helper: two issuance
-	// paths that each spelled this rule out would be two rules to keep in step.
-	if err := ensureVerificationCooldownElapsed(verification); err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	// One budget for the address, whichever endpoint spent it. See CreatePIN.
-	if err := s.ensurePinRateAvailable(ctx, verification.Email); err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	now := time.Now()
-
-	code, err := s.verificationCodeHasher.Generate()
-	if err != nil {
-		return ResendVerificationResult{}, apperror.Internal(err)
-	}
-
-	codeHash := s.verificationCodeHasher.Hash(code)
-
-	codeExpiresAt := pgtype.Timestamptz{
-		Time:  now.Add(verificationCodeExpiresIn),
-		Valid: true,
-	}
-
-	_, err = s.repository.IssueVerificationCode(
-		ctx,
-		IssueVerificationCodeParams{
-			VerificationID: verificationID,
-			CodeHash:       codeHash,
-			CodeExpiresAt:  codeExpiresAt,
-		},
-	)
-	if err != nil {
-		return ResendVerificationResult{}, err
-	}
-
-	message := newVerificationPINEmail(
-		verification.Email,
-		code,
-	)
-
-	if err := s.emailSender.Send(ctx, message); err != nil {
-		return ResendVerificationResult{}, apperror.Internal(err)
 	}
 
 	return ResendVerificationResult{
-		VerificationID: verificationID,
+		VerificationID: issuedID,
 	}, nil
 }
 
