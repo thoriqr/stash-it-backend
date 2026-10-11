@@ -382,14 +382,28 @@ func TestService_LoginManual_AReleaseFailureDoesNotFailTheLogin(t *testing.T) {
 
 // The dummy verification is the mitigation for the fact that an unknown address
 // returns without doing any password work while a wrong password pays for a full
-// Argon2id derivation. There is no seam to observe — the hasher is a concrete type
-// with no interface in front of it — so this measures cost instead.
+// Argon2id derivation. That this happens is asserted directly, without the
+// clock, in dummy_verification_seam_test.go; this test keeps the end-to-end
+// measurement, because the cost is a property of the whole path rather than of
+// one call in it.
 //
 // It is deliberately a floor rather than an equality. A floor can only fail when
-// the work is absent; a slow or a loaded machine makes it pass more readily, never
-// less. Both paths run the same lookup against the same table, and the comparison
-// is on the fastest of several runs so a single scheduling hiccup cannot decide
-// it.
+// the work is absent; a slow or a loaded machine makes it pass more readily.
+//
+// Two properties of the measurement matter, and both were learned the hard way.
+//
+// The paths are measured in both orders and each keeps its fastest run. Measured
+// in one order, whichever path goes first is the one that pays to grow the heap
+// that Argon2id's 64 MiB per derivation keeps asking for, and it pays that cost
+// on every one of its runs while the second path runs against a heap that has
+// already been grown. Under `go test -race ./...` that was enough to report a
+// known-account minimum of 228ms against an unknown-account minimum of 71ms from
+// correct code — the assertion failing on the machine, not on the code.
+//
+// The threshold is `minimumShare`, and it is deliberately left at the value the
+// first version of this test used. The true ratio is about 1.0, so the margin is
+// the whole tolerance; loosening it would compensate for a measurement that is
+// now balanced rather than for a property that has changed.
 func TestService_LoginManual_AnUnknownAddressPaysForAPasswordDerivation(t *testing.T) {
 	service, repository, sessionCreator, _, _, passwordHasher := newTestService(t)
 
@@ -400,8 +414,7 @@ func TestService_LoginManual_AnUnknownAddressPaysForAPasswordDerivation(t *testi
 
 	// The other half of the comparison is an address nobody holds. What the
 	// repository reports for it is what an INNER JOIN on the credential table
-	// reports when it matches nothing, and the timing below is the whole
-	// assertion: this path must cost about what the known-account path costs.
+	// reports when it matches nothing.
 	repository.EXPECT().
 		GetUserForLogin(gomock.Any(), unknownEmail).
 		Return(
@@ -414,16 +427,7 @@ func TestService_LoginManual_AnUnknownAddressPaysForAPasswordDerivation(t *testi
 		).
 		AnyTimes()
 
-	// One derivation at the active parameters is tens of milliseconds, and the
-	// gap being guarded is measured in tens of milliseconds too. Asking for a
-	// third of the known path separates "no derivation" from "a derivation" by an
-	// order of magnitude on either side, and the shared test database round trip
-	// is smaller than that margin.
-	const minimumShare = 3
-
-	const runs = 5
-
-	known, unknown := measure(runs, func(email string) {
+	call := func(email string) {
 		_, err := service.LoginManual(
 			context.Background(),
 			email,
@@ -438,7 +442,31 @@ func TestService_LoginManual_AnUnknownAddressPaysForAPasswordDerivation(t *testi
 			apperror.FromError(err).Code,
 			"both paths must report the same failure",
 		)
-	}, email, unknownEmail)
+	}
+
+	// A derivation before anything is timed. The first one in a process also
+	// pays for the heap it grows, and paying that inside a measurement is what
+	// makes whichever path runs first look slower than the one that follows.
+	call(email)
+	call(unknownEmail)
+
+	const minimumShare = 3
+
+	const runs = 5
+
+	// Fastest per path, taken across both measurement orders. Keeping the
+	// minimum within an order and then the minimum across orders means neither
+	// path can be handed a worse run of its own simply by going second.
+	knownFirstKnown, knownFirstUnknown := measure(runs, call, email, unknownEmail)
+	unknownFirstUnknown, unknownFirstKnown := measure(
+		runs,
+		call,
+		unknownEmail,
+		email,
+	)
+
+	known := min(knownFirstKnown, unknownFirstKnown)
+	unknown := min(knownFirstUnknown, unknownFirstUnknown)
 
 	require.NotZero(t, known, "the known-account path did no measurable work")
 
@@ -447,12 +475,15 @@ func TestService_LoginManual_AnUnknownAddressPaysForAPasswordDerivation(t *testi
 		unknown,
 		known/minimumShare,
 		"an unknown address returned without doing password work, so which "+
-			"addresses exist can be read off how long the answer takes",
+			"addresses exist can be read off how long the answer takes "+
+			"(known %s, unknown %s)",
+		known,
+		unknown,
 	)
 }
 
 // measure runs call once per address, timing each, and returns the fastest run
-// for each.
+// for the address it measured first and then the one it measured second.
 //
 // The minimum is the right statistic: every source of noise in a shared test
 // machine makes a run slower and never faster, so the shortest of several runs

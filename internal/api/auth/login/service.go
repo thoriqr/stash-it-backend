@@ -16,12 +16,18 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
+// The real hasher is what production wires in, and this is where that stays
+// true. PasswordVerifier narrows what the service needs; it does not replace the
+// type the application actually runs, and a change that made the concrete hasher
+// stop satisfying it would fail here rather than at a call site.
+var _ PasswordVerifier = (*security.PasswordHasher)(nil)
+
 type Service struct {
 	repository           Repository
 	sessionService       session.SessionCreator
 	registrationService  registration.SocialRegistrationService
 	googleTokenVerifier  GoogleTokenVerifier
-	passwordHasher       *security.PasswordHasher
+	passwordHasher       PasswordVerifier
 	accessTokenGenerator *security.AccessTokenGenerator
 
 	// rateLimiter guards manual login only. Google login does not read it: that
@@ -36,7 +42,7 @@ func NewService(
 	sessionService session.SessionCreator,
 	registrationService registration.SocialRegistrationService,
 	googleTokenVerifier GoogleTokenVerifier,
-	passwordHasher *security.PasswordHasher,
+	passwordHasher PasswordVerifier,
 	accessTokenGenerator *security.AccessTokenGenerator,
 	rateLimiter LoginRateLimiter,
 ) *Service {

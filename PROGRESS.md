@@ -1287,6 +1287,38 @@ Three mechanisms, none of which alone is sufficient:
 The endpoint has always returned the same code and message for a wrong password
 and for an unknown address. What changed is the cost, not the response.
 
+#### The enumeration defence is asserted directly, not only by the clock
+
+`LoginManual` previously held a concrete `*security.PasswordHasher`, so the only
+way a test could observe that a dummy derivation happened was to compare elapsed
+times. That is a claim about a shared machine's scheduler as much as about the
+code, and it failed: under `go test -race ./...` the assertion reported a
+known-account minimum of 228ms against an unknown-address minimum of 71ms from
+correct code. Measured directly the two paths cost the same — a ratio of about
+1.0 — so the failure was the measurement, not the mitigation.
+
+`internal/api/auth/login` now depends on a narrow `PasswordVerifier` interface
+declared in `types.go`, alongside `LoginRateLimiter`, so a test can watch which
+of `Verify` and `DummyVerify` the service asked for. `*security.PasswordHasher`
+satisfies it unchanged, `module.go` is untouched, and
+`var _ PasswordVerifier = (*security.PasswordHasher)(nil)` keeps that honest at
+compile time. Placing it in `types.go` rather than `service.go` also means no
+generated mock needed regenerating.
+
+Four tests in `dummy_verification_seam_test.go` now assert the property with no
+clock involved: an unknown address performs exactly one dummy derivation and
+never `Verify`; a known account calls `Verify` and never `DummyVerify`; the
+dummy path is reached exactly once per request; and a dummy derivation failure is
+not reported as `INVALID_CREDENTIALS`. Removing the `DummyVerify` call fails
+three of the four immediately.
+
+The timing test is kept as a secondary end-to-end signal and was **not**
+weakened: `minimumShare` is still 3 and `runs` is still 5. What changed is that
+it now runs a warm-up derivation before timing anything and measures both paths
+in **both** orders, keeping each one's fastest. Measured in a single order, the
+path that went first paid to grow the heap that Argon2id's 64 MiB per derivation
+keeps demanding, which was the whole of the flake.
+
 ### Argon2id parameter bounds
 
 `internal/security` bounds what a stored hash may ask the server to do: `m ≤
@@ -1323,8 +1355,12 @@ and released only on success; a wrong password and an unauthenticable account
 both keeping their charge; a spent budget refusing before the lookup (no
 `GetUserForLogin` expectation is registered, so the test fails if the lookup is
 reached at all); an unusable limiter failing closed with no `Retry-After`; a
-release failure not failing the login; and the enumeration floor, measured as the
-fastest of five known-account and five unknown-address logins.
+release failure not failing the login; the enumeration floor, measured as the
+fastest of five known-account and five unknown-address logins in both
+measurement orders, after a warm-up derivation; and, without any clock at all,
+that an unknown address calls `DummyVerify` exactly once and never `Verify`,
+that a known account does the reverse, and that a dummy derivation failure is
+not reported as `INVALID_CREDENTIALS`.
 
 `internal/api/auth/login` (routes) — the declared policy applied in front of the
 handler, the subject canonicalized, a spent budget stopping the request, an
@@ -1896,9 +1932,12 @@ added and has not been repeated since.
 **The login rate-limit tests have not been run repeatedly.** They are recorded
 here as single `-count=1` runs only, so no flake-resistance claim is made for
 them. The one login test that is timing-sensitive — the enumeration floor in
-`internal/api/auth/login` — compares the fastest of five runs of each path, which
-is chosen so that a slow or loaded machine makes it pass more readily rather than
-less, but that is a design argument and not a measurement.
+`internal/api/auth/login` — is no longer the sole guard for that property: it is
+now backed by the four deterministic tests described above, and it was itself
+re-run under `-race` at `-count=10` clean and at `-count=8` clean with a full
+`-race` suite running concurrently, which is the condition that used to break
+it. The remaining manual-login rate-limit tests are still single-run, so no
+claim is made for those.
 
 **The Google authentication rate-limit tests have been re-run**, and the
 Google-specific ones only: `internal/integration` with `-run
@@ -1928,6 +1967,25 @@ development machine and the whole suite runs under it:
 The limiter and hasher concurrency tests were additionally re-run five times
 each under the detector, since a single run is weak evidence where the code is
 contended by design.
+
+**GCC visibility must be checked at the start of a session, not assumed.**
+`C:\msys64\ucrt64\bin` is now permanently on the Windows **User** `Path` and
+`CGO_ENABLED=1`, so a newly launched terminal resolves `gcc` normally. A process
+that was already running when the `Path` changed keeps the `Path` it was started
+with, so `go test -race` fails with `cgo: C compiler "gcc" not found` even
+though the machine is correctly configured. This happened in exactly that way
+once. **Before running race tests in a new session, check `where.exe gcc`
+resolves and `go env CGO_ENABLED` returns `1`.** If it does not, prepend the
+directory to that shell's `Path` for the command rather than changing project
+configuration:
+
+```powershell
+$env:Path = 'C:\msys64\ucrt64\bin;' + $env:Path
+```
+
+The full `-race` suite was run **twice** after the login timing fix, both clean
+across all 20 packages, and the login enumeration floor was re-run repeatedly
+under `-race` both quietly and while a full `-race` suite ran concurrently.
 
 **CI still does not run it.** `.github/workflows/test.yml` runs
 `go test ./... -v` on `ubuntu-latest` without `-race`, so the verification above
@@ -2187,6 +2245,22 @@ Do not change these casually. Revisit only with an explicit decision.
 
 ## Next Step
 
+**Uncommitted work exists right now.** The login timing-test fix is implemented
+and fully verified but **not committed**. Four paths are modified or new, all in
+`internal/api/auth/login/`:
+
+- `types.go` — adds `PasswordVerifier`
+- `service.go` — field and constructor parameter typed as that interface
+- `dummy_verification_seam_test.go` — new, the four deterministic tests
+- `login_rate_limit_service_test.go` — warm-up and both-orders measurement
+
+The change has been reviewed in full and verified (`go build`, `go vet`,
+`go test ./... -count=1`, and `go test -race ./... -count=1` twice, all clean).
+The immediate next action is to review `git status` and commit it. Do **not**
+re-run the suite first — it has already passed against exactly this tree.
+
+After that, resume the standing order below in a fresh session.
+
 Enrichment and automatic organization are both implemented and verified: the
 synchronous per-item endpoint, the background enrichment worker, and the
 background organization worker it hands off to. Their architecture is settled —
@@ -2229,15 +2303,19 @@ outside the current scope.
 
 1. Read `AGENTS.md`, `documentation/product.md`, and this file before coding.
 2. Check `git status` and `git diff` to understand the actual working tree.
-3. Inspect the relevant existing feature packages before changing code.
-4. Run:
+3. **If you intend to run `-race`, verify `where.exe gcc` resolves and
+   `go env CGO_ENABLED` is `1` first.** A shell started before the Windows
+   `Path` change keeps the old one; see the note under "Testing and verification
+   status" for the per-command workaround.
+4. Inspect the relevant existing feature packages before changing code.
+5. Run:
    `go build ./... && go vet ./... && go test ./...`
    before assuming the tree is healthy.
-5. Avoid unrelated refactors. If something looks wrong outside the current task,
+6. Avoid unrelated refactors. If something looks wrong outside the current task,
    report it instead of fixing it as a side effect.
-6. Never edit generated files manually. Change their source and regenerate.
-7. Never apply migrations or create commits unless explicitly instructed.
-8. Both enrichment paths exist and both work. A save commits its row and queues
+7. Never edit generated files manually. Change their source and regenerate.
+8. Never apply migrations or create commits unless explicitly instructed.
+9. Both enrichment paths exist and both work. A save commits its row and queues
    background enrichment, and a completed enrichment that produced a platform
    hands off to background automatic organization. On-demand enrichment of one
    Saved Item still exists as well, and both write the same rows. Read the
