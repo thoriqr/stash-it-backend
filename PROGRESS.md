@@ -2615,6 +2615,21 @@ real body side by side at every level, failing if either gains or loses a key.
     client calls to learn when it may resend; refusing it would break the flow
     rather than protect it. Adding a budget to either needs an explicit decision.
 
+    For the continuation route specifically: each request costs a token hash and
+    one indexed lookup on `registration_continuations.token_hash`, served by the
+    unique index migration 000027 added. It opens no transaction, writes nothing,
+    sends no message, makes no external call and performs no Argon2id work. The
+    token is high-entropy and is issued only after a PIN has been verified, so
+    whoever holds one has already proved control of the mailbox the response
+    describes; the response is that caller's own registration metadata, and
+    repeating a non-mutating read neither widens nor changes it. The client needs
+    to read it while it works out which fields finalization requires.
+
+    `TestRegistrationIPRateLimit_UnlimitedReadRoutesAreNotCounted` pins this by
+    asserting the route consults no budget at all. Mounting a limiter here would
+    fail that test, which is the point: the decision is recorded, not merely
+    unmade.
+
 28. **The single-use transitions are guarded redundantly, and the tests assert the
     outcome rather than a particular guard.** `CompleteVerification` checks both
     `consumed_at IS NULL` and `status = 'pending'` with `rowsAffected == 1`, and
@@ -2626,6 +2641,44 @@ real body side by side at every level, failing if either gains or loses a key.
     remove a guard on the grounds that another remains — and do not expect the
     concurrency tests to fail if one is removed, since they assert exactly one
     continuation and exactly one user rather than which guard produced them.
+
+28a. **`POST /auth/register/finalize/social` carries no IP budget, and that is a
+    decision rather than an omission.** This route does real work — it creates
+    the user, the Unsorted collection and the auth identity, consumes the
+    continuation, completes the registration and mints a session — so it must not
+    be described as a cheap read. What bounds it is the lifecycle around it.
+
+    It performs no Argon2id derivation, sends no message and does not re-verify
+    the Google token, so the `PasswordWorkLimiter` and the reasoning behind
+    `finalize-ip` do not reach it. `finalize-ip` exists because manual
+    finalization is the one route in the flow that can occupy every password-work
+    slot indefinitely; this route never calls the hasher, so that cost is not one
+    it can impose.
+
+    The continuation is single-use. `ConsumeRegistrationContinuation` matches only
+    while `consumed_at IS NULL AND expires_at > NOW()` and its result is checked,
+    with `users_email_unique` and `auth_identities_provider_subject_unique` behind
+    it, so one token produces at most one account and one session however many
+    times it is presented.
+    `TestFinalizeSocialRegistration_ConcurrentSameTokenCreatesExactlyOneAccount`
+    drives concurrent requests with a single token and asserts exactly that.
+
+    A continuation only exists after the Google authentication, PIN issuance and
+    PIN verification steps, and each of those already spends its own budget
+    (`google-auth-ip`, `pin-ip`, `verify-ip`). What this route can be asked to do
+    is therefore bounded by those upstream controls rather than by anything here.
+
+    A fail-closed limiter would put a Redis dependency on the last step of account
+    creation. While Redis is unavailable a user holding a valid continuation would
+    be refused, and the continuation's 15-minute life means a prolonged outage
+    costs them the registration outright rather than delaying it. That is a real
+    cost, weighed against an incremental saving nothing has yet demonstrated.
+
+    Revisit this if the single-use invariant changes, if the upstream budgets are
+    removed or loosened, or if registration volume makes the route measurably
+    expensive. Until then the absence of a budget here is intended. Do not close
+    the gap by copying `finalize-ip`'s threshold or naming a new namespace: those
+    numbers are sized for password work this route does not perform.
 
 ---
 
