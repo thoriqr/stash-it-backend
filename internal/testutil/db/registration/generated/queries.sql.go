@@ -152,6 +152,83 @@ func (q *Queries) CreateExpiredPendingRegistration(ctx context.Context, email st
 	return id, err
 }
 
+const createExpiredSocialPendingRegistration = `-- name: CreateExpiredSocialPendingRegistration :one
+WITH registration AS (
+    INSERT INTO pending_registrations (
+        email,
+        registration_type,
+        status,
+        expires_at
+    ) VALUES (
+        $1,
+        'social',
+        'pending',
+        NOW() - INTERVAL '1 hour'
+    )
+    RETURNING id
+),
+social_identity AS (
+    INSERT INTO pending_social_identities (
+        pending_registration_id,
+        provider,
+        provider_subject,
+        email_snapshot,
+        display_name_snapshot
+    )
+    SELECT
+        id,
+        $2,
+        $3,
+        $4,
+        $5
+    FROM registration
+    RETURNING pending_registration_id
+),
+verification_request AS (
+    INSERT INTO verification_requests (
+        subject_type,
+        subject_id,
+        purpose,
+        status
+    )
+    SELECT
+        'pending_registration',
+        pending_registration_id,
+        'registration',
+        'pending'
+    FROM social_identity
+    RETURNING id
+)
+SELECT id AS verification_id FROM verification_request
+`
+
+type CreateExpiredSocialPendingRegistrationParams struct {
+	Email               string
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+// The same state, already past its deadline. Written out rather than derived
+// from the query above because a sqlc query name is not a SQL function. What the
+// case is testing then reads as the word expired, not as a negative duration.
+//
+// status stays 'pending' past the deadline because nothing reaps it, which is
+// exactly the state the expired-registration mismatch case depends on.
+func (q *Queries) CreateExpiredSocialPendingRegistration(ctx context.Context, arg CreateExpiredSocialPendingRegistrationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createExpiredSocialPendingRegistration,
+		arg.Email,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var verification_id uuid.UUID
+	err := row.Scan(&verification_id)
+	return verification_id, err
+}
+
 const createRegistrationContinuation = `-- name: CreateRegistrationContinuation :one
 WITH registration AS (
     INSERT INTO pending_registrations (
@@ -203,6 +280,91 @@ func (q *Queries) CreateRegistrationContinuation(ctx context.Context, arg Create
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createSocialPendingRegistration = `-- name: CreateSocialPendingRegistration :one
+WITH registration AS (
+    INSERT INTO pending_registrations (
+        email,
+        registration_type,
+        status,
+        expires_at
+    ) VALUES (
+        $1,
+        'social',
+        'pending',
+        NOW() + INTERVAL '7 days'
+    )
+    RETURNING id
+),
+social_identity AS (
+    INSERT INTO pending_social_identities (
+        pending_registration_id,
+        provider,
+        provider_subject,
+        email_snapshot,
+        display_name_snapshot
+    )
+    SELECT
+        id,
+        $2,
+        $3,
+        $4,
+        $5
+    FROM registration
+    RETURNING pending_registration_id
+),
+verification_request AS (
+    INSERT INTO verification_requests (
+        subject_type,
+        subject_id,
+        purpose,
+        status
+    )
+    SELECT
+        'pending_registration',
+        pending_registration_id,
+        'registration',
+        'pending'
+    FROM social_identity
+    RETURNING id
+)
+SELECT id AS verification_id FROM verification_request
+`
+
+type CreateSocialPendingRegistrationParams struct {
+	Email               string
+	Provider            string
+	ProviderSubject     string
+	EmailSnapshot       pgtype.Text
+	DisplayNameSnapshot pgtype.Text
+}
+
+// A pending social registration, the identity that opened it, and the
+// registration verification request, with no continuation.
+//
+// The verification request is not decoration.
+// GetPendingRegistrationByEmailForUpdate inner-joins verification_requests, so a
+// seeded registration without one is invisible to CreateSocialRegistration: the
+// lookup finds nothing and the flow falls through to the insert. Omitting it
+// would produce a fixture the production code cannot see, and the case would
+// pass for the wrong reason.
+//
+// The lifetime is the feature's own registrationExpiresIn so a seeded
+// registration is indistinguishable from one the flow created. An address past
+// its deadline is a separate query, because that is a different case rather than
+// a different argument to this one.
+func (q *Queries) CreateSocialPendingRegistration(ctx context.Context, arg CreateSocialPendingRegistrationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createSocialPendingRegistration,
+		arg.Email,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.EmailSnapshot,
+		arg.DisplayNameSnapshot,
+	)
+	var verification_id uuid.UUID
+	err := row.Scan(&verification_id)
+	return verification_id, err
 }
 
 const createSocialRegistrationContinuation = `-- name: CreateSocialRegistrationContinuation :one
@@ -475,6 +637,79 @@ func (q *Queries) GetRegistrationState(ctx context.Context, email string) (GetRe
 		&i.LastSentAt,
 	)
 	return i, err
+}
+
+const getSocialPendingRegistrationStates = `-- name: GetSocialPendingRegistrationStates :many
+SELECT
+    pr.id,
+    pr.email,
+    pr.registration_type,
+    pr.status,
+    pr.expires_at,
+    psi.provider,
+    psi.provider_subject,
+    psi.email_snapshot,
+    vr.id AS verification_id,
+    vr.status AS verification_status
+FROM pending_registrations pr
+LEFT JOIN pending_social_identities psi
+    ON psi.pending_registration_id = pr.id
+LEFT JOIN verification_requests vr
+    ON vr.subject_type = 'pending_registration'
+    AND vr.subject_id = pr.id
+    AND vr.purpose = 'registration'
+WHERE pr.email = $1
+ORDER BY pr.created_at, pr.id
+`
+
+type GetSocialPendingRegistrationStatesRow struct {
+	ID                 uuid.UUID
+	Email              string
+	RegistrationType   string
+	Status             string
+	ExpiresAt          pgtype.Timestamptz
+	Provider           pgtype.Text
+	ProviderSubject    pgtype.Text
+	EmailSnapshot      pgtype.Text
+	VerificationID     pgtype.UUID
+	VerificationStatus pgtype.Text
+}
+
+// Every pending social registration for an address, with the identity that opened
+// it, ordered by creation so a before/after comparison reads in a stable order.
+//
+// It is a :many because "exactly one" is the property under test: a decision that
+// silently created a second registration would be invisible to a query returning a
+// single row.
+func (q *Queries) GetSocialPendingRegistrationStates(ctx context.Context, email string) ([]GetSocialPendingRegistrationStatesRow, error) {
+	rows, err := q.db.Query(ctx, getSocialPendingRegistrationStates, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSocialPendingRegistrationStatesRow
+	for rows.Next() {
+		var i GetSocialPendingRegistrationStatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.RegistrationType,
+			&i.Status,
+			&i.ExpiresAt,
+			&i.Provider,
+			&i.ProviderSubject,
+			&i.EmailSnapshot,
+			&i.VerificationID,
+			&i.VerificationStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getUnsortedCollectionsForUser = `-- name: GetUnsortedCollectionsForUser :many

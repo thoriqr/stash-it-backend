@@ -1186,6 +1186,7 @@ paths:
         Possible error codes:
         - VALIDATION_ERROR
         - INVALID_GOOGLE_TOKEN
+        - REGISTRATION_IDENTITY_MISMATCH
         - IP_RATE_LIMIT_EXCEEDED
         - IP_RATE_LIMIT_UNAVAILABLE
         - CLIENT_IP_UNAVAILABLE
@@ -1226,6 +1227,11 @@ paths:
             $ref: '#/definitions/swagger.ValidationError'
         "401":
           description: Invalid Google ID token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: A registration for this email is already in progress under
+            a different account
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "429":

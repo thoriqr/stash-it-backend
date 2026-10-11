@@ -4,6 +4,7 @@ const (
 	CodeRegistrationAlreadyPending       = "REGISTRATION_ALREADY_PENDING"
 	CodeRegistrationAlreadyCompleted     = "REGISTRATION_ALREADY_COMPLETED"
 	CodeRegistrationAlreadyExists        = "REGISTRATION_ALREADY_EXISTS"
+	CodeRegistrationIdentityMismatch     = "REGISTRATION_IDENTITY_MISMATCH"
 	CodeActiveVerificationCodeExists     = "ACTIVE_VERIFICATION_CODE_EXISTS"
 	CodeVerificationNotPending           = "VERIFICATION_NOT_PENDING"
 	CodeRegistrationNotPending           = "REGISTRATION_NOT_PENDING"

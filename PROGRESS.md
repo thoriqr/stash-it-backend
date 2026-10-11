@@ -9,14 +9,14 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ### Saved Item lifecycle — end to end
 
-| Stage                                    | Status |
-| ---------------------------------------- | ------ |
-| Save (`POST /saved-items`)                | done   |
-| Background enrichment after save          | done   |
-| Background automatic organization         | done   |
-| On-demand enrichment (`POST /saved-items/:id/enrich`) | done |
-| Collection filing (`PUT /saved-items/:id/collection`)  | done |
-| Saved item ownership constraint (migration 000025) | applied |
+| Stage                                                 | Status  |
+| ----------------------------------------------------- | ------- |
+| Save (`POST /saved-items`)                            | done    |
+| Background enrichment after save                      | done    |
+| Background automatic organization                     | done    |
+| On-demand enrichment (`POST /saved-items/:id/enrich`) | done    |
+| Collection filing (`PUT /saved-items/:id/collection`) | done    |
+| Saved item ownership constraint (migration 000025)    | applied |
 
 Migration 000025 is applied to the development database, and
 `internal/database/baseline/schema.sql` reflects it, so integration tests exercise
@@ -36,10 +36,10 @@ with a manual request walkthrough. Automated tests cover the same flow.
 All four core Saved Item endpoints are implemented, wired into `main.go`
 through `saved_item.RegisterModule`, and covered by tests.
 
-| Endpoint                  | Status | Notes                             |
-| ------------------------- | ------ | --------------------------------- |
-| `POST /saved-items`       | done   | 201, requires Bearer, minimal response |
-| `GET /saved-items/:id`    | done   | 200, owner-scoped, complete item + collection |
+| Endpoint                  | Status | Notes                                                    |
+| ------------------------- | ------ | -------------------------------------------------------- |
+| `POST /saved-items`       | done   | 201, requires Bearer, minimal response                   |
+| `GET /saved-items/:id`    | done   | 200, owner-scoped, complete item + collection            |
 | `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped, reports collection state |
 
 Update/edit (`PATCH` or `PUT`) is deliberately out of scope for now.
@@ -61,9 +61,10 @@ things.
 `POST /saved-items` returns only what a save can meaningfully know:
 
 ```json
-{ "data": { "saved_item": { "id": "…", "url": "https://example.com/a",
-      "collection_id": "…", "enrichment_status": "pending" } },
-  "message": "saved item created successfully" }
+{
+  "data": { "saved_item": { "id": "…", "url": "https://example.com/a", "collection_id": "…", "enrichment_status": "pending" } },
+  "message": "saved item created successfully"
+}
 ```
 
 A save commits before enrichment has run, so `domain` is the only metadata column
@@ -79,13 +80,26 @@ is what the column's default actually wrote.
 `GET /saved-items/:id` returns the complete item plus the collection it is filed in:
 
 ```json
-{ "data": { "saved_item": { "id": "…", "url": "https://example.com/a",
-      "domain": "example.com", "platform": null, "title": null,
-      "description": null, "image_url": null, "collection_id": "…",
-      "enrichment_status": "pending", "last_enriched_at": null,
-      "created_at": "…", "updated_at": "…" },
-    "collection": { "id": "…", "name": "Wishlist" } },
-  "message": "saved item retrieved successfully" }
+{
+  "data": {
+    "saved_item": {
+      "id": "…",
+      "url": "https://example.com/a",
+      "domain": "example.com",
+      "platform": null,
+      "title": null,
+      "description": null,
+      "image_url": null,
+      "collection_id": "…",
+      "enrichment_status": "pending",
+      "last_enriched_at": null,
+      "created_at": "…",
+      "updated_at": "…"
+    },
+    "collection": { "id": "…", "name": "Wishlist" }
+  },
+  "message": "saved item retrieved successfully"
+}
 ```
 
 - **`data.saved_item` matches the listing shape** in `GET /collections/:id/saved-items`
@@ -140,12 +154,12 @@ No public-suffix or registrable-domain detection is performed.
 
 `internal/api/collection/` is implemented as a complete vertical slice.
 
-| Endpoint                              | Status | Notes                                                     |
-| ------------------------------------- | ------ | --------------------------------------------------------- |
-| `PUT /saved-items/:id/collection`     | done   | 200, owner-scoped, requires Bearer                        |
-| `GET /collections`                    | done   | 200, owner-scoped, cursor-paginated, requires Bearer      |
-| `GET /collections/:id/saved-items`    | done   | 200, owner-scoped, cursor-paginated, requires Bearer      |
-| `DELETE /collections/:id`             | done   | 200, owner-scoped, requires Bearer                        |
+| Endpoint                           | Status | Notes                                                |
+| ---------------------------------- | ------ | ---------------------------------------------------- |
+| `PUT /saved-items/:id/collection`  | done   | 200, owner-scoped, requires Bearer                   |
+| `GET /collections`                 | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
+| `GET /collections/:id/saved-items` | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
+| `DELETE /collections/:id`          | done   | 200, owner-scoped, requires Bearer                   |
 
 The endpoint accepts `{"collection_name": "..."}` and files one saved item
 into one user collection, creating that collection when necessary.
@@ -196,7 +210,7 @@ Behavior:
 - Nothing is taken `FOR UPDATE`, which keeps the lock order compatible with the move
   endpoint and lets the foreign key decide emptiness.
 - The response is a plain `{"data": null, "message": "collection deleted
-  successfully"}`. The request already states the disposition, so the response adds
+successfully"}`. The request already states the disposition, so the response adds
   nothing by listing what was done.
 
 Error contract: `COLLECTION_NOT_FOUND`, `UNSORTED_COLLECTION_PROTECTED`,
@@ -213,11 +227,11 @@ Request:
 GET /collections?sort=newest&limit=20&cursor=<opaque>
 ```
 
-| Param | Values | Default | Notes |
-| --- | --- | --- | --- |
-| `sort` | `newest`, `oldest`, `name` | `newest` | Unknown value is a 400, never guessed |
-| `limit` | 1–50 | 20 | Above the maximum is `VALIDATION_ERROR`; `limit=0` is read as absent |
-| `cursor` | opaque token | none | Resume where the previous page ended; must match the requested `sort` |
+| Param    | Values                     | Default  | Notes                                                                 |
+| -------- | -------------------------- | -------- | --------------------------------------------------------------------- |
+| `sort`   | `newest`, `oldest`, `name` | `newest` | Unknown value is a 400, never guessed                                 |
+| `limit`  | 1–50                       | 20       | Above the maximum is `VALIDATION_ERROR`; `limit=0` is read as absent  |
+| `cursor` | opaque token               | none     | Resume where the previous page ended; must match the requested `sort` |
 
 Behavior:
 
@@ -248,10 +262,11 @@ Behavior:
 Response:
 
 ```json
-{ "data": { "collections": [ { "id": "…", "name": "Unsorted", "type": "system",
-    "system_key": "unsorted", "created_at": "…", "updated_at": "…" } ] },
+{
+  "data": { "collections": [{ "id": "…", "name": "Unsorted", "type": "system", "system_key": "unsorted", "created_at": "…", "updated_at": "…" }] },
   "message": "collections retrieved successfully",
-  "meta": { "cursor": { "next_cursor": null, "has_more": false } } }
+  "meta": { "cursor": { "next_cursor": null, "has_more": false } }
+}
 ```
 
 - `system_key` is included so a client recognizes Unsorted by identity rather than by
@@ -384,7 +399,7 @@ collection. The response reports what the delete left behind:
   deleted row's value and a concurrent move cannot make it disagree. No locking
   read is needed to pin it.
 - `collection_empty` is counted after the delete, scoped by `collection_id AND
-  user_id`.
+user_id`.
 - `collection_deletable` is `collection_empty` and the collection not being
   Unsorted. It exists because Unsorted is where every save lands, so an empty inbox
   is the most common "yes" here and a caller acting on `collection_empty` alone
@@ -652,10 +667,10 @@ implementation and no second outbound client.
 Both areas name their task type `<area>:<thing>` after their queue, so a task and
 the queue it belongs to can be read off one string:
 
-| Queue         | Task type                |
-| ------------- | ------------------------ |
-| `enrichment`  | `enrichment:saved_item`  |
-| `organization`| `organization:saved_item`|
+| Queue          | Task type                 |
+| -------------- | ------------------------- |
+| `enrichment`   | `enrichment:saved_item`   |
+| `organization` | `organization:saved_item` |
 
 Both are dedicated queues rather than Asynq's `default`, and both are declared
 explicitly in the worker's `Queues` map. Organization is not on the enrichment
@@ -666,11 +681,11 @@ filing behind its own page fetches.
 
 Identical to the synchronous endpoint, statement for statement:
 
-| Outcome                | `enrichment_status` | Metadata | `last_enriched_at` |
-| ---------------------- | ------------------- | -------- | ------------------ |
-| extraction succeeded   | `completed`         | written  | updated            |
-| extraction failed      | `failed`            | preserved| unchanged          |
-| page exposed nothing   | `completed`         | all NULL | updated            |
+| Outcome              | `enrichment_status` | Metadata  | `last_enriched_at` |
+| -------------------- | ------------------- | --------- | ------------------ |
+| extraction succeeded | `completed`         | written   | updated            |
+| extraction failed    | `failed`            | preserved | unchanged          |
+| page exposed nothing | `completed`         | all NULL  | updated            |
 
 `collection_id` and `domain` are never written by enrichment. There is no
 `processing` or `retrying` value and no intermediate state: how many more attempts
@@ -708,11 +723,11 @@ carries the durable `failed` record.
 `WORKER_CONCURRENCY` remains the runtime configuration source, with an explicit
 range enforced by the loader:
 
-| Setting                  | Value                              |
-| ------------------------ | ---------------------------------- |
-| `DefaultWorkerConcurrency` | `5`                              |
-| `MinWorkerConcurrency`     | `1`                              |
-| `MaxWorkerConcurrency`     | `20`                             |
+| Setting                    | Value |
+| -------------------------- | ----- |
+| `DefaultWorkerConcurrency` | `5`   |
+| `MinWorkerConcurrency`     | `1`   |
+| `MaxWorkerConcurrency`     | `20`  |
 
 An unset value resolves to the default. A value that is present but outside the
 range — zero, negative, above the maximum, or not a number — fails configuration
@@ -758,15 +773,15 @@ from `internal/api` and nothing from the enrichment worker.
 
 The worker decides at execution time, against a locked row:
 
-| Condition                              | Outcome                            |
-| -------------------------------------- | ---------------------------------- |
-| item does not exist                     | discarded, like the enrichment worker |
-| item belongs to another user            | refused and archived                |
-| `enrichment_status` is not `completed`  | no-op                              |
-| `platform` is NULL                      | no-op                              |
-| item is no longer in `Unsorted`         | no-op, never moved back            |
-| a collection already matches the platform | reused, never renamed             |
-| no collection matches                    | created as `type = 'system'`       |
+| Condition                                 | Outcome                               |
+| ----------------------------------------- | ------------------------------------- |
+| item does not exist                       | discarded, like the enrichment worker |
+| item belongs to another user              | refused and archived                  |
+| `enrichment_status` is not `completed`    | no-op                                 |
+| `platform` is NULL                        | no-op                                 |
+| item is no longer in `Unsorted`           | no-op, never moved back               |
+| a collection already matches the platform | reused, never renamed                 |
+| no collection matches                     | created as `type = 'system'`          |
 
 The "still in Unsorted" rule is the one that matters: an item the user filed into
 their own collection while the task waited is left exactly where they put it.
@@ -804,7 +819,7 @@ What is deliberately **not** implemented, and should not be read as missing:
 - **No organization reconciliation, scanner or sweep.** Organization is event-driven
   from a successful enrichment that produced a platform, and there is no
   alternative producer. With no persisted organization status there is nothing to
-  sweep *for*, and a query for "still in `Unsorted` with a platform" would also
+  sweep _for_, and a query for "still in `Unsorted` with a platform" would also
   match exactly the state a user may have chosen on purpose. If an event is never
   produced, the system does not later discover it — deliberately, not by accident.
 - **No reconciliation for items left `pending` by a failed enqueue.** Also a
@@ -879,9 +894,9 @@ them is the database, and until now nothing proved it.
 Two integration tests now do, in
 `internal/integration/auth_register_concurrency_test.go`:
 
-| Race                            | Asserted                                                             |
-| ------------------------------- | -------------------------------------------------------------------- |
-| Two `verify` calls, same valid PIN | exactly one 200, one 409; **one** continuation; **one** consumed code; `verification_requests.status = 'verified'`; registration still `pending` |
+| Race                               | Asserted                                                                                                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two `verify` calls, same valid PIN | exactly one 200, one 409; **one** continuation; **one** consumed code; `verification_requests.status = 'verified'`; registration still `pending`               |
 | Two `finalize` calls, same token   | exactly one 201, one 409 `USER_ALREADY_EXISTS`; **one** user, **one** credential, **one** Unsorted collection; continuation consumed; registration `completed` |
 
 Both use the suite's existing `runConcurrently` barrier — every goroutine is
@@ -897,7 +912,7 @@ guard was removed in turn and the suite re-run:
 - the unique index on `registration_continuations(pending_registration_id)`,
 
 and the verification test passed with each one gone. It holds the invariant
-of "exactly one continuation", but it does not discriminate *which* guard
+of "exactly one continuation", but it does not discriminate _which_ guard
 produces it, because in a losing request the rejection usually happens at
 the service's first read — `GetVerification` already returns
 `VERIFICATION_NOT_PENDING` — before the transaction is ever opened. The
@@ -916,10 +931,10 @@ on `users.email`, which the request log shows directly
 `VerifyRegistration` and `FinalizeManualRegistration` previously had no
 rate limit at all. Each now carries its own, under its own namespace:
 
-| Budget      | Route                                            | Limit            | Namespace    |
-| ----------- | ------------------------------------------------ | ---------------- | ------------ |
-| per-IP      | `POST /auth/register/verification/:id/verify`    | 20 per 10 minutes| `verify-ip`   |
-| per-IP      | `POST /auth/register/finalize/manual`             | 10 per 15 minutes| `finalize-ip` |
+| Budget | Route                                         | Limit             | Namespace     |
+| ------ | --------------------------------------------- | ----------------- | ------------- |
+| per-IP | `POST /auth/register/verification/:id/verify` | 20 per 10 minutes | `verify-ip`   |
+| per-IP | `POST /auth/register/finalize/manual`         | 10 per 15 minutes | `finalize-ip` |
 
 Both are mounted **in front of the handler**, for the reason every other
 budget in this repository is: a verification id that is not a UUID, or a
@@ -1065,15 +1080,15 @@ the database — the same reasoning the verification race already uses.
 Every count is scoped to the address or the provider subject under test, never to
 a global total:
 
-| Assertion | Scope |
-| --------- | ----- |
-| exactly one `users` row | `WHERE email = $1` |
-| exactly one `auth_identities` row | `WHERE provider = $1 AND provider_subject = $2` |
-| exactly one Unsorted collection | `c.system_key = 'unsorted'`, **not** name or `type` |
-| exactly one session | for the resulting user id |
-| zero password credentials | a social registration creates none |
-| exactly one `pending_social_identities` | asserted **before** the race, so a duplicate cannot be confused with one the setup left behind |
-| continuation consumed, registration `completed` | `GetFinalizedSocialRegistrationState` |
+| Assertion                                       | Scope                                                                                          |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| exactly one `users` row                         | `WHERE email = $1`                                                                             |
+| exactly one `auth_identities` row               | `WHERE provider = $1 AND provider_subject = $2`                                                |
+| exactly one Unsorted collection                 | `c.system_key = 'unsorted'`, **not** name or `type`                                            |
+| exactly one session                             | for the resulting user id                                                                      |
+| zero password credentials                       | a social registration creates none                                                             |
+| exactly one `pending_social_identities`         | asserted **before** the race, so a duplicate cannot be confused with one the setup left behind |
+| continuation consumed, registration `completed` | `GetFinalizedSocialRegistrationState`                                                          |
 
 `auth_identities` is counted by provider and subject rather than by user, because
 that pair is what it is unique on — an identity duplicated onto a second account
@@ -1117,16 +1132,185 @@ restarted terminal is not required.
 
 ---
 
+## Social registration creation — concurrency and identity-mismatch policy
+
+Two correctness defects in `CreateSocialRegistration`, both found by review rather
+than by a failing test. `CreateManualRegistration` already handled the first; the
+second had no defined behaviour at all.
+
+### Defect 1 — a concurrent pair lost the address race and reported a conflict
+
+Two Google logins for the same new address both find no pending registration.
+`GetPendingRegistrationByEmailForUpdate` uses `FOR UPDATE`, which locks a row —
+and there is no row yet, so neither request is serialized. Both insert, one wins
+`pending_registrations_email_idx`, and the loser is answered
+`409 REGISTRATION_ALREADY_EXISTS` carrying **no verification id**. The registration
+exists and is correct; the loser simply cannot reach it. A double-tapped sign-in
+button or a client retry after a lost response is enough to trigger it.
+
+`CreateManualRegistration` had this exact race and solved it by running
+`createManualRegistrationOnce` a second time when, and only when, the failure is
+that one constraint. The re-run re-reads the winner's committed row and takes the
+ordinary already-pending path, producing the answer a sequential second request
+would have got.
+
+**The fix is that same wrapper, applied to the social flow.** It is safe there for
+the same structural reason: the re-run re-reads through
+`GetPendingRegistrationByEmailForUpdate`, finds the winner's social registration,
+reads its `pending_social_identities` row, finds the provider and subject match
+(both requests carry the same verified Google identity), and returns the winner's
+verification id. Nothing is blind-retried and no error is swallowed — the retry is
+gated on `ConstraintName == pending_registrations_email_idx`, and it happens at
+most once. A second loss, or any other failure, is still reported as it is.
+
+### Defect 2 — a provider/subject mismatch returned HTTP 500
+
+When a social pending registration already existed for the address but its stored
+identity differed from the incoming verified one, the repository returned
+`apperror.Internal(...)`. Two problems: a business condition was reported as a
+server fault, and the check sat **before** the expiry branch, so a registration
+that had already aged out could never recover — the address was permanently
+unregistrable through Google, and only a manual registration could break the
+stalemate.
+
+### The policy chosen
+
+The stored identity is **never rewritten**, and **a live registration is never
+transferred or expired by a different identity**. A mismatch on a registration
+that can still be finalized is refused:
+
+| Existing registration                          | Incoming identity | Outcome                                                   |
+| ---------------------------------------------- | ----------------- | --------------------------------------------------------- |
+| not expired, **same** provider + subject       | same              | reuse it, as before                                       |
+| not expired, **different** provider or subject | different         | **`409 REGISTRATION_IDENTITY_MISMATCH`**, no state change |
+| expired, **same** provider + subject           | same              | expire and replace, as before                             |
+| expired, **different** provider or subject     | different         | expire the dead row and start a fresh registration        |
+
+#### Why a live registration is refused rather than replaced
+
+The capability to finalize lives in the mailbox, not in the row. Whoever reaches
+this branch holds a Google-signed assertion that _they_ control the address, and
+the PIN is mailed to that same address — so they could already complete the stored
+identity's registration if they chose to. Nothing is gained by letting them cancel
+it, and something real is lost:
+
+- **It would be a cancel primitive.** Expire-and-replace would let anyone who can
+  obtain an address at a provider destroy another identity's in-flight
+  registration on demand. The refusal removes that; the caller learns the address
+  is held under a different identity and nothing more.
+- **It is silent.** The stored owner would find their registration vanished with
+  no explanation and no way to tell a race from a takeover. A conflict is at least
+  truthful.
+
+The response carries a **dedicated code** rather than the bare `CONFLICT` used for
+"registration is no longer pending". That generic conflict means _retry, this was a
+race_; this one means _retrying cannot help, this address is claimed by another
+identity_, and a client that cannot tell those apart will retry forever. The
+message deliberately **does not echo the stored provider or subject**: that would
+disclose another identity's internals to a caller who merely presented a matching
+address.
+
+#### Why an expired registration is replaced
+
+Once a registration is past `expires_at` it can no longer do anything. Every gate
+refuses it: `validateVerificationPending` and `validateRegistrationContinuation`
+both reject it on `RegistrationExpiresAt`, and `CompletePendingRegistration`
+requires `expires_at > NOW()`. It holds no capability.
+
+So expiring it grants the incoming identity nothing that the passage of time had
+not already granted — they could simply wait out the same deadline and be given a
+fresh registration. Refusing instead would leave a row nothing can ever consume
+and nothing ever deletes (there is no reaper), bricking the address permanently.
+The original `pending_social_identities` row is left attached to the original
+registration and is never reused, so this is a replacement, **not a transfer**.
+
+#### Why this does not weaken the identity-binding model
+
+The chain that binds an account to a provider subject is unchanged:
+continuation token → `pending_registration_id` → `pending_social_identities` →
+`auth_identities`. Refusing on mismatch only ever removes a path; it never creates
+one. Nothing in this change lets a different subject reach the stored row, and
+nothing lets the stored row reach an `auth_identities` insert it was not created
+for.
+
+**This is deliberately different from `ConfirmAccountLink`**, which requires a live
+Google ID token matching the confirmation's provider _and_ subject because it links
+to a **pre-existing account**. No such requirement is added here: this flow creates
+a new account and is already gated on mailbox control through the emailed PIN, and
+adding a token requirement would change the flow's contract rather than fix a
+defect. The account-link confirmation flow is untouched.
+
+### Verification
+
+**The concurrency test was proven to detect what it claims, and the measurement
+changed how it is written.**
+
+The first version was a single round of eight concurrent logins. It passed — with
+the re-run **removed from the production code entirely**. The window between "the
+lookup found no row" and "the insert claims the address" is short enough that one
+round usually misses it: the losers find the winner's committed row and take the
+reuse path, so the race is never entered. The pre-existing manual-flow equivalent,
+`TestRegisterManual_ConcurrentSameNewEmail`, behaves the same way and also passes
+with its own fix removed, so this is a property of an HTTP-level barrier rather
+than of this test.
+
+Measuring it settled the arrangement:
+
+| Build               | Refused requests across 40 rounds of 8 |
+| ------------------- | -------------------------------------- |
+| re-run **removed**  | **272 / 320**                          |
+| re-run **in place** | **0 / 320**                            |
+
+The test therefore repeats the race over 40 truncated rounds, and each guard was
+then removed in turn to confirm the case fails:
+
+- re-run removed → `TestCreateSocialRegistration_ConcurrentSameNewEmailReusesOneRegistration` **fails**
+- mismatch check moved ahead of the expiry branch → `..._DifferentIdentityOnExpiredRegistrationReplacesIt` **fails**
+
+Observed responses:
+
+- Concurrent pair: all eight answered `200` `registration_required` with the
+  **same** verification id; exactly one pending registration, one pending social
+  identity, one verification request.
+- Mismatch on a **live** registration: `409 REGISTRATION_IDENTITY_MISMATCH`; stored
+  provider, subject and `pending` status all unchanged; no new rows.
+- Mismatch on an **expired** registration: `200` `registration_required` for a
+  fresh registration, original left `expired` with its own identity — never a 500.
+- Same identity on a live registration: reuse, unchanged.
+- Manual supersedes pending social: unchanged, and the superseded identity stays
+  with the superseded registration.
+
+Full run: `go build ./...` clean, `go vet ./...` clean, `go test ./...` **exit 0**
+across 20 packages with no failures, and `go test ./... -race` **exit 0** with no
+data race (MSYS2 ucrt64 gcc prepended to `PATH` for the command).
+
+### A fixture mistake worth recording
+
+The first version of the mismatch seeds created a pending registration and a
+pending social identity but **no verification request**. Every case then failed
+with `REGISTRATION_ALREADY_EXISTS` rather than the expected outcome, because
+`GetPendingRegistrationByEmailForUpdate` **inner-joins** `verification_requests`: the
+seeded registration was invisible, so the flow fell through to the insert and
+collided with its own fixture.
+
+The seeds now write the verification request too. It is worth stating plainly
+because the failure mode was misleading — a fixture the production code cannot see
+produces a passing-looking conflict for entirely the wrong reason, and only the
+assertion on the _code_ separated "the branch I am testing" from "the branch that
+could not find my row".
+
+---
+
 ## Registration rate limiting — implemented
 
 Both endpoints that send a message are limited:
 `POST /auth/register/verification/:verification_id/pin` and
 `.../resend`. Two independent budgets apply, and neither replaces the other.
 
-| Budget     | Subject                        | Limit            | Namespace | Enforced by |
-| ---------- | ------------------------------ | ---------------- | --------- | ----------- |
-| per-email  | normalized email address       | 5 per 1 hour     | `pin-email` | `registration` service |
-| per-IP     | resolved client IP address     | 20 per 10 minutes| `pin-ip`   | route middleware |
+| Budget    | Subject                    | Limit             | Namespace   | Enforced by            |
+| --------- | -------------------------- | ----------------- | ----------- | ---------------------- |
+| per-email | normalized email address   | 5 per 1 hour      | `pin-email` | `registration` service |
+| per-IP    | resolved client IP address | 20 per 10 minutes | `pin-ip`    | route middleware       |
 
 Both are Redis-backed fixed-window counters. Both are shared across the two
 endpoints, so switching from `/pin` to `/resend` is not a way to double an
@@ -1156,12 +1340,12 @@ not client-limited.
 
 ### Responses
 
-| Situation                | Status | Code                              | `Retry-After` |
-| ------------------------ | ------ | --------------------------------- | ------------- |
-| email budget spent       | 429    | `PIN_RATE_LIMIT_EXCEEDED`         | yes           |
-| client budget spent      | 429    | `IP_RATE_LIMIT_EXCEEDED`          | yes           |
-| Redis unreachable        | 503    | `PIN_RATE_LIMIT_UNAVAILABLE` / `IP_RATE_LIMIT_UNAVAILABLE` | **no** |
-| client address unresolvable | 503 | `CLIENT_IP_UNAVAILABLE`           | **no**        |
+| Situation                   | Status | Code                                                       | `Retry-After` |
+| --------------------------- | ------ | ---------------------------------------------------------- | ------------- |
+| email budget spent          | 429    | `PIN_RATE_LIMIT_EXCEEDED`                                  | yes           |
+| client budget spent         | 429    | `IP_RATE_LIMIT_EXCEEDED`                                   | yes           |
+| Redis unreachable           | 503    | `PIN_RATE_LIMIT_UNAVAILABLE` / `IP_RATE_LIMIT_UNAVAILABLE` | **no**        |
+| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`                                    | **no**        |
 
 **A limiter that cannot answer is a refusal, not permission.** Allowing on failure
 would let anyone remove the ceiling by causing one. A 503 names no recovery time
@@ -1194,10 +1378,10 @@ emitted would leave every client guessing when its own window reopens.
 The deployment platform is **not decided**, so nothing is assumed about it. The
 resolution source is declared explicitly rather than inferred.
 
-| `CLIENT_IP_SOURCE` | Meaning | Forwarded headers |
-| ------------------ | ------- | ----------------- |
-| `peer` (default)   | Clients connect directly; the socket address is the client's | never read, whatever the request contains |
-| `proxy`            | A verified proxy fronts the application | read only from `TRUSTED_PROXIES`, in `TRUSTED_PROXY_HEADER` |
+| `CLIENT_IP_SOURCE` | Meaning                                                      | Forwarded headers                                           |
+| ------------------ | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `peer` (default)   | Clients connect directly; the socket address is the client's | never read, whatever the request contains                   |
+| `proxy`            | A verified proxy fronts the application                      | read only from `TRUSTED_PROXIES`, in `TRUSTED_PROXY_HEADER` |
 
 Configuration is refused at startup when it could not be trusted:
 
@@ -1289,11 +1473,11 @@ Nothing here was weakened to make a test pass.
 separate budgets under separate namespaces. Two independent budgets apply to
 manual login, and neither replaces the other.
 
-| Budget      | Subject                    | Limit             | Namespace        | Enforced by        |
-| ----------- | -------------------------- | ----------------- | ---------------- | ------------------ |
-| per-IP      | resolved client IP address | 30 per 10 minutes | `login-ip`       | route middleware   |
-| per-email   | normalized email address   | 10 per 15 minutes | `login-email`    | `login` service    |
-| per-IP      | resolved client IP address | 60 per 10 minutes | `google-auth-ip` | route middleware   |
+| Budget    | Subject                    | Limit             | Namespace        | Enforced by      |
+| --------- | -------------------------- | ----------------- | ---------------- | ---------------- |
+| per-IP    | resolved client IP address | 30 per 10 minutes | `login-ip`       | route middleware |
+| per-email | normalized email address   | 10 per 15 minutes | `login-email`    | `login` service  |
+| per-IP    | resolved client IP address | 60 per 10 minutes | `google-auth-ip` | route middleware |
 
 The third row covers `POST /auth/login/google`,
 `GET /auth/login/google/account-link/:confirmation_id` and
@@ -1322,8 +1506,8 @@ IP middleware  ->  normalize the address  ->  charge the address budget
 - **The address budget is charged before the lookup, not counted after the
   failure.** A check-then-count arrangement would let a burst of concurrent
   requests all read "within budget", all start an Argon2id derivation, and only
-  be refused afterwards: the limit would bound how many requests are *ultimately
-  refused* while bounding none of the work that costs anything. Charging first
+  be refused afterwards: the limit would bound how many requests are _ultimately
+  refused_ while bounding none of the work that costs anything. Charging first
   bounds the work.
 - **A charge is handed back when the work it guarded succeeded.** The release
   happens before the session is created. Without it, every successful sign-in
@@ -1341,12 +1525,12 @@ IP middleware  ->  normalize the address  ->  charge the address budget
 
 ### Responses
 
-| Situation                   | Status | Code                                         | `Retry-After` |
-| --------------------------- | ------ | -------------------------------------------- | ------------- |
-| per-IP budget spent         | 429    | `IP_RATE_LIMIT_EXCEEDED`                     | yes           |
-| per-email budget spent      | 429    | `LOGIN_RATE_LIMIT_EXCEEDED`                  | yes           |
-| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE` / `LOGIN_RATE_LIMIT_UNAVAILABLE` | **no** |
-| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`                      | **no** |
+| Situation                   | Status | Code                                                         | `Retry-After` |
+| --------------------------- | ------ | ------------------------------------------------------------ | ------------- |
+| per-IP budget spent         | 429    | `IP_RATE_LIMIT_EXCEEDED`                                     | yes           |
+| per-email budget spent      | 429    | `LOGIN_RATE_LIMIT_EXCEEDED`                                  | yes           |
+| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE` / `LOGIN_RATE_LIMIT_UNAVAILABLE` | **no**        |
+| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`                                      | **no**        |
 
 `LOGIN_RATE_LIMIT_EXCEEDED` deliberately does not say which budget refused. The
 path already names the endpoint, and naming the dimension would tell a caller
@@ -1442,7 +1626,7 @@ there would be no way back in short of a reset. A floor is a product decision
 about those users, not a parser decision.
 
 The ceiling has to stay survivable, because the per-client login limiter bounds
-how many verifications a caller may *start*, not how expensive each one is. A
+how many verifications a caller may _start_, not how expensive each one is. A
 verification at the ceiling costs about 128 MiB across eight passes — roughly
 five times a legitimate one.
 
@@ -1494,11 +1678,11 @@ Nothing here was weakened to make a test pass.
 All three Google authentication routes are limited by one per-client-address
 budget under the `google-auth-ip` namespace:
 
-| Route                                                            | Method |
-| ---------------------------------------------------------------- | ------ |
-| `/auth/login/google`                                             | POST   |
-| `/auth/login/google/account-link/:confirmation_id`               | GET    |
-| `/auth/login/google/account-link/:confirmation_id/confirm`       | POST   |
+| Route                                                      | Method |
+| ---------------------------------------------------------- | ------ |
+| `/auth/login/google`                                       | POST   |
+| `/auth/login/google/account-link/:confirmation_id`         | GET    |
+| `/auth/login/google/account-link/:confirmation_id/confirm` | POST   |
 
 | Budget | Subject                    | Limit             | Namespace        | Enforced by      |
 | ------ | -------------------------- | ----------------- | ---------------- | ---------------- |
@@ -1513,7 +1697,7 @@ three are the cheapest requests to send.
 
 ### Why a budget is needed when there is no secret to guess
 
-The credential here is a signature Google made, so an *authentication* budget has
+The credential here is a signature Google made, so an _authentication_ budget has
 nothing to stop — there is no password to brute-force. What the routes are not
 free to serve is cost, and nothing else bounded any of it:
 
@@ -1529,7 +1713,7 @@ free to serve is cost, and nothing else bounded any of it:
   creating a pending registration, a pending social identity and a verification
   request.
 
-So this is a ceiling on resource cost, deliberately *not* on credential guessing,
+So this is a ceiling on resource cost, deliberately _not_ on credential guessing,
 and it is placed on the IP because that is the only dimension the caller can vary
 without also giving up the thing being rate-limited.
 
@@ -1559,11 +1743,11 @@ one namespace could have both doors taken down by a single exhausted counter.
 
 Identical to the manual-login per-IP budget, because it is the same middleware:
 
-| Situation                   | Status | Code                       | `Retry-After` |
-| --------------------------- | ------ | -------------------------- | ------------- |
-| budget spent                | 429    | `IP_RATE_LIMIT_EXCEEDED`   | yes           |
-| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE`| **no**        |
-| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`    | **no**        |
+| Situation                   | Status | Code                        | `Retry-After` |
+| --------------------------- | ------ | --------------------------- | ------------- |
+| budget spent                | 429    | `IP_RATE_LIMIT_EXCEEDED`    | yes           |
+| Redis unreachable           | 503    | `IP_RATE_LIMIT_UNAVAILABLE` | **no**        |
+| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`     | **no**        |
 
 A 503 means the ID token was never verified. An outage must not become a way to
 have a Google credential checked, and it must not become a way to write a session.
@@ -1655,7 +1839,7 @@ belonging to the same person.
 already treats mailbox control as account authority — `POST /auth/password-reset`
 is unauthenticated and issues a PIN to the account's address. Re-proving that
 same control is consistent with the rest of the design; asking for a password
-would be *stricter than password reset*, would break anyone who cannot recall it,
+would be _stricter than password reset_, would break anyone who cannot recall it,
 and would train users to type a password into a "link Google" prompt, which is a
 phishing shape. If the product ever wants linking to require the pre-existing
 credential, that is a deliberate change to the trust model and not a patch.
@@ -1664,10 +1848,10 @@ credential, that is a deliberate change to the trust model and not a patch.
 
 Both fields, exactly:
 
-| Field | Source of truth | Why |
-| --- | --- | --- |
-| `provider` | `account_link_confirmations.provider` | Data, not code — it is read back out and copied into `auth_identities`. A row naming another provider must not be satisfied by a Google token. |
-| `provider_subject` | `account_link_confirmations.provider_subject` | The identity the link is actually made on. |
+| Field              | Source of truth                               | Why                                                                                                                                            |
+| ------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`         | `account_link_confirmations.provider`         | Data, not code — it is read back out and copied into `auth_identities`. A row naming another provider must not be satisfied by a Google token. |
+| `provider_subject` | `account_link_confirmations.provider_subject` | The identity the link is actually made on.                                                                                                     |
 
 Email is **never** compared. It is not an identity, and treating it as one would
 accept a different account that happens to share an address.
@@ -1687,14 +1871,14 @@ migration, and no regeneration of the production sqlc target.
 
 ### Responses
 
-| Situation | Status | Code |
-| --- | --- | --- |
-| `id_token` absent, empty, or not bindable | 400 | `VALIDATION_ERROR` / `BAD_REQUEST` |
-| token missing a claim, invalid signature, expired | 401 | `INVALID_GOOGLE_TOKEN` |
-| valid token, different identity | 409 | `ACCOUNT_LINK_IDENTITY_MISMATCH` |
-| confirmation unknown, expired, or already used | 409 | `ACCOUNT_LINK_CONFIRMATION_INVALID` |
-| identity already linked by another confirmation | 409 | `AUTH_IDENTITY_ALREADY_EXISTS` |
-| linked, but the session could not be created | 503 | `ACCOUNT_LINK_SESSION_FAILED` |
+| Situation                                         | Status | Code                                |
+| ------------------------------------------------- | ------ | ----------------------------------- |
+| `id_token` absent, empty, or not bindable         | 400    | `VALIDATION_ERROR` / `BAD_REQUEST`  |
+| token missing a claim, invalid signature, expired | 401    | `INVALID_GOOGLE_TOKEN`              |
+| valid token, different identity                   | 409    | `ACCOUNT_LINK_IDENTITY_MISMATCH`    |
+| confirmation unknown, expired, or already used    | 409    | `ACCOUNT_LINK_CONFIRMATION_INVALID` |
+| identity already linked by another confirmation   | 409    | `AUTH_IDENTITY_ALREADY_EXISTS`      |
+| linked, but the session could not be created      | 503    | `ACCOUNT_LINK_SESSION_FAILED`       |
 
 `ACCOUNT_LINK_IDENTITY_MISMATCH` is deliberately distinct from
 `INVALID_GOOGLE_TOKEN` because the two ask for opposite things: an invalid token
@@ -1782,7 +1966,7 @@ confirmation for the same identity loses with `AUTH_IDENTITY_ALREADY_EXISTS`,
 which is the one path that previously had no coverage.
 
 **The concurrency test's strength was measured, not assumed.** With `FOR UPDATE`
-removed from `GetAccountLinkConfirmationForUpdate`, a *single* run still passed —
+removed from `GetAccountLinkConfirmationForUpdate`, a _single_ run still passed —
 the unique index on `(provider, provider_subject)` is independently enough to keep
 the losers failing — and only repeated runs caught it. So the test verifies the
 outcome under contention, not which of the three guards produces it. It is
@@ -1823,10 +2007,10 @@ callers causing the memory pressure are frequently not the ones being limited.
 across every subject and every feature. It keeps no queue, no per-caller state
 and no goroutine of its own.
 
-| Setting                     | Env                        | Default | Range  |
-| --------------------------- | -------------------------- | ------- | ------ |
-| `PasswordWorkConcurrency`   | `PASSWORD_WORK_CONCURRENCY` | `1`    | 1–64   |
-| `PasswordWorkWait`          | `PASSWORD_WORK_WAIT_MS`    | `1000`  | 0–60000 |
+| Setting                   | Env                         | Default | Range   |
+| ------------------------- | --------------------------- | ------- | ------- |
+| `PasswordWorkConcurrency` | `PASSWORD_WORK_CONCURRENCY` | `1`     | 1–64    |
+| `PasswordWorkWait`        | `PASSWORD_WORK_WAIT_MS`     | `1000`  | 0–60000 |
 
 Both are range-checked at startup and a supplied-but-unusable value stops the
 process rather than being corrected — the same rule `WORKER_CONCURRENCY` follows.
@@ -1859,9 +2043,9 @@ cannot hold a slot against every real request.
 
 ### Responses
 
-| Situation                    | Status | Code                        | `Retry-After` |
-| ---------------------------- | ------ | --------------------------- | ------------- |
-| no password-work capacity    | 503    | `PASSWORD_WORK_UNAVAILABLE` | yes, the configured wait |
+| Situation                 | Status | Code                        | `Retry-After`            |
+| ------------------------- | ------ | --------------------------- | ------------------------ |
+| no password-work capacity | 503    | `PASSWORD_WORK_UNAVAILABLE` | yes, the configured wait |
 
 It is neither `INVALID_CREDENTIALS` nor a rate-limit code. The password was never
 checked, so reporting a bad password would be a lie the caller acts on, and
@@ -1968,7 +2152,7 @@ applies.
   provider-level safeguards.
 
 **Consequence of the second one, recorded here so it is not lost:** until a
-provider exists, the per-email budget is the *only* ceiling on what verification
+provider exists, the per-email budget is the _only_ ceiling on what verification
 mail this application can trigger. It is a real control and it is verified, but
 it is an application-level one, not a provider-level one.
 
@@ -2172,14 +2356,14 @@ Do not change these casually. Revisit only with an explicit decision.
     `collection_id` and nothing else.
 
 13a. **Automatic organization is event-driven and never overrides a user.** A task
-    exists only because a successful enrichment produced a platform, and it may only
-    move an item that is still in `Unsorted`. Do not add a scan, a sweep, a periodic
-    query, or a persisted organization status to find items the event missed.
+exists only because a successful enrichment produced a platform, and it may only
+move an item that is still in `Unsorted`. Do not add a scan, a sweep, a periodic
+query, or a persisted organization status to find items the event missed.
 
 13b. **`collections.type = 'system'` describes who created a collection, not who
-    owns it.** A system collection belongs to exactly one user through
-    `collections.user_id`, and migration 000025's composite foreign key is what makes
-    an item's collection and its owner have to agree.
+owns it.** A system collection belongs to exactly one user through
+`collections.user_id`, and migration 000025's composite foreign key is what makes
+an item's collection and its owner have to agree.
 
 14. **The worker has a separate configuration boundary.** It uses
     `WorkerConfig` / `LoadWorker` and does not depend on API-only secrets. It also
@@ -2211,65 +2395,65 @@ Do not change these casually. Revisit only with an explicit decision.
     so removing one as a side effect would take an action nobody asked for.
 
 19a. **Deleting a collection is an explicit destructive operation whose caller
-    states the disposition of its saved items.** `saved_items_action` is `delete` or
-    `move` with no default, because the two have opposite consequences and one
-    destroys content. Nothing is inferred on the caller's behalf, and a missing
-    target is an error rather than a substitution.
+states the disposition of its saved items.** `saved_items_action` is `delete` or
+`move` with no default, because the two have opposite consequences and one
+destroys content. Nothing is inferred on the caller's behalf, and a missing
+target is an error rather than a substitution.
 
 19b. **Unsorted is identified by `system_key` and is the only protected
-    collection.** Collection type is not the criterion: `type = 'system'` says who
-    created a collection, not what it is, so an automatically created collection is
-    deletable like one the user named. Unsorted as a *move target* is ordinary and is
-    named by its id; there is no `move_to_unsorted` mode and no fallback to it.
+collection.** Collection type is not the criterion: `type = 'system'` says who
+created a collection, not what it is, so an automatically created collection is
+deletable like one the user named. Unsorted as a _move target_ is ordinary and is
+named by its id; there is no `move_to_unsorted` mode and no fallback to it.
 
 19c. **`saved_items_collection_id_fkey` remains the final guard on collection
-    deletion.** The children are disposed of first because `collection_id` is
-    `NOT NULL`, and the FK decides emptiness at the final DELETE rather than an
-    application pre-check. A violation rolls the transaction back and is reported as
-    `COLLECTION_NOT_EMPTY`. Never change it to `ON DELETE CASCADE`.
+deletion.** The children are disposed of first because `collection_id` is
+`NOT NULL`, and the FK decides emptiness at the final DELETE rather than an
+application pre-check. A violation rolls the transaction back and is reported as
+`COLLECTION_NOT_EMPTY`. Never change it to `ON DELETE CASCADE`.
 
 19d. **The move-all-items behavior exists only as part of collection deletion.**
-    `MoveSavedItemsToCollection` has no endpoint of its own. A general batch-move
-    feature is a separate product decision and is deliberately not implemented here.
+`MoveSavedItemsToCollection` has no endpoint of its own. A general batch-move
+feature is a separate product decision and is deliberately not implemented here.
 
 19e. **A cursor is a position, not a row.** It records where a page ended, and the
-    next query resumes from there without ever reading the row it came from. So a
-    cursor keeps working after that row is deleted or renamed, and a cursor pointing
-    past the end returns an empty page rather than an error. This is the property that
-    separates this from offset pagination, where a deleted row shifts everything after
-    it and the client silently receives a duplicate.
+next query resumes from there without ever reading the row it came from. So a
+cursor keeps working after that row is deleted or renamed, and a cursor pointing
+past the end returns an empty page rather than an error. This is the property that
+separates this from offset pagination, where a deleted row shifts everything after
+it and the client silently receives a duplicate.
 
 19f. **`GET /collections` uses cursor pagination; the existing offset list endpoints
-    are unchanged.** `GET /collections/:id/saved-items` is cursor-paginated too.
-    `GET /auth/sessions` keeps `page`/`limit` and `meta.pagination`. `httpx.Meta`
-    carries both, with `cursor` omitted entirely where unset, so no existing response
-    changes. Converting the session endpoint is a separate piece of work and needs its
-    own decision.
+are unchanged.** `GET /collections/:id/saved-items` is cursor-paginated too.
+`GET /auth/sessions` keeps `page`/`limit` and `meta.pagination`. `httpx.Meta`
+carries both, with `cursor` omitted entirely where unset, so no existing response
+changes. Converting the session endpoint is a separate piece of work and needs its
+own decision.
 
 19g. **There is no standalone saved-item listing.** Every saved item belongs to
-    exactly one collection, so an inbox is the Unsorted collection seen through
-    `GET /collections/:id/saved-items`. Two ways to ask the same question would be two
-    answers to keep in step, and the standalone one was also the poorer answer: it
-    carried no `enrichment_status`, `last_enriched_at`, `description` or `image_url`,
-    so a caller could not tell a page with no title from one that had not been read.
+exactly one collection, so an inbox is the Unsorted collection seen through
+`GET /collections/:id/saved-items`. Two ways to ask the same question would be two
+answers to keep in step, and the standalone one was also the poorer answer: it
+carried no `enrichment_status`, `last_enriched_at`, `description` or `image_url`,
+so a caller could not tell a page with no title from one that had not been read.
 
 19h. **A collection listing names its collection.** `GET /collections/:id/saved-items`
-    reports `data.collection` with `id` and `name`, reused from the ownership lookup
-    that call already had to make — no extra query. It is reported on every response
-    including an empty page, because "nothing in it" and "no such collection" are
-    different things and the name is what tells them apart. `type` and `system_key` are
-    left out: they answer questions for `GET /collections`, and a client that reached
-    this endpoint has already named the collection it wants. Unsorted goes through the
-    same type as everything else.
+reports `data.collection` with `id` and `name`, reused from the ownership lookup
+that call already had to make — no extra query. It is reported on every response
+including an empty page, because "nothing in it" and "no such collection" are
+different things and the name is what tells them apart. `type` and `system_key` are
+left out: they answer questions for `GET /collections`, and a client that reached
+this endpoint has already named the collection it wants. Unsorted goes through the
+same type as everything else.
 
 19i. **A response schema that omits `meta` is a documentation bug, and it is guarded.**
-    Both cursor endpoints described `meta.cursor` in prose while their generated 200
-    schema showed a two-key envelope, because `httpx.OKWithMeta` builds `meta` and the
-    API response structs did not declare it. Nothing at runtime could notice, and the
-    result is still valid OpenAPI, so no linter did either. Both now declare a
-    documentation-only mirror sharing one `CursorPageMeta`, and
-    `TestCollectionAPI_ListSavedItems_DocumentedShape` walks `docs/swagger.json` and a
-    real body side by side at every level, failing if either gains or loses a key.
+Both cursor endpoints described `meta.cursor` in prose while their generated 200
+schema showed a two-key envelope, because `httpx.OKWithMeta` builds `meta` and the
+API response structs did not declare it. Nothing at runtime could notice, and the
+result is still valid OpenAPI, so no linter did either. Both now declare a
+documentation-only mirror sharing one `CursorPageMeta`, and
+`TestCollectionAPI_ListSavedItems_DocumentedShape` walks `docs/swagger.json` and a
+real body side by side at every level, failing if either gains or loses a key.
 
 20. **A forward header is believed only behind a verified allowlist, and the
     declaration of where a client's address comes from is one setting rather than
@@ -2395,7 +2579,7 @@ remains for them is deployment configuration — principally the thresholds, whi
 are estimates rather than measurements — not application code.
 
 Search pagination, autocomplete, search suggestions, and Saved Item update/edit
-remain outside the current scope. Collection *deletion* now exists, but only as the
+remain outside the current scope. Collection _deletion_ now exists, but only as the
 explicit `DELETE /collections/:id`; collection listing and creation as standalone
 operations, a general batch move of saved items, and collection rename remain
 outside the current scope.

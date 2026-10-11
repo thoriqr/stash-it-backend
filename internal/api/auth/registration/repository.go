@@ -3,7 +3,6 @@ package registration
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -275,7 +274,42 @@ type CreateSocialRegistrationParams struct {
 	RegistrationExpiresAt pgtype.Timestamptz
 }
 
+// CreateSocialRegistration opens a social registration for an address, or reports
+// the one that is already open under the same identity.
+//
+// It carries the same single re-run as CreateManualRegistration, and for the same
+// structural reason. Two requests for an address with no registration yet cannot
+// both be decided by the lookup below, and they must not be:
+// GetPendingRegistrationByEmailForUpdate locks a row, and there is no row yet.
+// Both proceed to the insert and one of them loses on pending_registrations_email_idx.
+//
+// That loser is not an error the caller should have to distinguish from the
+// sequential case. A client retrying after a lost response, or a sign-in button
+// pressed twice, is ordinary traffic, and answering it 409
+// REGISTRATION_ALREADY_EXISTS with no verification id leaves a registration that
+// exists and that the caller cannot reach.
+//
+// The re-run is safe here for the same reason it is in the manual flow: it is not a
+// retry of the insert. It re-reads through GetPendingRegistrationByEmailForUpdate,
+// so it decides from the winner's committed row rather than from anything it
+// assumed. Both requests carry the same verified identity, so the lookup finds the
+// winner's social registration, its pending social identity matches, and the
+// ordinary reuse path returns the verification id the winner created. Nothing is
+// swallowed: the re-run is gated on that one constraint and happens at most once,
+// and a second loss or any other failure is reported as it is.
 func (r *repository) CreateSocialRegistration(
+	ctx context.Context,
+	params CreateSocialRegistrationParams,
+) (CreateSocialRegistrationResult, error) {
+	result, err := r.createSocialRegistrationOnce(ctx, params)
+	if !isPendingRegistrationEmailConflict(err) {
+		return result, err
+	}
+
+	return r.createSocialRegistrationOnce(ctx, params)
+}
+
+func (r *repository) createSocialRegistrationOnce(
 	ctx context.Context,
 	params CreateSocialRegistrationParams,
 ) (CreateSocialRegistrationResult, error) {
@@ -323,17 +357,32 @@ func (r *repository) CreateSocialRegistration(
 
 				return CreateSocialRegistrationResult{}, apperror.Internal(err)
 			}
-			if pendingSocialIdentity.Provider != params.Provider ||
-    			pendingSocialIdentity.ProviderSubject != params.ProviderSubject {
-    			return CreateSocialRegistrationResult{}, apperror.Internal(
-        			fmt.Errorf(
-            			"pending social identity mismatch: expected provider=%q subject=%q, got provider=%q subject=%q",
-            			pendingSocialIdentity.Provider,
-            			pendingSocialIdentity.ProviderSubject,
-            			params.Provider,
-            			params.ProviderSubject,
-        			),
-    			)
+
+			identityMatches :=
+				pendingSocialIdentity.Provider == params.Provider &&
+					pendingSocialIdentity.ProviderSubject == params.ProviderSubject
+
+			// A registration that can still be finalized belongs to the identity
+			// that opened it, and a different identity presenting the same address
+			// does not get to take it over. The capability to finalize lives in the
+			// mailbox rather than in this row, so the caller could already complete
+			// the stored registration if it chose to; what expire-and-replace would
+			// add is the ability to cancel it, which is a denial primitive against
+			// whoever really owns the address.
+			//
+			// Refusing keeps both halves honest: the stored identity is never
+			// rewritten, and the caller is told the address is held by another
+			// identity rather than being handed a registration that is not theirs.
+			//
+			// The message names no stored value. Echoing the provider or subject
+			// back would disclose another identity's internals to a caller who has
+			// only proven it holds a matching address.
+			if !identityMatches && !existing.IsExpired {
+				return CreateSocialRegistrationResult{}, apperror.ConflictWith(
+					CodeRegistrationIdentityMismatch,
+					"a registration for this email is already in progress under a different account",
+					nil,
+				)
 			}
 
 			if !existing.IsExpired {
@@ -344,6 +393,13 @@ func (r *repository) CreateSocialRegistration(
 				}, nil
 			}
 
+			// Past its deadline the registration can no longer be finalized:
+			// validateVerificationPending, validateRegistrationContinuation and
+			// CompletePendingRegistration all refuse it on expires_at. It holds no
+			// capability, so expiring it grants the incoming identity nothing the
+			// passage of time had not already granted. The original row is left
+			// expired and its pending social identity is left attached to it and
+			// never reused, so this is a replacement and not a transfer.
 			rowsAffected, err := qtx.ExpirePendingRegistration(
 				ctx,
 				existing.ID,

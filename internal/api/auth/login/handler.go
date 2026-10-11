@@ -85,6 +85,7 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_GOOGLE_TOKEN
+// @Description - REGISTRATION_IDENTITY_MISMATCH
 // @Description - IP_RATE_LIMIT_EXCEEDED
 // @Description - IP_RATE_LIMIT_UNAVAILABLE
 // @Description - CLIENT_IP_UNAVAILABLE
@@ -100,6 +101,7 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 // @Success 200 {object} LoginGoogleSuccessAPIResponse
 // @Failure 400 {object} swagger.ValidationError "Validation error"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid Google ID token"
+// @Failure 409 {object} swagger.APIErrorResponse "A registration for this email is already in progress under a different account"
 // @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Failure 503 {object} swagger.APIErrorResponse "Request limiting is unavailable, so the ID token was never verified"

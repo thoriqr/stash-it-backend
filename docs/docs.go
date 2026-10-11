@@ -105,7 +105,7 @@ const docTemplate = `{
         },
         "/auth/login/google": {
             "post": {
-                "description": "Authenticate a user using a Google ID token.\nThe response contains one of three outcomes:\n- authenticated: the user is authenticated and access/refresh tokens are returned.\n- account_link_required: the user must confirm linking the Google account.\n- registration_required: the user must continue the registration flow.\nThe Google authentication routes share one per-client-address budget.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_GOOGLE_TOKEN\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Authenticate a user using a Google ID token.\nThe response contains one of three outcomes:\n- authenticated: the user is authenticated and access/refresh tokens are returned.\n- account_link_required: the user must confirm linking the Google account.\n- registration_required: the user must continue the registration flow.\nThe Google authentication routes share one per-client-address budget.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_GOOGLE_TOKEN\n- REGISTRATION_IDENTITY_MISMATCH\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -166,6 +166,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Invalid Google ID token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "A registration for this email is already in progress under a different account",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
