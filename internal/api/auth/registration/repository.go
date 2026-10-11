@@ -781,9 +781,17 @@ func (r *repository) FinalizeManualRegistration(
 	return user, nil
 }
 
+// FinalizeSocialRegistrationParams carries the values that decide the account.
+//
+// Email is the authoritative address, read from pending_registrations by the
+// service. It is a parameter rather than something read here on purpose: this
+// repository already holds the pending social identity, and taking the address
+// from that row instead would silently promote provider metadata to the account's
+// identity. The two are not the same thing, and only one of them is normalized.
 type FinalizeSocialRegistrationParams struct {
 	PendingRegistrationID uuid.UUID
 	ContinuationID        uuid.UUID
+	Email                 string
 	DisplayName           string
 	EmailVerifiedAt       pgtype.Timestamptz
 }
@@ -818,7 +826,12 @@ func (r *repository) FinalizeSocialRegistration(
 	user, err := qtx.CreateUser(
 		ctx,
 		registrationdb.CreateUserParams{
-			Email:           pendingSocialIdentity.EmailSnapshot.String,
+			// The authoritative address, not the provider's copy of it.
+			// pending_registrations.email is the normalized value every read path
+			// compares against, so a differently-cased snapshot would otherwise
+			// create an account that GetUserForLogin and GetUserByEmail can never
+			// find, since both compare with exact equality on TEXT.
+			Email:           params.Email,
 			DisplayName:     params.DisplayName,
 			EmailVerifiedAt: params.EmailVerifiedAt,
 		},

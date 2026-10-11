@@ -632,7 +632,13 @@ func (s *service) FinalizeSocialRegistration(
 		FinalizeSocialRegistrationParams{
 			PendingRegistrationID: continuation.PendingRegistrationID,
 			ContinuationID:        continuation.ID,
-			DisplayName:           params.DisplayName,
+			// continuation.Email is pending_registrations.email: the address the
+			// registration was opened against and the one every later read compares
+			// against. It is the same source the manual flow uses, and reading it
+			// here rather than in the repository keeps a single definition of which
+			// address the account belongs to.
+			Email:       continuation.Email,
+			DisplayName: params.DisplayName,
 			EmailVerifiedAt: pgtype.Timestamptz{
 				Time:  now,
 				Valid: true,

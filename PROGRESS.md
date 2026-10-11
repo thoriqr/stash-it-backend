@@ -1301,6 +1301,105 @@ could not find my row".
 
 ---
 
+## Social registration email source of truth — corrected
+
+`users.email` was being created from `pending_social_identities.email_snapshot`
+instead of from `pending_registrations.email`. Two values that are deliberately
+different were treated as interchangeable.
+
+### What was wrong
+
+`FinalizeSocialRegistration` read the pending social identity — correctly, for
+provider and subject — and then also took the account address from that row:
+
+```go
+Email: pendingSocialIdentity.EmailSnapshot.String,
+```
+
+The snapshot is provider metadata. `pending_registrations.email` is the
+normalized, `NOT NULL`, uniquely indexed address the registration was opened
+against and the one every later read compares against. Conflating them had two
+consequences:
+
+- **Casing.** A snapshot whose rendering differed from the normalized address
+  would create an account that `GetUserForLogin` and `GetUserByEmail` can never
+  find, because both compare with exact equality on `TEXT`. The account would look
+  correct in the database and be unable to sign in.
+- **Nullability.** `email_snapshot` is nullable and `pgtype.Text.String` is `""`
+  for `NULL`. A `NULL` snapshot satisfied `users.email`'s `NOT NULL` with an empty
+  string, producing an account reachable by no login path at all.
+
+Neither was reachable in production: the Google caller normalizes once and writes
+the same value to both columns with `Valid: true` hardcoded, so the two coincided
+**by caller discipline rather than by construction**. This was latent, not live —
+and it would have become live the moment a second provider or a provider-refresh
+path was added.
+
+### The change
+
+Three lines of production code:
+
+1. `FinalizeSocialRegistrationParams` gains `Email string`, with a comment saying
+   why it is a parameter rather than something read in the repository: the
+   repository already holds the pending social identity, and reading the address
+   from that row is precisely the mistake.
+2. The service passes `Email: continuation.Email` — `pending_registrations.email`,
+   already in hand from `GetRegistrationContinuation`. No new query, and the same
+   source the manual flow uses.
+3. The repository creates the user from `params.Email`.
+
+`CreateAuthIdentity`'s `EmailSnapshot` passthrough is unchanged and still writes
+the provider's value verbatim, including `NULL`. `pending_registrations.email` is
+never mutated after insert — every production `UPDATE pending_registrations` sets
+only `status` — so reading it before the transaction is sound.
+
+No migration. No schema change. No sqlc regeneration: the existing seed already
+takes `Email` and `EmailSnapshot` independently, so the divergent and `NULL`
+fixtures needed no new query.
+
+### Verification
+
+Two integration tests, both proven to **fail on the pre-fix code** — each with
+`no rows in result set`, because `GetFinalizedSocialRegistrationState` joins
+`pending_registrations pr ON pr.email = u.email` and finds nothing once
+`users.email` holds the snapshot's value:
+
+- `..._UsesPendingRegistrationEmailNotProviderSnapshot` — seeds
+  `pr.email = "alice@example.com"` with `email_snapshot = "Alice@Example.com"`,
+  then asserts `users.email == "alice@example.com"` and
+  `auth_identities.email_snapshot == "Alice@Example.com"`, i.e. the account takes
+  the authoritative address and the provider's rendering survives as metadata.
+- `..._NullProviderSnapshotStillFinalizes` — seeds `email_snapshot` as SQL `NULL`
+  and asserts finalization succeeds, `users.email` is the authoritative address,
+  and `auth_identities.email_snapshot` is `NULL`. The null assertion is on
+  `pgtype.Text.Valid`, not on `String`, so it distinguishes SQL `NULL` from a
+  stored empty string.
+
+Both also assert provider and subject binding, registration completion and
+continuation consumption. The three pre-existing social finalization tests and
+their assertions are unchanged.
+
+`go build ./...`, `go vet ./...`, `gofmt` on the touched files, the focused
+registration/login integration tests, `go test ./... -count=1` (**exit 0**, 20
+packages), and the focused concurrency and finalization tests under
+`-race -count=3` (**exit 0**, no data race) all pass.
+
+`gofmt -l` reports `registration/repository.go` as unformatted, but it was
+already unformatted at `HEAD` and the deviation is pre-existing, unrelated to this
+change. The lines added here are gofmt-canonical. It was deliberately left alone:
+reformatting it would bury this change in an unrelated diff.
+
+### Carried forward
+
+A provider-refetch feature may update `auth_identities.email_snapshot`. Nothing
+blocks it: the column is nullable, carries no index or constraint, is not tied to
+`users.email` by any foreign key or trigger, and is never read by authentication
+(`GetAuthIdentity` selects `u.email` from `users`). Fixing this source makes that
+feature clean, because the refreshed metadata is no longer entangled with the
+account's own address.
+
+---
+
 ## Registration rate limiting — implemented
 
 Both endpoints that send a message are limited:

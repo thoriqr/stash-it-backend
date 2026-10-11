@@ -1418,3 +1418,196 @@ func TestFinalizeSocialRegistration_AuthIdentityAlreadyExists(t *testing.T) {
 		body.Error.Code,
 	)
 }
+
+// The account's address is pending_registrations.email, and the provider's copy of
+// it is metadata about where that address came from. The two are seeded with
+// deliberately different casing here, so the test can tell which one reached
+// users.email.
+//
+// This matters because both login paths compare with exact equality on TEXT. An
+// account created from the provider's casing would be invisible to
+// GetUserForLogin and GetUserByEmail while looking entirely correct in the
+// database — a user who had registered and could never sign in again.
+func TestFinalizeSocialRegistration_UsesPendingRegistrationEmailNotProviderSnapshot(t *testing.T) {
+	ctx := context.Background()
+
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	// The address the registration was opened against: normalized, and the one
+	// every later read compares against.
+	const authoritativeEmail = "alice@example.com"
+
+	// The provider's own rendering of the same address. Informational only.
+	const providerSnapshot = "Alice@Example.com"
+
+	const (
+		provider        = "google"
+		providerSubject = "google-subject-123"
+	)
+
+	const continuationToken = "test-social-email-source-continuation"
+
+	_, err := db.CreateSocialRegistrationContinuation(
+		ctx,
+		registrationtestdb.CreateSocialRegistrationContinuationParams{
+			TokenHash:       security.HashToken(continuationToken),
+			Email:           authoritativeEmail,
+			Provider:        provider,
+			ProviderSubject: providerSubject,
+			EmailSnapshot: pgtype.Text{
+				String: providerSnapshot,
+				Valid:  true,
+			},
+			DisplayNameSnapshot: pgtype.Text{
+				String: "Google User",
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "Test User"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Continuation", continuationToken)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	// Read back by the authoritative address. The query joins
+	// pending_registrations on pr.email = u.email, so a finalization that wrote
+	// the provider's casing would leave this returning no rows rather than a
+	// wrong-looking row — which is why the lookup key is the authoritative value.
+	state, err := db.GetFinalizedSocialRegistrationState(
+		ctx,
+		authoritativeEmail,
+	)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		authoritativeEmail,
+		state.Email,
+		"users.email must be the authoritative pending-registration address",
+	)
+
+	// The provider's rendering survives untouched as metadata.
+	require.True(t, state.EmailSnapshot.Valid)
+	require.Equal(
+		t,
+		providerSnapshot,
+		state.EmailSnapshot.String,
+		"the provider snapshot must be preserved as given, not normalized",
+	)
+
+	// The identity binding is unaffected by which email was used.
+	require.Equal(t, provider, state.Provider)
+	require.Equal(t, providerSubject, state.ProviderSubject)
+
+	require.Equal(
+		t,
+		string(registration.PendingRegistrationCompleted),
+		state.RegistrationStatus,
+	)
+	require.True(t, state.ConsumedAt.Valid)
+}
+
+// A missing provider snapshot is missing information, not a missing address.
+//
+// email_snapshot is nullable, and the address it used to supply lives on
+// pending_registrations regardless. A NULL here must therefore finalize normally
+// and leave auth_identities.email_snapshot NULL — not turn the account's address
+// into an empty string, which would satisfy users.email's NOT NULL and create an
+// account no login path could ever reach.
+func TestFinalizeSocialRegistration_NullProviderSnapshotStillFinalizes(t *testing.T) {
+	ctx := context.Background()
+
+	db := registrationtestdb.New(testPool)
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	const authoritativeEmail = "bob@example.com"
+
+	const (
+		provider        = "google"
+		providerSubject = "google-subject-123"
+	)
+
+	const continuationToken = "test-social-null-snapshot-continuation"
+
+	_, err := db.CreateSocialRegistrationContinuation(
+		ctx,
+		registrationtestdb.CreateSocialRegistrationContinuationParams{
+			TokenHash:       security.HashToken(continuationToken),
+			Email:           authoritativeEmail,
+			Provider:        provider,
+			ProviderSubject: providerSubject,
+			// Invalid pgtype.Text writes SQL NULL. This is the only way to reach
+			// the column's nullability, because the Google caller always sets a
+			// snapshot.
+			EmailSnapshot: pgtype.Text{},
+			DisplayNameSnapshot: pgtype.Text{
+				String: "Google User",
+				Valid:  true,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/register/finalize/social",
+		strings.NewReader(`{
+			"display_name": "Test User"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Continuation", continuationToken)
+	req.Header.Set("X-Platform", "web")
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	state, err := db.GetFinalizedSocialRegistrationState(
+		ctx,
+		authoritativeEmail,
+	)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		authoritativeEmail,
+		state.Email,
+		"a missing provider snapshot must not affect the account address",
+	)
+
+	// Asserted on Valid rather than on String, so this distinguishes SQL NULL
+	// from a stored empty string. The two are different states here: the first is
+	// "the provider told us nothing", the second is "the provider told us an
+	// address with no characters in it".
+	require.False(
+		t,
+		state.EmailSnapshot.Valid,
+		"auth_identities.email_snapshot must stay SQL NULL, not become an "+
+			"empty string",
+	)
+	require.Empty(t, state.EmailSnapshot.String)
+
+	require.Equal(t, provider, state.Provider)
+	require.Equal(t, providerSubject, state.ProviderSubject)
+
+	require.Equal(
+		t,
+		string(registration.PendingRegistrationCompleted),
+		state.RegistrationStatus,
+	)
+	require.True(t, state.ConsumedAt.Valid)
+}

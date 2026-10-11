@@ -330,7 +330,7 @@ func TestCreateSocialRegistration_DifferentIdentityOnLiveRegistrationIsRefused(t
 			Email:           socialGoogleEmail,
 			Provider:        socialGoogleProvider,
 			ProviderSubject: foreignGoogleSubject,
-			EmailSnapshot: pgText(socialGoogleEmail),
+			EmailSnapshot:   pgText(socialGoogleEmail),
 			DisplayNameSnapshot: pgText(
 				"Someone Else",
 			),
@@ -432,7 +432,7 @@ func TestCreateSocialRegistration_DifferentIdentityOnExpiredRegistrationReplaces
 			Email:           socialGoogleEmail,
 			Provider:        socialGoogleProvider,
 			ProviderSubject: foreignGoogleSubject,
-			EmailSnapshot: pgText(socialGoogleEmail),
+			EmailSnapshot:   pgText(socialGoogleEmail),
 			DisplayNameSnapshot: pgText(
 				"Someone Else",
 			),
@@ -598,7 +598,7 @@ func TestCreateManualRegistration_SupersedesPendingSocialRegistration(t *testing
 			Email:           socialGoogleEmail,
 			Provider:        socialGoogleProvider,
 			ProviderSubject: socialGoogleSubject,
-			EmailSnapshot: pgText(socialGoogleEmail),
+			EmailSnapshot:   pgText(socialGoogleEmail),
 			DisplayNameSnapshot: pgText(
 				"Google User",
 			),
