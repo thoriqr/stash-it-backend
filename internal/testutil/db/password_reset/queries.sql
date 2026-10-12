@@ -25,6 +25,13 @@ WHERE verification_request_id = sqlc.arg(verification_request_id)
   AND consumed_at IS NULL
   AND invalidated_at IS NULL;
 
+-- name: GetUserByEmail :one
+-- The existence check the request endpoint makes, exposed so tests can measure
+-- or assert on it directly rather than inferring it from the endpoint.
+SELECT u.id
+FROM users u
+WHERE u.email = sqlc.arg(email);
+
 -- name: GetPasswordResetState :one
 SELECT
     ppr.id AS password_reset_id,
@@ -39,6 +46,39 @@ WHERE ppr.email = sqlc.arg(email);
 INSERT INTO sessions (user_id, platform, absolute_expires_at)
 VALUES (sqlc.arg(user_id), 'web', NOW() + INTERVAL '1 day')
 RETURNING id;
+
+-- name: CountPasswordResetStateForEmail :one
+-- Counts every row the password reset flow could have written for one address.
+--
+-- The three counts are deliberately separate rather than one total: a test
+-- asserting "no state" needs to name which tables it checked, so that a
+-- regression writing only one of them still fails.
+SELECT
+    (
+        SELECT COUNT(*)
+        FROM pending_password_resets ppr
+        WHERE ppr.email = sqlc.arg(email)
+    )::bigint AS pending_reset_count,
+    (
+        SELECT COUNT(*)
+        FROM verification_requests vr
+        JOIN pending_password_resets ppr ON ppr.id = vr.subject_id
+        WHERE vr.subject_type = 'pending_password_reset'
+          AND ppr.email = sqlc.arg(email)
+    )::bigint AS verification_request_count,
+    (
+        SELECT COUNT(*)
+        FROM verification_codes vc
+        JOIN verification_requests vr ON vr.id = vc.verification_request_id
+        JOIN pending_password_resets ppr ON ppr.id = vr.subject_id
+        WHERE ppr.email = sqlc.arg(email)
+    )::bigint AS verification_code_count,
+    (
+        SELECT COUNT(*)
+        FROM password_credentials pc
+        JOIN users u ON u.id = pc.user_id
+        WHERE u.email = sqlc.arg(email)
+    )::bigint AS credential_count;
 
 -- name: GetPasswordResetFinalState :one
 SELECT

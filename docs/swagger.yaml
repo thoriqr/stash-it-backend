@@ -1424,8 +1424,11 @@ paths:
       - application/json
       description: |-
         Start a password reset flow using an email address.
+        The response is the same whether or not the address belongs to an
+        account: an unknown address is answered with a placeholder
+        verification id that resolves to nothing, so this response cannot
+        be used to discover which addresses are registered.
         Possible error codes:
-        - RESOURCE_NOT_FOUND
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Password reset request
@@ -1445,10 +1448,6 @@ paths:
           description: Validation error
           schema:
             $ref: '#/definitions/swagger.ValidationErrorResponse'
-        "404":
-          description: User not found
-          schema:
-            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
           schema:

@@ -406,6 +406,30 @@ const (
 	// continuation token is a capability to create an account rather than a
 	// credential to present.
 	FinalizeIPNamespace = "finalize-ip"
+
+	// ResetRequestIPNamespace is the per-client-address budget on
+	// POST /auth/password-reset, spent before the handler.
+	//
+	// It is the account-probing budget. It is distinct from every other namespace
+	// here because opening a reset is neither registering, logging in, nor mailing
+	// anything, and a flood of one flow must not lock another out.
+	ResetRequestIPNamespace = "password-reset-request-ip"
+
+	// ResetStatusIPNamespace is the per-client-address budget on
+	// GET /auth/password-reset/verification/:verification_id.
+	//
+	// It is separate from ResetRequestIPNamespace so that a client watching its own
+	// flow cannot spend the allowance that governs opening one.
+	ResetStatusIPNamespace = "password-reset-status-ip"
+
+	// ResetPinIPNamespace is the per-client-address budget covering both password
+	// reset PIN issuance routes, spent before the handler and shared between them.
+	//
+	// One namespace rather than two is the point: /pin and /resend reach the same
+	// issuance helper and both send a message, so naming either route separately
+	// would let a caller double its allowance by switching endpoints, which costs
+	// nothing to do because neither route requires authentication.
+	ResetPinIPNamespace = "password-reset-pin-ip"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

@@ -396,7 +396,7 @@ const docTemplate = `{
         },
         "/auth/password-reset": {
             "post": {
-                "description": "Start a password reset flow using an email address.\nPossible error codes:\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "description": "Start a password reset flow using an email address.\nThe response is the same whether or not the address belongs to an\naccount: an unknown address is answered with a placeholder\nverification id that resolves to nothing, so this response cannot\nbe used to discover which addresses are registered.\nPossible error codes:\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -429,12 +429,6 @@ const docTemplate = `{
                         "description": "Validation error",
                         "schema": {
                             "$ref": "#/definitions/swagger.ValidationErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "User not found",
-                        "schema": {
-                            "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
                     "500": {

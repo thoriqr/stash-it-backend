@@ -829,7 +829,13 @@ func TestPasswordReset_AlreadyPendingAndInvalidPIN(t *testing.T) {
 		invalidBody.Error.Code,
 	)
 
-	// Unknown email.
+	// Unknown email. It used to be refused with 404, which told an unauthenticated
+	// caller exactly which addresses had accounts. It is now answered with the
+	// same 201 and the same body as a known address, carrying a verification id
+	// that resolves to nothing.
+	//
+	// The placeholder's persistence and downstream behaviour are covered in
+	// auth_password_reset_enumeration_test.go.
 	unknown := httptest.NewRequest(
 		http.MethodPost,
 		"/auth/password-reset",
@@ -839,12 +845,13 @@ func TestPasswordReset_AlreadyPendingAndInvalidPIN(t *testing.T) {
 
 	unknownResponse, err := testApp.Test(unknown)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusNotFound, unknownResponse.StatusCode)
+	require.Equal(t, http.StatusCreated, unknownResponse.StatusCode)
 
 	var unknownBody struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
+		Data struct {
+			VerificationID uuid.UUID `json:"verification_id"`
+		} `json:"data"`
+		Message string `json:"message"`
 	}
 
 	require.NoError(
@@ -852,11 +859,8 @@ func TestPasswordReset_AlreadyPendingAndInvalidPIN(t *testing.T) {
 		json.NewDecoder(unknownResponse.Body).Decode(&unknownBody),
 	)
 
-	require.Equal(
-		t,
-		apperror.CodeNotFound,
-		unknownBody.Error.Code,
-	)
+	require.NotEqual(t, uuid.Nil, unknownBody.Data.VerificationID)
+	require.Equal(t, "password reset requested", unknownBody.Message)
 }
 
 func TestPasswordReset_ExpiredPendingIsReconciled(t *testing.T) {

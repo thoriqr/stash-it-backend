@@ -21,8 +21,11 @@ func NewHandler(service *Service) *Handler {
 // RequestPasswordReset godoc
 // @Summary Request password reset
 // @Description Start a password reset flow using an email address.
+// @Description The response is the same whether or not the address belongs to an
+// @Description account: an unknown address is answered with a placeholder
+// @Description verification id that resolves to nothing, so this response cannot
+// @Description be used to discover which addresses are registered.
 // @Description Possible error codes:
-// @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
 // @Accept json
@@ -30,7 +33,6 @@ func NewHandler(service *Service) *Handler {
 // @Param request body RequestPasswordResetRequest true "Password reset request"
 // @Success 201 {object} RequestPasswordResetAPIResponse
 // @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
-// @Failure 404 {object} swagger.APIErrorResponse "User not found"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /auth/password-reset [post]
 func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
@@ -48,6 +50,9 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 		return err
 	}
 
+	// result.UnknownAccount is deliberately not read here. Branching on it would
+	// put the difference between the two cases back into the response, which is
+	// the one thing this endpoint exists to avoid.
 	response := RequestPasswordResetResponse{
 		VerificationID: result.VerificationID,
 	}

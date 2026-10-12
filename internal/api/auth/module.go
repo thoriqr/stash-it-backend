@@ -181,5 +181,6 @@ func RegisterModule(
 	passwordreset.Routes(
 		authRouter,
 		passwordResetHandler,
+		pinRateLimiter,
 	)
 }

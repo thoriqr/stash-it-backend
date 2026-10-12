@@ -21,7 +21,15 @@ type Service struct {
 
 type RequestPasswordResetResult struct {
 	VerificationID uuid.UUID
-	AlreadyPending bool
+
+	// UnknownAccount reports that no account holds the requested address, and
+	// that the returned VerificationID is therefore a placeholder.
+	//
+	// It exists for tests and for anything that needs to know internally, not
+	// for the response. The handler ignores it and returns the same body either
+	// way, which is the entire point: a caller who could tell the two apart would
+	// learn whether an address is registered here.
+	UnknownAccount bool
 }
 
 func NewService(
@@ -42,15 +50,62 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+// dummyVerificationID returns a placeholder verification id for an address that
+// no account holds.
+//
+// It is random and unpersisted, which is what makes it safe. Nothing is written
+// for it, so every endpoint that takes a verification id looks it up, finds no
+// row, and refuses it through the same path any unknown id takes. A caller that
+// treats the id as a credential finds out it was never one.
+//
+// It is a v7 UUID because the real ids are: a placeholder with a different
+// version nibble or a different shape would be distinguishable from a real one
+// by inspection alone, which would move the signal out of the status code and
+// into the body rather than removing it.
+//
+// A failure to obtain randomness is a fault in the random source rather than
+// something this can answer, so it is reported as one.
+func dummyVerificationID() (uuid.UUID, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return uuid.Nil, apperror.Internal(err)
+	}
+
+	return id, nil
+}
+
 func (s *Service) RequestPasswordReset(
 	ctx context.Context,
 	email string,
 ) (RequestPasswordResetResult, error) {
 	email = normalizeEmail(email)
 
-	_, err := s.repository.GetUserByEmail(ctx, email)
+	// Whether an account holds this address is asked rather than assumed. The
+	// two branches below are made indistinguishable only by both ending in the
+	// same response, so this decision has to happen before anything else does.
+	exists, err := s.repository.UserExists(ctx, email)
 	if err != nil {
 		return RequestPasswordResetResult{}, err
+	}
+
+	if !exists {
+		// Nothing is created for an address nobody holds: no pending reset, no
+		// verification request, no PIN, no message. The placeholder therefore
+		// cannot become a delivery channel, and asking about an arbitrary
+		// address costs one indexed lookup and nothing else.
+		//
+		// A real row would not be harmless even with PIN issuance suppressed —
+		// the verification id is the credential the rest of the flow is written
+		// against, and a row would make it one.
+		dummyID, err := dummyVerificationID()
+		if err != nil {
+			return RequestPasswordResetResult{}, err
+		}
+
+		return RequestPasswordResetResult{
+			VerificationID: dummyID,
+			UnknownAccount: true,
+		}, nil
 	}
 
 	reset, found, err := s.repository.GetActivePasswordResetByEmail(ctx, email)
@@ -59,9 +114,11 @@ func (s *Service) RequestPasswordReset(
 	}
 
 	if found {
+		// Reusing the open reset rather than opening a second one is what keeps a
+		// repeat request from resetting the window a user is waiting out. The
+		// response carries the same id either way, so nothing here is visible.
 		return RequestPasswordResetResult{
 			VerificationID: reset.VerificationID,
-			AlreadyPending: true,
 		}, nil
 	}
 
@@ -78,10 +135,8 @@ func (s *Service) RequestPasswordReset(
 		return RequestPasswordResetResult{}, err
 	}
 
-
 	return RequestPasswordResetResult{
 		VerificationID: verificationRequest.ID,
-		AlreadyPending: false,
 	}, nil
 }
 

@@ -12,6 +12,59 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPasswordResetStateForEmail = `-- name: CountPasswordResetStateForEmail :one
+SELECT
+    (
+        SELECT COUNT(*)
+        FROM pending_password_resets ppr
+        WHERE ppr.email = $1
+    )::bigint AS pending_reset_count,
+    (
+        SELECT COUNT(*)
+        FROM verification_requests vr
+        JOIN pending_password_resets ppr ON ppr.id = vr.subject_id
+        WHERE vr.subject_type = 'pending_password_reset'
+          AND ppr.email = $1
+    )::bigint AS verification_request_count,
+    (
+        SELECT COUNT(*)
+        FROM verification_codes vc
+        JOIN verification_requests vr ON vr.id = vc.verification_request_id
+        JOIN pending_password_resets ppr ON ppr.id = vr.subject_id
+        WHERE ppr.email = $1
+    )::bigint AS verification_code_count,
+    (
+        SELECT COUNT(*)
+        FROM password_credentials pc
+        JOIN users u ON u.id = pc.user_id
+        WHERE u.email = $1
+    )::bigint AS credential_count
+`
+
+type CountPasswordResetStateForEmailRow struct {
+	PendingResetCount        int64
+	VerificationRequestCount int64
+	VerificationCodeCount    int64
+	CredentialCount          int64
+}
+
+// Counts every row the password reset flow could have written for one address.
+//
+// The three counts are deliberately separate rather than one total: a test
+// asserting "no state" needs to name which tables it checked, so that a
+// regression writing only one of them still fails.
+func (q *Queries) CountPasswordResetStateForEmail(ctx context.Context, email string) (CountPasswordResetStateForEmailRow, error) {
+	row := q.db.QueryRow(ctx, countPasswordResetStateForEmail, email)
+	var i CountPasswordResetStateForEmailRow
+	err := row.Scan(
+		&i.PendingResetCount,
+		&i.VerificationRequestCount,
+		&i.VerificationCodeCount,
+		&i.CredentialCount,
+	)
+	return i, err
+}
+
 const createExpiredPendingPasswordReset = `-- name: CreateExpiredPendingPasswordReset :one
 WITH pending_reset AS (
     INSERT INTO pending_password_resets (
@@ -168,6 +221,21 @@ func (q *Queries) GetPasswordResetVerificationState(ctx context.Context, verific
 	var i GetPasswordResetVerificationStateRow
 	err := row.Scan(&i.VerificationID, &i.VerificationStatus, &i.PinIssuedCount)
 	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT u.id
+FROM users u
+WHERE u.email = $1
+`
+
+// The existence check the request endpoint makes, exposed so tests can measure
+// or assert on it directly rather than inferring it from the endpoint.
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const makeVerificationResendable = `-- name: MakeVerificationResendable :exec

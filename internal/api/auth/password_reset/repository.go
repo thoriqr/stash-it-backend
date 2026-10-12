@@ -14,6 +14,19 @@ import (
 )
 
 type Repository interface {
+	// UserExists reports whether an account holds this address.
+	//
+	// It exists instead of the caller reading GetUserByEmail's error because
+	// "there is no such account" is an ordinary answer on this endpoint, not a
+	// failure: the service has to go on and answer it identically either way.
+	// Returning it as an error would make the expected path and the fault path
+	// the same shape, and separating them by inspecting an error code would put
+	// the decision in the wrong layer.
+	UserExists(
+		ctx context.Context,
+		email string,
+	) (bool, error)
+
 	GetUserByEmail(
 		ctx context.Context,
 		email string,
@@ -85,6 +98,22 @@ func NewRepository(
 type CreatePasswordResetParams struct {
     Email          string
     ResetExpiresAt pgtype.Timestamptz
+}
+
+func (r *repository) UserExists(
+	ctx context.Context,
+	email string,
+) (bool, error) {
+	user, err := r.queries.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+
+		return false, apperror.Internal(err)
+	}
+
+	return user.ID != uuid.Nil, nil
 }
 
 func (r *repository) GetUserByEmail(

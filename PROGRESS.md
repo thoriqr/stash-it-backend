@@ -2178,6 +2178,153 @@ real derivation, so none depends on how long Argon2id takes on the machine.
 
 ---
 
+## Password reset enumeration resistance and IP rate limiting — implemented
+
+Two changes, in the order they were made. The first removes the account-enumeration
+signal from `POST /auth/password-reset`; the second bounds how fast any client
+address can use this flow at all.
+
+### Dummy verification IDs
+
+`POST /auth/password-reset` used to answer an address no account holds with
+`404 RESOURCE_NOT_FOUND` and an address that is held with `201` and a real
+verification id. That is a binary, free-to-probe, unauthenticated oracle, and the
+id it returned was not merely a hint — it was the credential the rest of the flow
+is written against.
+
+It now returns `201` and the same body for both:
+
+- **A known address** opens or reuses a password reset exactly as before and gets
+  the real persisted verification id.
+- **An unknown address** gets a fresh UUIDv7 that is **never persisted**. No
+  `pending_password_reset`, no `verification_request`, no verification code, no
+  email.
+
+The placeholder is a **v7** UUID because the real ones are (`uuidv7()`, migration
+000006). A v4 placeholder would be distinguishable from a real id by its version
+nibble alone, which would move the signal out of the status code and into the body
+rather than removing it. No production code inspects UUID version; the v7 choice is
+purely so a client cannot tell the two apart by inspection.
+
+Because nothing backs the placeholder, it is an ordinary unknown id to everything
+downstream. `GET /password-reset/verification/:id`, `POST .../pin`,
+`POST .../resend` and `POST .../verify` all resolve it, find no row, and refuse it
+through the same path any made-up id takes — `404`. Finalization takes a
+continuation token rather than a verification id, and that lookup inner-joins
+`users`, so a placeholder presented as one resolves to nothing (`409`). A dummy id
+can therefore never verify a PIN, mint a continuation, write a credential, or
+revoke a session. This is asserted against the database tables rather than
+inferred from a status code.
+
+`404` is no longer documented for this route; the Swagger description states that
+the response does not distinguish the two cases.
+
+### The accepted residual channel
+
+**Repeated requests for a known address with an open reset return the same
+persisted verification id, while an unknown address returns a fresh placeholder
+every time.** An attacker posting twice to one address inside the fifteen-minute
+reset window learns whether an account exists, with no timing measurement needed.
+
+This is accepted for now, because removing it is a product change rather than a
+bug fix:
+
+- **Reuse is required behaviour.** A second request must return the open reset
+  rather than opening another, or it would reset the window a user is waiting out.
+  That requirement is why the two cases differ observably.
+- **Always minting a fresh id** would satisfy the oracle and break reuse: the id a
+  client holds would stop being the id its flow runs under.
+- **Omitting the id entirely** would satisfy the oracle but leaves the frontend
+  with no way to address PIN entry or verification, all of which take a
+  verification id in the path. Closing this properly means redesigning how the id
+  reaches the client — not changing a status code or a response shape.
+
+The two responses are otherwise byte-identical, so status and body no longer carry
+the signal at all. One deterministic channel remains where three easy ones did.
+
+A smaller timing signal also remains and is not addressed here: a known address
+costs one indexed lookup more than an unknown one, because it continues to the
+second lookup and, when no reset is open, an insert transaction. This gap
+predates the change and its magnitude is unchanged; only the trivially-exploitable
+status-code oracle was removed.
+
+### IP rate limiting
+
+Three endpoint groups are budgeted per client address. Each has its own namespace
+and its own policy, because opening a reset, reading one, and mailing a code do
+not cost the same thing, and a flood of one must not spend another's allowance.
+
+| Group | Routes | Namespace | Policy |
+|---|---|---|---|
+| Request | `POST /auth/password-reset` | `password-reset-request-ip` | 10 / 10 min |
+| Status | `GET /password-reset/verification/:verification_id` | `password-reset-status-ip` | 60 / 10 min |
+| PIN issuance | `POST .../pin` **and** `POST .../resend` | `password-reset-pin-ip` | 20 / 10 min |
+
+**Why these values.**
+
+- **Request, 10/10 min.** This is the account-probing surface. A reset request
+  sends no message and does no password work — for an unknown address it is one
+  indexed lookup and nothing else — which is exactly what makes it cheap enough to
+  probe in bulk. Half the PIN issuance value is deliberate. It is not tighter,
+  because people share addresses and a false positive here is soft: the caller is
+  told to wait, nothing is deleted, and the reset lives fifteen minutes, so ten
+  requests cannot be spent before a first attempt has expired.
+- **Status, 60/10 min.** This route has no side effect at all — one indexed read —
+  and it is the route a client re-reads while a flow is open, so a value chosen for
+  issuance's cost would refuse a legitimate caller watching its own screen. Three
+  times the issuance budget is what polling costs.
+- **PIN issuance, 20/10 min.** Deliberately identical to registration's `pin-ip`:
+  same act, same cost (a code generated, a row written, a message sent), and
+  matching values is what makes the two features comparable. What differs is what
+  stands behind it — registration also has a per-address email budget of five an
+  hour, and password reset has none yet, so this counter is currently the **only**
+  ceiling on what one address can be mailed. That is an argument for keeping the
+  value where it is rather than lowering it: a tighter limit here would have no
+  second dimension to fall back on, and a false positive would stop issuance
+  outright.
+
+**One budget for `/pin` and `/resend`.** Both are mounted behind a single
+middleware instance, so both spend `password-reset-pin-ip`. Naming either route
+separately would let a caller double its allowance by switching endpoints, and
+switching is free because neither route requires authentication and both reach the
+same issuance helper. This mirrors registration's handling of the same pair.
+
+**Mounting.** `middleware.IPRateLimit` runs before the handler, so a refused
+request never reaches feature logic. A request whose path parameter is not a UUID,
+or whose address does not exist, is still counted — and probing addresses that do
+not exist is the cheapest request to send.
+
+### Redis failures and trusted proxies
+
+The limiter **fails closed**. An unreachable counter is a refusal, not permission:
+`503 IP_RATE_LIMIT_UNAVAILABLE` with **no `Retry-After`**, because the counter has
+no window to name and inventing one would tell the client to come back at a moment
+nobody chose. This widens the blast radius of a Redis outage — it now stops three
+more routes — and the widening is deliberate. A request over budget is
+`429 IP_RATE_LIMIT_EXCEEDED` carrying a `Retry-After` read from the counter's own
+remaining TTL, which is why that assertion runs against real Redis rather than a
+fake that could simply be told what to report.
+
+Client addresses are resolved through the existing `CLIENT_IP_SOURCE` and
+`TRUSTED_PROXIES` configuration; nothing about a forwarded header is believed
+implicitly. `app.Test` serves from an in-memory connection whose only address is
+the unspecified one, so the integration tests drive addresses through an app built
+as if behind a verified proxy — the same arrangement registration uses.
+
+**These are initial engineering estimates, not production-validated thresholds.**
+No deployment has been selected and no traffic observed.
+
+### Not covered — pending review
+
+`POST /auth/password-reset/verification/:verification_id/verify`,
+`GET /auth/password-reset/continuation` and `POST /auth/password-reset/finalize`
+are **outside this change and pending their own security review.** They are
+mounted with no middleware, unchanged, and nothing about them should be read as
+having been assessed. In particular `/finalize` is the only Argon2id derivation in
+this flow and is currently unbounded per address — a known gap, not a decision.
+
+---
+
 ## Outstanding deployment work — not implemented
 
 These are unresolved because the hosting platform and the email provider have
