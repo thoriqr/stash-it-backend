@@ -121,6 +121,7 @@ func RegisterModule(
 		authRouter,
 		sessionHandler,
 		accessTokenVerifier,
+		pinRateLimiter,
 	)
 
 	// Registration

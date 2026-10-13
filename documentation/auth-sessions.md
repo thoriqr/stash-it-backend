@@ -76,6 +76,9 @@ Auth is applied per route with `middleware.Auth(verifier)`, not with
 the body _is_ the credential; nothing else about the request is trusted, and in
 particular no user or session id is accepted from it.
 
+`POST /auth/refresh` additionally carries a per-client-address budget — see
+"Rate limiting refresh" below.
+
 ## Lifecycle
 
 ### Creation
@@ -283,6 +286,92 @@ password-reset revoke-all touches `sessions` alone. No cycle exists.
 
 **Not guaranteed:** `ListSessions` and `CountSessions` read committed data with no
 shared snapshot; the two can disagree within one response.
+
+## Rate limiting refresh
+
+`POST /auth/refresh` is the one session route that carries a budget: **60 requests
+per 10 minutes per resolved client IP**, under the `refresh-ip` namespace. It is
+`middleware.IPRateLimit`, mounted on the route in front of body binding and in
+front of the handler, using the same `c.IP()` and `CLIENT_IP_SOURCE` /
+`TRUSTED_PROXIES` configuration as every other budget in the application. There is
+no second place here where a forwarding header is read.
+
+**Why this route and not the others.** The other three are authenticated and cost
+one or two indexed statements, which is the same shape as the authenticated reads
+`AGENTS.md` already leaves unlimited — "a limit here would bound no shared
+resource." Refresh is different because of what rotation does to an attacker.
+
+**The threat is rotation chaining.** A caller holding one stolen refresh token can
+present it, receive its successor, and present that. Always using the newest token,
+they never present one with `replaced_by` set, so the reuse detection described
+above never fires against them. Each such request is indistinguishable from a
+legitimate one at the service layer, and each writes a `refresh_tokens` row that
+nothing ever removes. The chain is bounded only by `absolute_expires_at` — ninety
+days — which is a long time to be unbounded by rate.
+
+This is also why the subject is the client address and **not** the refresh token: a
+token-keyed budget would be defeated by exactly the chaining it is meant to bound,
+since every successor is a new hash and would land on a counter of its own. A
+user-keyed budget is not available either — the user id is only known from the
+locked row read inside the refresh transaction, so a limiter placed before the
+work cannot key on it and one placed after it bounds nothing that has not already
+happened.
+
+**The threshold is derived, and it is still an estimate.** A client that refreshes
+only when it must does so once per `AccessTokenLifetime`, i.e. 0.67 times in ten
+minutes, so sixty in ten leaves room for roughly ninety devices on one address
+refreshing continuously with no burst at all, and about thirty of them through a
+threefold burst. Refresh is the highest-frequency legitimate route in the
+application — every active device does it automatically — which is why it sits at
+the same value as `password-reset-status-ip` rather than below it.
+
+**These are initial engineering estimates, not production-validated thresholds.**
+No deployment has been selected and no traffic has been observed. The assumption
+this rests on is the number of devices behind a shared address, which is not
+knowable from here. The assumption most likely to require raising it is client
+retry behaviour: a client that retries refresh aggressively multiplies its own
+baseline, and that client lives outside this repository. Reassess both against real
+traffic before relying on the value.
+
+**`refresh-ip` is its own counter.** It is never `login-ip` and never
+`google-auth-ip`, for the same reason every namespace in the application is
+distinct: an exhausted refresh budget must never become a way to lock a user out of
+signing in with a password or a Google token they still hold. `AGENTS.md` requires
+the same separation for the login budgets, and
+`TestRefreshIPRateLimit_DoesNotSpendLoginOrGoogleBudgets` pins it in both
+directions.
+
+**Charging before body binding is deliberate.** A body that cannot be parsed is
+still counted, because the cheapest request a caller can send is one that cannot
+succeed. A charge behind the binding would count only the requests that were
+already well-formed.
+
+### The availability trade-off
+
+The limiter **fails closed**, like every other budget in the application. That is
+the correct default and it is not changed here; the consequence is worth stating
+plainly rather than discovering during an outage.
+
+When Redis is unreachable:
+
+- `/auth/refresh` answers `503 IP_RATE_LIMIT_UNAVAILABLE`. The handler never
+  runs, so no rotation happens and no token is consumed. No `Retry-After` is
+  sent, because there is no window to name.
+- **Users with a still-valid access token are unaffected.** Access tokens are
+  stateless and `middleware.Auth` never consults Redis, so an access token keeps
+  working for its remaining lifetime — up to 15 minutes from the moment of the
+  outage.
+- Once that access token expires, the client cannot renew and the user is locked
+  out until Redis recovers. Recovery is automatic and lossless: the refresh token
+  was never touched.
+- `POST /auth/logout` carries no budget, so a user is never locked into a session.
+
+Before this change, a Redis outage stopped login, registration and password reset
+but left refresh working — the last remaining door. This budget closes that door
+too, so a Redis outage now blocks renewal as well as new sign-ins. That is a
+deliberate trade: a bounded ceiling on the work one stolen credential can cause,
+in exchange for coupling the recovery path to the same Redis every other budget
+already needs.
 
 ## Accepted trade-offs
 

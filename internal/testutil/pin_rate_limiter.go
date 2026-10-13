@@ -476,6 +476,16 @@ const (
 	// outbound fetch inside the API process, while a save pushes its fetch to the
 	// worker. One user saturating one must still be able to use the other.
 	SavedItemEnrichUserNamespace = "saved-item-enrich-user"
+
+	// RefreshIPNamespace is the per-client-address budget on POST /auth/refresh,
+	// spent before body binding and before the handler.
+	//
+	// It is a separate counter from LoginIPNamespace and GoogleAuthIPNamespace
+	// even though all three are authentication-adjacent, for the reason every
+	// other namespace here is separate: an exhausted refresh budget must never
+	// become a way to lock a user out of signing in with a credential they still
+	// hold.
+	RefreshIPNamespace = "refresh-ip"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

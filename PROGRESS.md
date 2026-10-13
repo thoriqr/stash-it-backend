@@ -194,7 +194,7 @@ feature and linked from "Authentication and ownership" above.
 
 The refresh-token rotation design is **unchanged and was not reopened**. A review
 of the feature found no defect in it; the gaps it found were missing test
-coverage, which a separate change closed. Since then one item has been acted on:
+coverage, which a separate change closed. Two items have been acted on since:
 
 - **`GET /auth/sessions` ordering now has a unique tie-breaker — implemented.**
   `ListSessions` orders `last_activity_at DESC, id DESC`. `last_activity_at` is
@@ -211,16 +211,48 @@ coverage, which a separate change closed. Since then one item has been acted on:
   decision recorded as 19f. See "Session listing ordering" in the reference
   document.
 
-One item is still recorded rather than acted on:
+- **`POST /auth/refresh` now has a per-client-address budget — implemented.**
+  Sixty requests per ten minutes under a new `refresh-ip` namespace, mounted as
+  `middleware.IPRateLimit` in front of body binding and in front of the handler.
+  `session.Routes` takes the existing `auth.RateLimiter` and `auth.RegisterModule`
+  passes the one `pinRateLimiter` instance the process already builds, so there is
+  no second Redis connection, secret or limiter.
 
-- **`POST /auth/refresh` has no rate-limit budget.** The module's rule is that a
-  route reachable without a credential carries a per-IP budget unless it is a
-  pure read that consumes nothing — the two continuation reads are deliberately
-  unlimited for exactly that reason. Refresh is neither bounded nor a pure read:
-  every request opens a transaction, and a valid one inserts a refresh-token row
-  and takes an exclusive lock on a session. It belongs to item 4 of the standing
-  order under "Next Step"; a budget would need its own namespace, since `AGENTS.md`
-  forbids sharing a counter across flows and the limiter fails closed.
+  The reason is **rotation chaining**, and it is the one thing about this route
+  that the other session routes do not have. A caller holding a single stolen
+  refresh token can present it, receive its successor, and present that; always
+  using the newest token, they never present one with `replaced_by` set, so reuse
+  detection never fires against them. Every such request is legitimate as far as
+  the service can tell and writes a `refresh_tokens` row that nothing removes. The
+  chain is bounded only by the 90-day absolute lifetime. A **token-keyed** budget
+  would be defeated by that same chaining, and a **user-keyed** one is not
+  available: the user id is only known from the locked row read inside the refresh
+  transaction. IP is the only subject that works.
+
+  `refresh-ip` is independent of `login-ip` and `google-auth-ip`, so an exhausted
+  refresh budget can never lock anyone out of signing in — asserted in both
+  directions.
+
+  **Sixty in ten minutes is an initial engineering estimate, not a validated
+  limit.** It is derived from `AccessTokenLifetime` — 0.67 refreshes per ten
+  minutes per device, so roughly ninety devices at baseline on one address — and
+  matches `password-reset-status-ip`, which exists for the same shape of route. No
+  deployment is selected and no traffic observed. The assumption it rests on is the
+  population behind a shared address; the assumption most likely to require raising
+  it is client retry behaviour, which lives outside this repository.
+
+  **Fail-closed couples refresh to Redis.** During an outage `/auth/refresh`
+  answers `503 IP_RATE_LIMIT_UNAVAILABLE` and rotates nothing, and a user whose
+  access token has since expired cannot renew until Redis recovers — up to 15
+  minutes of grace from the outage, after which they are locked out. Users with a
+  valid access token are unaffected, and logout carries no budget. Before this,
+  a Redis outage blocked login and registration but left refresh working; it no
+  longer does. That trade is deliberate and the full reasoning is in
+  "Rate limiting refresh" in the reference document.
+
+  **No global limiter was introduced**, and no other route's policy changed.
+  Refresh-token retention and pruning remain out of scope and unimplemented — a
+  rate limit bounds the *rate*, not the total.
 
 ### Domain derivation
 
@@ -3600,9 +3632,11 @@ Current order:
    organization existed. It is a product decision, not a mechanism gap, and it
    would be a separate deliberate operation rather than anything the worker does
    on its own.
-4. Rate limiting for endpoints beyond the PIN endpoints, manual login and the
-   Google authentication routes, once there is real traffic to size the limits
-   against.
+4. Rate limiting for endpoints beyond the PIN endpoints, manual login, the Google
+   authentication routes and token refresh, once there is real traffic to size the
+   limits against. Every threshold added so far is an engineering estimate, and
+   the refresh one in particular is derived from the access-token lifetime rather
+   than observed.
 5. Cloud Run deployment specifics for the worker, when a target is chosen.
 
 Rate limiting for the PIN endpoints is implemented and verified: per-email and
