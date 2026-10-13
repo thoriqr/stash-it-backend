@@ -200,7 +200,7 @@ SELECT
 FROM sessions
 WHERE user_id = $1
   AND revoked_at IS NULL
-ORDER BY last_activity_at DESC
+ORDER BY last_activity_at DESC, id DESC
 LIMIT $3
 OFFSET $2
 `
@@ -211,6 +211,17 @@ type ListSessionsParams struct {
 	PageLimit  int32
 }
 
+// Ordered by last_activity_at DESC with id DESC as the tie-breaker.
+//
+// last_activity_at is not unique. It defaults to NOW(), which is constant within
+// a transaction, and UpdateSessionActivity writes NOW() too, so sessions created
+// or refreshed together can carry the same value. Under LIMIT/OFFSET a tied group
+// can be split across a page boundary in an arbitrary order, which is how a
+// client ends up shown one session twice and another not at all.
+//
+// sessions.id is uuidv7() with no overriding trigger, so it is unique and
+// monotonic in creation order: the tie-breaker is both total and the right way
+// round, putting the most recently created session first among equals.
 func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]Session, error) {
 	rows, err := q.db.Query(ctx, listSessions, arg.UserID, arg.PageOffset, arg.PageLimit)
 	if err != nil {

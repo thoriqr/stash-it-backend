@@ -1,11 +1,13 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -222,6 +224,188 @@ func TestSession_ListSessions_ReturnsOnlyCallersActiveSessions(t *testing.T) {
 
 		require.Empty(t, result.Sessions)
 	})
+}
+
+// compareUUIDs orders ids the way PostgreSQL orders a uuid column, by byte value.
+//
+// uuid.UUID is a [16]byte underneath, so a byte comparison is the same ordering
+// the database applies rather than an approximation of it. Building the expected
+// page order with this keeps the test about the query's ORDER BY: it never has to
+// assume anything about which row was inserted first.
+func compareUUIDs(a, b uuid.UUID) int {
+	return bytes.Compare(a[:], b[:])
+}
+
+// Ordering is only reproducible if every row has a distinct position, which is
+// what the id DESC tie-breaker is for. The previous ordering was by
+// last_activity_at alone, and that column is not unique: it defaults to NOW(),
+// which is constant within a transaction, and refresh writes NOW() to it too. A
+// tied group was therefore free to come back in any order.
+//
+// The fixture below is deliberately large. That is not decoration: with only a
+// handful of tied rows, PostgreSQL satisfies a small LIMIT from
+// sessions_user_active_idx, and that index walk happens to emit the tied rows in
+// descending id order — so a small fixture passes with or without the
+// tie-breaker and proves nothing. The group here is big enough that the planner
+// has to sort, and a sort over ties is arbitrary. Measured against the query
+// without the tie-breaker, limits at or below 9 agree with id DESC by accident
+// and limits from 10 upward do not.
+//
+// That also means the assertion is one-directional. If a future plan ever
+// satisfies a given limit from the index again, this test stops detecting the
+// regression; it will not start failing on a correct query.
+func TestSession_ListSessions_OrdersTiedSessionsDeterministically(t *testing.T) {
+	ctx := context.Background()
+	db := sessiondbtest.New(testPool)
+
+	require.NoError(t, db.TruncateSessionData(ctx))
+
+	userID, err := db.CreateSessionUser(ctx, sessiondbtest.CreateSessionUserParams{
+		Email:       "list-tie@test.com",
+		DisplayName: "List Tie",
+	})
+	require.NoError(t, err)
+
+	tied := time.Now().Add(-time.Hour)
+
+	// The newest row, created before everything else. sessions.id is uuidv7(), so
+	// this session has the lowest id in the table — the property the collection
+	// listing's tie-breaker already depends on. It still has to sort first,
+	// because last_activity_at outranks id and id only breaks ties.
+	newest := seedSession(t, db, userID, tied.Add(time.Hour), false)
+
+	// The tied group. Every row below carries one identical last_activity_at, so
+	// nothing but id can decide their order.
+	const tiedCount = 200
+
+	tiedIDs := make([]uuid.UUID, 0, tiedCount)
+
+	for range tiedCount {
+		tiedIDs = append(tiedIDs, seedSession(t, db, userID, tied, false))
+	}
+
+	// Created last, so it has the highest id, and given the oldest timestamp. It
+	// has to sort last for the same reason newest sorts first.
+	oldest := seedSession(t, db, userID, tied.Add(-time.Hour), false)
+
+	// The fixture has to produce a genuine tie. Timestamps round-trip through a
+	// microsecond column, so this compares the rows against each other rather
+	// than against the value the fixture passed in.
+	first, err := db.GetSessionState(ctx, tiedIDs[0])
+	require.NoError(t, err)
+
+	for _, id := range tiedIDs[1:] {
+		stored, err := db.GetSessionState(ctx, id)
+		require.NoError(t, err)
+
+		require.True(
+			t,
+			stored.LastActivityAt.Time.Equal(first.LastActivityAt.Time),
+			"the fixture must produce a real tie for id to decide",
+		)
+	}
+
+	service := session.NewService(
+		session.NewRepository(sessiondb.New(testPool), testPool),
+		security.NewAccessTokenGenerator([]byte("pagination-test-secret")),
+	)
+
+	expectedTied := slices.Clone(tiedIDs)
+	slices.SortFunc(expectedTied, compareUUIDs)
+	slices.Reverse(expectedTied)
+
+	expected := make([]uuid.UUID, 0, len(expectedTied)+2)
+	expected = append(expected, newest)
+	expected = append(expected, expectedTied...)
+	expected = append(expected, oldest)
+
+	total := int64(len(expected))
+
+	// Several page sizes, because a tie only shows up where the planner sorts.
+	// The last two are the ones that break the un-tie-broken query; the small ones
+	// are kept so a change that made small limits sort would be caught too.
+	for _, limit := range []int{5, 10, 25, 50} {
+		pageCount := (len(expected) + limit - 1) / limit
+
+		paged := make([]uuid.UUID, 0, len(expected))
+
+		for page := 1; page <= pageCount; page++ {
+			result, err := service.ListSessions(ctx, userID, page, limit)
+			require.NoError(t, err)
+
+			require.LessOrEqual(
+				t,
+				len(result.Sessions),
+				limit,
+				"limit %d page %d returned more rows than was asked for",
+				limit,
+				page,
+			)
+			require.Equal(
+				t,
+				total,
+				result.Total,
+				"limit %d: the total must not drift while paging an unchanged dataset",
+				limit,
+			)
+
+			for _, s := range result.Sessions {
+				paged = append(paged, s.ID)
+			}
+		}
+
+		require.Equal(
+			t,
+			expected,
+			paged,
+			"limit %d: consecutive pages must concatenate into "+
+				"last_activity_at DESC, id DESC",
+			limit,
+		)
+
+		// Duplicates and omissions are what a broken tie actually caused, so they
+		// are asserted on their own rather than left to the ordering comparison
+		// above — a failure should say which of the two broke.
+		seen := make(map[uuid.UUID]bool, len(paged))
+
+		for _, id := range paged {
+			require.False(
+				t,
+				seen[id],
+				"limit %d: session %s appeared on two pages",
+				limit,
+				id,
+			)
+			seen[id] = true
+		}
+
+		for _, id := range expected {
+			require.True(
+				t,
+				seen[id],
+				"limit %d: session %s was skipped",
+				limit,
+				id,
+			)
+		}
+
+		require.Len(t, seen, len(expected))
+	}
+
+	// A page holding everything the service will return has to agree with the
+	// pages. If the two disagree, no amount of paging can be relied on.
+	all, err := service.ListSessions(ctx, userID, 1, session.SessionListMaxLimit)
+	require.NoError(t, err)
+
+	require.Len(t, all.Sessions, session.SessionListMaxLimit)
+
+	allIDs := make([]uuid.UUID, 0, len(all.Sessions))
+
+	for _, s := range all.Sessions {
+		allIDs = append(allIDs, s.ID)
+	}
+
+	require.Equal(t, expected[:session.SessionListMaxLimit], allIDs)
 }
 
 // The same filter, read through the endpoint, because the handler builds the

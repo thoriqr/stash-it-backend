@@ -187,30 +187,32 @@ the database enforces and which are only application convention, what `FOR UPDAT
 OF rt, s` is locking and why, the accepted trade-offs, and the testing strategy.
 Read it before changing rotation, reuse detection, revocation or session expiry.
 
-### Auth session architecture — documented
+### Auth session architecture — documented, ordering tie-breaker added
 
 `documentation/auth-sessions.md` was written as a reference for the session
-feature and linked from "Authentication and ownership" above. Documentation only:
-no Go code, SQL, migration, generated file, dependency or API contract changed,
-and nothing was committed.
+feature and linked from "Authentication and ownership" above.
 
-The session design itself is **unchanged and was not reopened**. A review of the
-feature found no defect in the refresh-token rotation path; the gaps it found were
-missing test coverage, which a separate change closed. Two things are recorded
-here rather than acted on:
+The refresh-token rotation design is **unchanged and was not reopened**. A review
+of the feature found no defect in it; the gaps it found were missing test
+coverage, which a separate change closed. Since then one item has been acted on:
 
-- **`GET /auth/sessions` ordering has no unique tie-breaker.** The query is
-  `ORDER BY last_activity_at DESC` with `LIMIT`/`OFFSET`, and `last_activity_at`
-  is not unique — it defaults to `NOW()`, which is constant within a transaction,
-  and refresh rewrites it with `NOW()` too. Tied rows can therefore be duplicated
-  or skipped across a page boundary. `sessions.id` is `uuidv7()` and unique, so
-  adding `id DESC` would make the order total, and `AGENTS.md` already requires a
-  unique tie-breaker for the collection listings. **Deferred, not implemented.** Two
-  things a future change should decide rather than assume: the tie-breaker fixes
-  ties but not the fact that the sort key is mutable, so refreshing on any device
-  still reorders rows between page requests; and moving this endpoint to a cursor
-  is a separate product decision already recorded as 19f. Rationale and the full
-  inventory are in the reference document.
+- **`GET /auth/sessions` ordering now has a unique tie-breaker — implemented.**
+  `ListSessions` orders `last_activity_at DESC, id DESC`. `last_activity_at` is
+  not unique — it defaults to `NOW()`, which is constant within a transaction, and
+  refresh rewrites it with `NOW()` too — so a tied group was previously free to
+  come back in any order, and under `LIMIT`/`OFFSET` that is how a client paging
+  a device list could be shown one session twice and another not at all while the
+  dataset never changed. `sessions.id` is `uuidv7()` and unique, and it is also the
+  tie-breaker `AGENTS.md` already requires for the collection listings.
+  **This does not make offset pagination stable against concurrent activity**:
+  the sort key is still mutable, so refreshing on any device can reorder rows
+  between two page requests. Closing that needs an immutable key or keyset
+  pagination, and converting this endpoint to a cursor remains a separate product
+  decision recorded as 19f. See "Session listing ordering" in the reference
+  document.
+
+One item is still recorded rather than acted on:
+
 - **`POST /auth/refresh` has no rate-limit budget.** The module's rule is that a
   route reachable without a credential carries a per-IP budget unless it is a
   pure read that consumes nothing — the two continuation reads are deliberately

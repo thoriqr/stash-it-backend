@@ -157,9 +157,10 @@ the weight it does.
 ### Listing
 
 `ListSessions` and `CountSessions` share one predicate — owned by the caller and
-not revoked — and the page is ordered by `last_activity_at DESC` with
-`LIMIT`/`OFFSET`. They are two statements with no shared snapshot, so `total` can
-disagree with the page if a login or logout lands between them.
+not revoked — and the page is ordered `last_activity_at DESC, id DESC` with
+`LIMIT`/`OFFSET` (see "Session listing ordering" for why the second sort key is
+there). They are two statements with no shared snapshot, so `total` can disagree
+with the page if a login or logout lands between them.
 
 `is_current` is computed in the handler by comparing each returned id against the
 caller's own `sid` claim. It is not stored.
@@ -436,36 +437,34 @@ token rows alone, which is sufficient: the refresh path re-reads
 `sessions.revoked_at` under its lock, so a token that survives the reset cannot
 be used against the sessions it belonged to.
 
-## Deferred improvement: deterministic pagination
+## Session listing ordering
 
-`ListSessions` orders by `last_activity_at DESC` with **no unique tie-breaker**:
+`ListSessions` orders by `last_activity_at DESC, id DESC`:
 
 ```sql
-ORDER BY last_activity_at DESC
+ORDER BY last_activity_at DESC, id DESC
 LIMIT $3 OFFSET $2
 ```
 
-`last_activity_at` is not unique. It defaults to `NOW()`, which is constant within
-a transaction, and `UpdateSessionActivity` writes `NOW()` as well, so two sessions
-created or refreshed together can carry the same value. Combined with
-`LIMIT`/`OFFSET`, a tied group can be split across a page boundary — a client
-paging through a device list can see one session twice and another not at all.
+The `id DESC` tie-breaker is load-bearing, because `last_activity_at` is **not
+unique**. It defaults to `NOW()`, which is constant within a transaction, and
+`UpdateSessionActivity` writes `NOW()` as well, so sessions created or refreshed
+together can carry the same value. Without a second sort key a tied group is free
+to come back in any order, which under `LIMIT`/`OFFSET` is how a client paging
+through a device list can be shown one session twice and another not at all while
+the dataset never changed and the total never moved.
 
-There is a second, independent reason the ordering is unstable: the sort key is a
-**moving** one. Refreshing on any device rewrites `last_activity_at`, so rows
-reorder between page requests even when no timestamps tie.
+`sessions.id` is `uuidv7()` with no overriding trigger, so it is unique and
+monotonic in creation order. The tie-breaker is therefore both total and the right
+way round: among sessions that tie, the most recently created is listed first.
+This is the same rule `AGENTS.md` states for the collection listings.
 
-`sessions.id` is `uuidv7()` and unique, so adding `id DESC` would make the order
-total. That is the fix, and it is the same rule `AGENTS.md` already states for the
-collection listings.
+**What this does not fix.** The sort key is still a **moving** one. Refreshing on
+any device rewrites `last_activity_at`, so rows can reorder between two page
+requests even when no timestamps tie and even though the ordering is now total.
+That is inherent to offset pagination over mutable data, not to the tie-breaker,
+and closing it would need either an immutable sort key or keyset pagination.
 
-**This has not been done.** It is recorded here so the decision is not lost, and
-it is deliberately left as an open improvement rather than folded into this
-change. Two things a future change should decide rather than assume:
-
-- Adding the tie-breaker fixes duplicate/skipped rows caused by ties. It does not
-  make offset pagination stable against concurrent activity, which needs the sort
-  key to be immutable.
-- Converting this endpoint from `page`/`limit` to a cursor is a separate product
-  decision already recorded for the collection listings; `PROGRESS.md` decision
-  19f keeps this endpoint on offset pagination for now.
+Converting this endpoint from `page`/`limit` to a cursor is a separate product
+decision already recorded for the collection listings; `PROGRESS.md` decision 19f
+keeps this endpoint on offset pagination.
