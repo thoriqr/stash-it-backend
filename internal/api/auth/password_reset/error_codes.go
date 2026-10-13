@@ -15,6 +15,44 @@ const (
 	CodePasswordResetContinuationRequired = "PASSWORD_RESET_CONTINUATION_REQUIRED"
 	CodePasswordResetContinuationExpired  = "PASSWORD_RESET_CONTINUATION_EXPIRED"
 
+	// CodePinRateLimitExceeded reports that the shared per-address PIN budget is
+	// spent.
+	//
+	// It is the code registration has always used for the same budget, and it is
+	// deliberately the same string rather than a feature-specific one: there is one
+	// budget, so there is one answer to "this address may not be mailed any more".
+	CodePinRateLimitExceeded = "PIN_RATE_LIMIT_EXCEEDED"
+
+	// CodePinRateLimitUnavailable reports that the per-address PIN budget could
+	// not be evaluated, so no code was issued and no message was sent.
+	CodePinRateLimitUnavailable = "PIN_RATE_LIMIT_UNAVAILABLE"
+
+	// CodePINEmailBudgetExceeded reports that the deployment-wide PIN email
+	// budget is spent.
+	//
+	// It is distinct from CodePinRateLimitExceeded even though both are 429s. One
+	// says this address may not be mailed; the other says the deployment may not
+	// mail anybody, which is an operational condition and not a client's mistake.
+	CodePINEmailBudgetExceeded = "PIN_EMAIL_BUDGET_EXCEEDED"
+
+	// CodePINEmailBudgetUnavailable reports that the deployment-wide budget could
+	// not be evaluated.
+	CodePINEmailBudgetUnavailable = "PIN_EMAIL_BUDGET_UNAVAILABLE"
+
+	// CodePINEmailDeliveryFailed reports that the PIN was persisted but the
+	// message could not be handed to the sender.
+	//
+	// It is a 503 carrying a Retry-After rather than the 500 this path used to
+	// return. The reset is still open, the verification is still pending and
+	// retrying is exactly the right response — which is what a 500 tells a client
+	// not to do — and the wait is knowable, because persisting the code restarted
+	// the resend cooldown.
+	//
+	// It names delivery rather than the sender on purpose. Whether the message was
+	// rejected, deferred or simply lost is not something this application knows,
+	// and a code claiming otherwise would be a claim it cannot support.
+	CodePINEmailDeliveryFailed = "PIN_EMAIL_DELIVERY_FAILED"
+
 	// CodePasswordWorkUnavailable reports that the request was refused because
 	// every slot for expensive password work was occupied, and not because of
 	// anything about the password or the continuation.

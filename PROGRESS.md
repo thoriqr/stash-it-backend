@@ -5,6 +5,51 @@ Handoff notes for the next coding session. Read `AGENTS.md` first, then
 
 This is a handoff, not a diary. Keep it accurate and short.
 
+## Latest change
+
+### 2026-10-14 — Shared PIN email budgets for registration and password reset
+
+Implemented. Reference: **`documentation/pin-email-budgets.md`** — read it before
+changing any part of this policy.
+
+Both features that send mail now draw on two budgets they share, enforced with
+Redis-backed rolling windows: **10 admissions per normalized address per 24
+hours** and **250 deployment-wide per 24 hours**, covering initial issuance and
+resend in both features. They replace registration's previous fixed-window
+`pin-email` budget of five per hour, and add to password reset, which had no
+per-address budget at all.
+
+What changed:
+
+- `internal/ratelimit/sliding.go` — a new `SlidingLimiter`. **`Limiter.Allow` is
+  untouched**; this is a second mechanism with its own script, result type and
+  `rlw` key prefix.
+- `internal/email/budget.go` — `PINEmailBudget`, owning the namespaces, the
+  policies, and the one rule about what may be refunded.
+- `internal/config/email_budget.go` — `PIN_EMAIL_BUDGET_PER_EMAIL_MAX`,
+  `PIN_EMAIL_BUDGET_GLOBAL_MAX`, `PIN_EMAIL_BUDGET_WINDOW_SECONDS`, range-checked
+  at startup. Defaults 10 / 250 / 86400.
+- `email.Sender` is **unchanged**. What was added is `email.NotAttempted` /
+  `email.Attempted`, a marker for a sender that could not have reached a
+  provider. `UnconfiguredSender` now reports it, so a build without a provider no
+  longer drains the deployment budget by failing to send. `DevSender`
+  deliberately does not, because it stands in for a provider that was reached.
+- Ordering is now cooldown → per-address budget → global budget → issue → send.
+  Only the global budget is refunded, and only for failures strictly before the
+  provider could have been contacted.
+- `PIN_RATE_LIMIT_EXCEEDED` keeps its string. New: `PIN_EMAIL_BUDGET_EXCEEDED`,
+  `PIN_EMAIL_BUDGET_UNAVAILABLE`, and `PIN_EMAIL_DELIVERY_FAILED` — the last is a
+  503 with a `Retry-After`, where this path used to return a 500.
+- IP budgets, their policies and trusted-proxy behaviour are **unchanged**.
+
+**The three thresholds are initial engineering estimates, not measured values.**
+No deployment is chosen and no traffic observed; 250 is placed below a candidate
+provider plan's quota, not derived from it. See the caveats with the defaults in
+the reference document's "What they bound" section.
+
+**No provider was selected or integrated.** Brevo remains a candidate. **No
+migration was created or applied**, and nothing was committed.
+
 ## Current Status
 
 ### Saved Item lifecycle — end to end
@@ -1408,23 +1453,32 @@ account's own address.
 
 Both endpoints that send a message are limited:
 `POST /auth/register/verification/:verification_id/pin` and
-`.../resend`. Two independent budgets apply, and neither replaces the other.
+`.../resend`. Three independent budgets apply, and none replaces another.
 
-| Budget    | Subject                    | Limit             | Namespace   | Enforced by            |
-| --------- | -------------------------- | ----------------- | ----------- | ---------------------- |
-| per-email | normalized email address   | 5 per 1 hour      | `pin-email` | `registration` service |
-| per-IP    | resolved client IP address | 20 per 10 minutes | `pin-ip`    | route middleware       |
+| Budget     | Subject                    | Limit             | Namespace         | Enforced by         |
+| ---------- | -------------------------- | ----------------- | ----------------- | ------------------- |
+| per-address| normalized email address   | 10 per 24 hours   | `pin-email`       | service, after load |
+| global     | the deployment             | 250 per 24 hours  | `pin-email-global`| service, before issue |
+| per-IP     | resolved client IP address | 20 per 10 minutes | `pin-ip`          | route middleware    |
 
-Both are Redis-backed fixed-window counters. Both are shared across the two
-endpoints, so switching from `/pin` to `/resend` is not a way to double an
-allowance, and a new `verification_id` for the same address is not a fresh
-per-email budget.
+The two email budgets are **rolling windows**, shared with the password reset
+feature and configured through `PIN_EMAIL_BUDGET_PER_EMAIL_MAX`,
+`PIN_EMAIL_BUDGET_GLOBAL_MAX` and `PIN_EMAIL_BUDGET_WINDOW_SECONDS`. The per-IP
+budget is unchanged and remains a fixed window.
+
+**`documentation/pin-email-budgets.md` is the reference** for this policy: why
+the window rolls, why the per-address budget is shared across the two features,
+the ordering, the refund rule, the sender contract and the error codes. The
+summary below is deliberately short; read that file before changing any of it.
+
+Both email budgets are shared across both endpoints and both features, so
+switching from `/pin` to `/resend` is not a way to double an allowance.
 
 ### Ordering within a request
 
 ```
 IP middleware  ->  handler parses the path  ->  service resolves the verification
-  ->  cooldown  ->  email limiter  ->  issue  ->  send
+  ->  state  ->  cooldown  ->  per-address budget  ->  global budget  ->  issue  ->  send
 ```
 
 - **The per-IP budget is enforced in front of the handler**, not in the service.
@@ -1432,49 +1486,69 @@ IP middleware  ->  handler parses the path  ->  service resolves the verificatio
   verification that does not exist, so a limit enforced there would count only
   well-formed requests. Repeated invalid requests are counted, because the
   cheapest request an attacker can make is one that cannot succeed.
-- **The cooldown is checked before the email budget**, so a caller already being
-  told to wait is not also charged for asking.
-- **A request the IP budget refuses never reaches the email budget.** Verified
-  directly: an exhausted IP budget leaves the per-email counter untouched.
+- **The cooldown is checked before both budgets**, so a caller already being told
+  to wait is not also charged for asking. With ten a day this matters more than
+  the old five an hour: a slot spent on a request that was never going to send is
+  one the user cannot get back until tomorrow.
+- **The per-address budget is checked before the global one**, so a caller refused
+  for its own address does not also spend a slot of the whole deployment's
+  budget. The mirror case is the cheaper error.
+- **A request the IP budget refuses never reaches either email budget.**
 
 The two registration endpoints that do not send a message
 (`POST /auth/register/manual`, `.../verify`, `.../finalize/*`) are deliberately
 not client-limited.
 
+### Reservation and refund
+
+Only the global budget is reserved and refunded. **A slot is given back only when
+the request failed strictly before the provider could have been contacted** — code
+generation failure, issuance transaction failure, or a sender that explicitly
+reports it made no attempt. A sender that was reached and then failed keeps its
+slot, because a timeout does not prove the message was declined.
+
+IP and per-address counters are never refunded.
+
 ### Responses
 
-| Situation                   | Status | Code                                                       | `Retry-After` |
-| --------------------------- | ------ | ---------------------------------------------------------- | ------------- |
-| email budget spent          | 429    | `PIN_RATE_LIMIT_EXCEEDED`                                  | yes           |
-| client budget spent         | 429    | `IP_RATE_LIMIT_EXCEEDED`                                   | yes           |
-| Redis unreachable           | 503    | `PIN_RATE_LIMIT_UNAVAILABLE` / `IP_RATE_LIMIT_UNAVAILABLE` | **no**        |
-| client address unresolvable | 503    | `CLIENT_IP_UNAVAILABLE`                                    | **no**        |
+| Situation                     | Status | Code                                                   | `Retry-After` |
+| ----------------------------- | ------ | ------------------------------------------------------ | ------------- |
+| per-address budget spent      | 429    | `PIN_RATE_LIMIT_EXCEEDED`                              | yes           |
+| global budget spent           | 429    | `PIN_EMAIL_BUDGET_EXCEEDED`                            | yes           |
+| client budget spent           | 429    | `IP_RATE_LIMIT_EXCEEDED`                               | yes           |
+| email budget unusable         | 503    | `PIN_RATE_LIMIT_UNAVAILABLE` / `PIN_EMAIL_BUDGET_UNAVAILABLE` | **no** |
+| code issued, message not sent | 503    | `PIN_EMAIL_DELIVERY_FAILED`                            | yes           |
+| client address unresolvable   | 503    | `CLIENT_IP_UNAVAILABLE`                                | **no**        |
 
-**A limiter that cannot answer is a refusal, not permission.** Allowing on failure
-would let anyone remove the ceiling by causing one. A 503 names no recovery time
-because there is none to name; fabricating a `Retry-After` there would tell a
-client to come back at a moment nobody chose.
+**A budget that cannot be evaluated is a refusal, not permission.** Allowing on
+failure would let anyone remove the ceiling by causing one. A 503 from an
+unevaluated budget names no recovery time because there is none to name;
+fabricating a `Retry-After` there would tell a client to come back at a moment
+nobody chose. A 503 from a delivery failure *does* name one, because the
+issuance transaction restamped the resend cooldown moments earlier.
 
 `Retry-After` is written by `httpx.NewErrorHandler`, the single place a response
-is written, gated on status 429. A value carried on an error object and never
-emitted would leave every client guessing when its own window reopens.
+is written. A value carried on an error object and never emitted would leave every
+client guessing when its own window reopens.
 
 ### `Retry-After` semantics
 
-- **Read from the counter's remaining TTL, not from the configured window.**
-  Reporting the configured window would tell a client arriving late in a window
-  to wait out time that had already passed.
-- **Returned by the same Lua script that increments the counter.** Reading the
-  count and the TTL in two round trips would let the window expire between them,
-  so a caller could be told "over budget" from a count that was real and a TTL
-  that no longer was.
+- **Read from the oldest entry still inside the rolling window**, not from the
+  key's TTL. The TTL is garbage collection, re-armed to a whole window on every
+  call, so a caller arriving late would otherwise be told to wait out time that
+  had already passed.
+- **Returned by the same Lua script that decided the call.** Reading the count and
+  the wait in two round trips would let an entry age out between them, so a caller
+  could be told "over budget" from a count that was real and a wait that no longer
+  was.
 - **Rounded up** to whole seconds, because the header's contract is "not before"
   and rounding down names a moment the window is still closed.
-- **Never negative.** Redis reports a negative PTTL for a key with no expiry and
-  for a key that has gone; neither is a length of time to hand to a client.
-- **A refused request does not extend the window.** The TTL is set only when the
-  counter is created, so a client hammering a closed window cannot hold it open.
-  Verified over three consecutive refusals.
+- **Never negative.**
+- **A refused request does not grow the window.** Refusals are not recorded at
+  all in a rolling window: the window is defined by the entries inside it, so a
+  subject at its maximum stays there until its oldest entry leaves the period,
+  however many refusals arrive in between. Recording them would grow a set meant
+  to hold at most the maximum without bound.
 
 ### Client address resolution
 

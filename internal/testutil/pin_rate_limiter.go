@@ -7,7 +7,6 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
-	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 )
@@ -366,7 +365,13 @@ func ExceededPinRateLimiter() *CountingPinRateLimiter {
 // test that is about one of them has to say what the others do, and spelling them
 // out in every test would obscure which one is under test.
 const (
-	// PinEmailNamespace is the per-address PIN budget, spent inside the service.
+	// PinEmailNamespace is the per-address PIN budget's name.
+	//
+	// It is no longer spent through this limiter: the budget is a rolling window
+	// owned by internal/email and shared with the password reset feature. The name
+	// stays here because a test asserting that the fixed-window limiter is *not*
+	// consulted for it needs to spell the namespace out, and because the rolling
+	// window deliberately reuses the name under its own `rlw` prefix.
 	PinEmailNamespace = "pin-email"
 
 	// PinIPNamespace is the per-client-address PIN budget, spent before the handler.
@@ -531,12 +536,10 @@ func (l *ReleaseFailingPinRateLimiter) Release(
 // compile-time proof that the fakes satisfy every interface that consumes a
 // limiter: the composition root, the feature services, and the route middleware.
 var (
-	_ auth.RateLimiter            = (*PermissivePinRateLimiter)(nil)
-	_ auth.RateLimiter            = (*CountingPinRateLimiter)(nil)
-	_ registration.PinRateLimiter = (*PermissivePinRateLimiter)(nil)
-	_ registration.PinRateLimiter = (*CountingPinRateLimiter)(nil)
-	_ login.LoginRateLimiter      = (*PermissivePinRateLimiter)(nil)
-	_ login.LoginRateLimiter      = (*CountingPinRateLimiter)(nil)
-	_ middleware.RateLimiter      = (*PermissivePinRateLimiter)(nil)
-	_ middleware.RateLimiter      = (*CountingPinRateLimiter)(nil)
+	_ auth.RateLimiter       = (*PermissivePinRateLimiter)(nil)
+	_ auth.RateLimiter       = (*CountingPinRateLimiter)(nil)
+	_ login.LoginRateLimiter = (*PermissivePinRateLimiter)(nil)
+	_ login.LoginRateLimiter = (*CountingPinRateLimiter)(nil)
+	_ middleware.RateLimiter = (*PermissivePinRateLimiter)(nil)
+	_ middleware.RateLimiter = (*CountingPinRateLimiter)(nil)
 )

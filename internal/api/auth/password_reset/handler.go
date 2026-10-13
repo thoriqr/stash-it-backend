@@ -71,6 +71,15 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 // @Description - VERIFICATION_NOT_PENDING
 // @Description - PASSWORD_RESET_NOT_PENDING
 // @Description - PASSWORD_RESET_EXPIRED
+// @Description - VERIFICATION_RESEND_COOLDOWN
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
+// @Description - PIN_RATE_LIMIT_EXCEEDED
+// @Description - PIN_RATE_LIMIT_UNAVAILABLE
+// @Description - PIN_EMAIL_BUDGET_EXCEEDED
+// @Description - PIN_EMAIL_BUDGET_UNAVAILABLE
+// @Description - PIN_EMAIL_DELIVERY_FAILED
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
@@ -80,7 +89,9 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid verification ID"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification or password reset conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address, for this email address, or deployment-wide; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no code was issued, or the code was issued but the message could not be sent; Retry-After reports when to try again"
 // @Router /auth/password-reset/verification/{verification_id}/pin [post]
 func (h *Handler) CreatePIN(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))
@@ -164,6 +175,14 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 // @Description - PASSWORD_RESET_NOT_PENDING
 // @Description - PASSWORD_RESET_EXPIRED
 // @Description - VERIFICATION_RESEND_COOLDOWN
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
+// @Description - PIN_RATE_LIMIT_EXCEEDED
+// @Description - PIN_RATE_LIMIT_UNAVAILABLE
+// @Description - PIN_EMAIL_BUDGET_EXCEEDED
+// @Description - PIN_EMAIL_BUDGET_UNAVAILABLE
+// @Description - PIN_EMAIL_DELIVERY_FAILED
 // @Description - RESOURCE_NOT_FOUND
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
@@ -173,7 +192,9 @@ func (h *Handler) GetVerification(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid verification ID"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification or password reset conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address, for this email address, or deployment-wide; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no code was issued, or the code was issued but the message could not be sent; Retry-After reports when to try again"
 // @Router /auth/password-reset/verification/{verification_id}/resend [post]
 func (h *Handler) ResendVerification(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))

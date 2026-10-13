@@ -182,12 +182,28 @@ func TestService_CreatePIN_EmailSenderError(t *testing.T) {
 
 	appErr := apperror.FromError(err)
 
-	if appErr.Code != apperror.CodeInternal {
+	// A send that fails after the code has been persisted is a 503 with a wait,
+	// not a 500. The reset is still open and the verification still pending, so
+	// retrying is the right response — which is what a 500 tells a client not to
+	// do — and the wait is knowable from the restarted cooldown.
+	if appErr.Code != passwordreset.CodePINEmailDeliveryFailed {
 		t.Errorf(
 			"expected error code %q, got %q",
-			apperror.CodeInternal,
+			passwordreset.CodePINEmailDeliveryFailed,
 			appErr.Code,
 		)
+	}
+
+	if appErr.Status != http.StatusServiceUnavailable {
+		t.Errorf(
+			"expected status %d, got %d",
+			http.StatusServiceUnavailable,
+			appErr.Status,
+		)
+	}
+
+	if appErr.RetryAfterSeconds() == nil {
+		t.Error("expected a retry-after on a delivery failure")
 	}
 }
 

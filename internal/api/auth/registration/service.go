@@ -74,7 +74,7 @@ type service struct {
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
 	emailSender            email.Sender
-	pinRateLimiter         PinRateLimiter
+	pinEmailBudget         PINEmailBudget
 }
 
 func NewService(
@@ -84,7 +84,7 @@ func NewService(
 	passwordHasher *security.PasswordHasher,
 	verificationCodeHasher *security.VerificationCodeHasher,
 	emailSender email.Sender,
-	pinRateLimiter PinRateLimiter,
+	pinEmailBudget PINEmailBudget,
 ) *service {
 	return &service{
 		repository:             repository,
@@ -93,7 +93,7 @@ func NewService(
 		passwordHasher:         passwordHasher,
 		verificationCodeHasher: verificationCodeHasher,
 		emailSender:            emailSender,
-		pinRateLimiter:         pinRateLimiter,
+		pinEmailBudget:         pinEmailBudget,
 	}
 }
 
@@ -236,10 +236,25 @@ func (s *service) CreatePIN(
 //
 // Keeping the workflow in one place is therefore not tidiness. Two copies of
 // this sequence are two rules to keep in step, and the order within it is
-// load-bearing in both directions: the cooldown is checked before the address
-// budget, so a caller already being told to wait is not also charged for asking,
-// and both are checked before anything is issued or sent, so a refusal costs no
-// row and no message.
+// load-bearing in every direction, not just the obvious one:
+//
+//   - The cooldown is checked before either budget, so a caller already being told
+//     to wait is not also charged for asking. This matters more than it did when
+//     the budgets were generous per hour; they are now scarce and measured per
+//     day, and a slot spent on a request that was never going to send is one the
+//     user cannot get back for a day.
+//   - The per-address budget is checked before the deployment-wide one, so a
+//     caller refused for its own address does not also spend a slot of the whole
+//     budget. The mirror case — a global refusal costing a per-address slot — is
+//     the cheaper error, because the per-address allowance is the scarce one and
+//     reaching the global limit already means 250 messages went out.
+//   - Both are checked before anything is issued or sent, so a refusal costs no
+//     row, no generated code and no message.
+//
+// The database transaction and the send are unchanged and still ordered the way
+// they were: the code is persisted before the sender is called. That ordering is
+// what makes the global reservation refundable on a database failure and not on a
+// send failure, and it is why the reservation is taken before either of them.
 func (s *service) issueVerificationCode(
 	ctx context.Context,
 	verificationID uuid.UUID,
@@ -263,15 +278,26 @@ func (s *service) issueVerificationCode(
 		return uuid.Nil, err
 	}
 
-	// The cooldown above is per verification. This is per address, which is the
-	// only shape that bounds what the address actually costs: an address can hold
-	// several verifications, and each would otherwise hand out its own cooldown.
-	if err := s.ensurePinRateAvailable(ctx, verification.Email); err != nil {
+	// The per-address budget. The address is only known here, from the same row
+	// the rest of the flow already needs, so this costs no extra query — and it is
+	// why neither budget is middleware: no part of the request carries it.
+	if _, err := s.reservePINEmailBudget(ctx, verification.Email); err != nil {
+		return uuid.Nil, err
+	}
+
+	// The deployment-wide budget, which is what keeps this application inside a
+	// provider's plan. It is reserved before the issuance transaction because that
+	// transaction invalidates the code the user is currently holding, and a
+	// request refused after it would have cost them that code for nothing.
+	global, err := s.reserveGlobalPINEmailBudget(ctx)
+	if err != nil {
 		return uuid.Nil, err
 	}
 
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {
+		s.refundGlobalPINEmailBudget(ctx, global)
+
 		return uuid.Nil, apperror.Internal(err)
 	}
 
@@ -295,13 +321,31 @@ func (s *service) issueVerificationCode(
 		},
 	)
 	if err != nil {
+		// Nothing has been sent, so the slot is provably unused. This is the one
+		// database-side failure the refund rule covers.
+		s.refundGlobalPINEmailBudget(ctx, global)
+
 		return uuid.Nil, err
 	}
 
 	message := newVerificationPINEmail(verification.Email, code)
 
-	if err := s.emailSender.Send(ctx, message); err != nil {
-		return uuid.Nil, apperror.Internal(err)
+	if err := s.pinEmailBudget.Deliver(
+		ctx,
+		global,
+		s.emailSender,
+		message,
+	); err != nil {
+		// The reservation is not refunded here. Deliver decides that, and it
+		// decides it on what the sender reported: a sender that never tried gives
+		// the slot back, and one that reached a provider and then failed does not,
+		// because a timeout does not prove the message was declined.
+		return uuid.Nil, apperror.ServiceUnavailableWithRetryAfter(
+			CodePINEmailDeliveryFailed,
+			"the verification code could not be sent, please try again shortly",
+			verificationCooldownRemaining(),
+			err,
+		)
 	}
 
 	return verificationID, nil

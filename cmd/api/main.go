@@ -181,6 +181,56 @@ func main() {
 		return
 	}
 
+	// The PIN email budgets live on their own limiter rather than on the fixed-window
+	// one above, because they answer a different question: not how fast a client may
+	// reach a route, but how much mail this deployment may cause over a rolling day.
+	// A fixed window cannot answer the second — a budget spent either side of a
+	// window boundary is twice the budget inside one continuous period — and reusing
+	// the fixed-window limiter with a day-long policy would also have changed the
+	// meaning of every counter that already lives there.
+	//
+	// It reuses the same connection and the same secret, so the process still has one
+	// pool and one Close, and so the HMAC that hides an email address from a Redis
+	// key is the one HMAC this deployment already has to keep secret. Check runs for
+	// the same reason the limiter's own Check does: a budget that cannot be evaluated
+	// is a refusal, so an unreachable Redis must be a startup failure rather than
+	// something the first PIN request discovers.
+	pinEmailLimiter := ratelimit.NewSlidingLimiter(
+		redisClient,
+		[]byte(cfg.VerificationCodeSecret),
+	)
+
+	if err := pinEmailLimiter.Check(ctx); err != nil {
+		log.Error("pin email budget limiter unavailable at startup", zap.Error(err))
+
+		return
+	}
+
+	// One budget instance for the whole process, handed to both features that send
+	// mail. That is the point of the type rather than two configurations that happen
+	// to agree: registration and password reset draw on one per-address allowance and
+	// one deployment-wide allowance, and two instances would be two ceilings.
+	//
+	// The numbers come from configuration rather than from constants because the
+	// global one exists to stay under a delivery provider's plan quota, which belongs
+	// to an account rather than to this repository.
+	pinEmailBudget := email.NewPINEmailBudget(
+		log,
+		pinEmailLimiter,
+		cfg.PINEmailBudget.PerEmailMax,
+		cfg.PINEmailBudget.PerEmailWindow,
+		cfg.PINEmailBudget.GlobalMax,
+		cfg.PINEmailBudget.GlobalWindow,
+	)
+
+	log.Info(
+		"pin email budgets configured",
+		zap.Int64("per_email_max", pinEmailBudget.PerEmailPolicy().Max),
+		zap.Duration("per_email_window", pinEmailBudget.PerEmailPolicy().Window),
+		zap.Int64("global_max", pinEmailBudget.GlobalPolicy().Max),
+		zap.Duration("global_window", pinEmailBudget.GlobalPolicy().Window),
+	)
+
 	// The password-work limiter is built here, beside the rate limiter, because
 	// both are process-wide resources that guard something costlier than a
 	// database round trip. It is built from configuration rather than defaulted
@@ -210,6 +260,7 @@ func main() {
 		emailSender,
 		googleTokenVerifier,
 		pinRateLimiter,
+		pinEmailBudget,
 		passwordWorkLimiter,
 	)
 

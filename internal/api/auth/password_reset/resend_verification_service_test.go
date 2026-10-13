@@ -3,6 +3,7 @@ package password_reset_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -320,11 +321,25 @@ func TestService_ResendVerification_EmailSenderError(t *testing.T) {
 
 	appErr := apperror.FromError(err)
 
-	if appErr.Code != apperror.CodeInternal {
+	// The resend path answers the same way the create path does: a failed send is
+	// a temporary condition with a knowable wait, not a broken server.
+	if appErr.Code != passwordreset.CodePINEmailDeliveryFailed {
 		t.Errorf(
 			"expected error code %q, got %q",
-			apperror.CodeInternal,
+			passwordreset.CodePINEmailDeliveryFailed,
 			appErr.Code,
 		)
+	}
+
+	if appErr.Status != http.StatusServiceUnavailable {
+		t.Errorf(
+			"expected status %d, got %d",
+			http.StatusServiceUnavailable,
+			appErr.Status,
+		)
+	}
+
+	if appErr.RetryAfterSeconds() == nil {
+		t.Error("expected a retry-after on a delivery failure")
 	}
 }

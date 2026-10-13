@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth"
+	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	registrationtestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/registration/generated"
 )
@@ -112,6 +114,29 @@ type pinResponse struct {
 	retryAfter string
 }
 
+// appWithBudget builds the app with a caller-supplied limiter and a
+// caller-supplied PIN email budget.
+//
+// Both are needed together because the two budgets sit on different sides of the
+// handler: the client address budget is spent in front of it and the email budget
+// behind it. A test about one of them has to say what the other does, and there
+// is no default that is right for both.
+func appWithBudget(
+	t *testing.T,
+	limiter auth.RateLimiter,
+	budget auth.PINEmailBudget,
+) (*fiber.App, *testutil.FakeEmailSender) {
+	t.Helper()
+
+	return testutil.NewAppWithPINEmailBudget(
+		testPool,
+		&testutil.FakeEnricher{},
+		nil,
+		limiter,
+		budget,
+	)
+}
+
 // An exhausted email budget is a 429 with the feature's own code, and it costs
 // nothing: no message went out.
 //
@@ -127,12 +152,13 @@ func TestRegisterAPI_PinRateLimit_ExceededReturns429(t *testing.T) {
 
 	verificationID := openPendingRegistration(t, email)
 
-	limiter := testutil.ExceededPinRateLimiter().
-		AllowNamespace(testutil.PinIPNamespace, testutil.NamespaceOutcome{
-			Allowed: true,
-		})
+	limiter := testutil.NewCountingPinRateLimiter()
 
-	app, emailSender := testutil.NewAppWithLimiter(testPool, limiter)
+	app, emailSender := appWithBudget(
+		t,
+		limiter,
+		testutil.NewExhaustedPINEmailBudget(),
+	)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 	require.Equal(t, http.StatusTooManyRequests, result.status)
@@ -143,6 +169,36 @@ func TestRegisterAPI_PinRateLimit_ExceededReturns429(t *testing.T) {
 	require.Equal(t, registration.CodePinRateLimitExceeded, result.code)
 
 	require.Empty(t, emailSender.Messages, "a refused request must send no message")
+}
+
+// An exhausted deployment-wide budget is a different answer from an exhausted
+// address. A client can fix the second by waiting; the first is a condition an
+// operator has to see, and a client can do nothing clever with it.
+func TestRegisterAPI_PinEmailBudget_ExceededReturns429(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	const email = "global-budget-exceeded@example.com"
+
+	verificationID := openPendingRegistration(t, email)
+
+	app, emailSender := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		testutil.NewGloballyExhaustedPINEmailBudget(),
+	)
+
+	result := postPinEndpoint(t, app, verificationID, pinPath)
+	require.Equal(t, http.StatusTooManyRequests, result.status)
+	require.Equal(t, registration.CodePINEmailBudgetExceeded, result.code)
+
+	result = postPinEndpoint(t, app, verificationID, resendPath)
+	require.Equal(t, http.StatusTooManyRequests, result.status)
+	require.Equal(t, registration.CodePINEmailBudgetExceeded, result.code)
+
+	require.Empty(t, emailSender.Messages)
 }
 
 // The email budget reports how long is left in its window, as a header a client
@@ -158,21 +214,46 @@ func TestRegisterAPI_PinRateLimit_ExceededCarriesRetryAfter(t *testing.T) {
 		"ratelimit-retry-after@example.com",
 	)
 
-	limiter := testutil.ExceededPinRateLimiter().
-		AllowNamespace(testutil.PinIPNamespace, testutil.NamespaceOutcome{
-			Allowed: true,
-		}).
-		AllowNamespace(testutil.PinEmailNamespace, testutil.NamespaceOutcome{
-			Allowed:    false,
-			RetryAfter: 754 * time.Second,
-		})
-
-	app, _ := testutil.NewAppWithLimiter(testPool, limiter)
+	app, _ := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		testutil.NewExhaustedPINEmailBudget(),
+	)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 
 	require.Equal(t, http.StatusTooManyRequests, result.status)
-	require.Equal(t, "754", result.retryAfter)
+	require.Equal(
+		t,
+		"42",
+		result.retryAfter,
+		"the wait must be the one the budget reported, not a configured constant",
+	)
+}
+
+// The deployment-wide budget reports its own wait, which is measured against the
+// deployment rather than against one address.
+func TestRegisterAPI_PinEmailBudget_ExceededCarriesRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	verificationID := openPendingRegistration(
+		t,
+		"global-budget-retry-after@example.com",
+	)
+
+	app, _ := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		testutil.NewGloballyExhaustedPINEmailBudget(),
+	)
+
+	result := postPinEndpoint(t, app, verificationID, pinPath)
+
+	require.Equal(t, http.StatusTooManyRequests, result.status)
+	require.Equal(t, "420", result.retryAfter)
 }
 
 // A limiter that cannot answer is a 503, not a 429 and not a success. The
@@ -223,13 +304,13 @@ func TestRegisterAPI_PinRateLimit_UnavailableReturns503(t *testing.T) {
 		"ratelimit-unavailable@example.com",
 	)
 
-	limiter := testutil.UnavailablePinRateLimiter(
-		errors.New("dial tcp: connection refused"),
-	).AllowNamespace(testutil.PinIPNamespace, testutil.NamespaceOutcome{
-		Allowed: true,
-	})
-
-	app, emailSender := testutil.NewAppWithLimiter(testPool, limiter)
+	app, emailSender := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		testutil.NewUnavailablePINEmailBudget(
+			errors.New("dial tcp: connection refused"),
+		),
+	)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 	require.Equal(t, http.StatusServiceUnavailable, result.status)
@@ -238,6 +319,43 @@ func TestRegisterAPI_PinRateLimit_UnavailableReturns503(t *testing.T) {
 	result = postPinEndpoint(t, app, verificationID, resendPath)
 	require.Equal(t, http.StatusServiceUnavailable, result.status)
 	require.Equal(t, registration.CodePinRateLimitUnavailable, result.code)
+
+	require.Empty(t, emailSender.Messages)
+}
+
+// The deployment-wide budget fails the same way, and reports its own code: a
+// client that sees the per-address one has a problem it can wait out, and one
+// that sees this has a problem the deployment has.
+func TestRegisterAPI_PinEmailBudget_UnavailableReturns503(t *testing.T) {
+	ctx := context.Background()
+	db := registrationtestdb.New(testPool)
+
+	require.NoError(t, db.TruncateRegistrationData(ctx))
+
+	verificationID := openPendingRegistration(
+		t,
+		"global-budget-unavailable@example.com",
+	)
+
+	budget := testutil.NewCountingPINEmailBudget()
+	budget.PerEmail = testutil.PINEmailBudgetOutcome{Allowed: true}
+	budget.Global = testutil.PINEmailBudgetOutcome{
+		Err: errors.New("dial tcp: connection refused"),
+	}
+
+	app, emailSender := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		budget,
+	)
+
+	result := postPinEndpoint(t, app, verificationID, pinPath)
+	require.Equal(t, http.StatusServiceUnavailable, result.status)
+	require.Equal(t, registration.CodePINEmailBudgetUnavailable, result.code)
+
+	result = postPinEndpoint(t, app, verificationID, resendPath)
+	require.Equal(t, http.StatusServiceUnavailable, result.status)
+	require.Equal(t, registration.CodePINEmailBudgetUnavailable, result.code)
 
 	require.Empty(t, emailSender.Messages)
 }
@@ -255,11 +373,13 @@ func TestRegisterAPI_PinRateLimit_UnavailableCarriesNoRetryAfter(t *testing.T) {
 		"ratelimit-no-retry-after@example.com",
 	)
 
-	limiter := testutil.UnavailablePinRateLimiter(
-		errors.New("dial tcp: connection refused"),
+	app, _ := appWithBudget(
+		t,
+		testutil.NewCountingPinRateLimiter(),
+		testutil.NewUnavailablePINEmailBudget(
+			errors.New("dial tcp: connection refused"),
+		),
 	)
-
-	app, _ := testutil.NewAppWithLimiter(testPool, limiter)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 
@@ -297,7 +417,7 @@ func TestRegisterAPI_PinRateLimit_WithinBudgetIsUnchanged(t *testing.T) {
 }
 
 // Both endpoints spend the same email budget. Ageing the cooldown is what lets
-// the second endpoint reach the limiter at all; without it the cooldown would
+// the second endpoint reach the budget at all; without it the cooldown would
 // refuse first and this would prove nothing.
 func TestRegisterAPI_PinRateLimit_BothEndpointsShareOneEmailBudget(t *testing.T) {
 	ctx := context.Background()
@@ -310,8 +430,9 @@ func TestRegisterAPI_PinRateLimit_BothEndpointsShareOneEmailBudget(t *testing.T)
 	verificationID := openPendingRegistration(t, email)
 
 	limiter := testutil.NewCountingPinRateLimiter()
+	budget := testutil.NewCountingPINEmailBudget()
 
-	app, emailSender := testutil.NewAppWithLimiter(testPool, limiter)
+	app, emailSender := appWithBudget(t, limiter, budget)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 	require.Equal(t, http.StatusCreated, result.status)
@@ -326,11 +447,11 @@ func TestRegisterAPI_PinRateLimit_BothEndpointsShareOneEmailBudget(t *testing.T)
 
 	require.Len(t, emailSender.Messages, 2)
 
-	// Both spent the same subject, so the real limiter counts them together
-	// rather than each endpoint having a budget of its own.
-	emailSubjects := limiter.SubjectsIn(testutil.PinEmailNamespace)
-	require.Len(t, emailSubjects, 2)
-	require.Equal(t, emailSubjects[0], emailSubjects[1])
+	// Both spent the same subject, so the real budget counts them together
+	// rather than each endpoint having an allowance of its own.
+	require.Equal(t, 2, budget.PerEmailCount())
+	require.Len(t, budget.PerEmailSubjects, 2)
+	require.Equal(t, budget.PerEmailSubjects[0], budget.PerEmailSubjects[1])
 
 	// And each request also spent the client address budget, on the route's own
 	// namespace, which is a separate counter rather than a second reading of the
@@ -356,7 +477,9 @@ func TestRegisterAPI_IPRateLimit_BothEndpointsShareOneIPBudget(t *testing.T) {
 			Allowed: false,
 		})
 
-	app, emailSender := testutil.NewAppWithLimiter(testPool, limiter)
+	budget := testutil.NewCountingPINEmailBudget()
+
+	app, emailSender := appWithBudget(t, limiter, budget)
 
 	result := postPinEndpoint(t, app, verificationID, pinPath)
 	require.Equal(t, http.StatusTooManyRequests, result.status)
@@ -366,14 +489,20 @@ func TestRegisterAPI_IPRateLimit_BothEndpointsShareOneIPBudget(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, result.status)
 	require.Equal(t, "IP_RATE_LIMIT_EXCEEDED", result.code)
 
-	// Both requests spent the IP budget and neither reached the email budget.
+	// Both requests spent the IP budget and neither reached either email budget.
 	// That is the ordering property: a request the client limit refuses cannot
 	// also spend the per-address budget behind it.
 	require.Equal(t, 2, limiter.CallsIn(testutil.PinIPNamespace))
 	require.Zero(
 		t,
-		limiter.CallsIn(testutil.PinEmailNamespace),
+		budget.PerEmailCount(),
 		"a request refused by the client budget must not reach the address budget",
+	)
+	require.Zero(
+		t,
+		budget.GlobalCount(),
+		"a request refused by the client budget must not spend the "+
+			"deployment budget",
 	)
 
 	require.Empty(t, emailSender.Messages)
@@ -529,8 +658,13 @@ func TestRegisterAPI_IPRateLimit_SpoofedHeadersCannotBypassTheLimit(t *testing.T
 	}
 }
 
-// The IP budget and the email budget are independent counters, so exhausting
-// one must not spend the other.
+// The IP budget and the email budget are independent counters, so reaching one
+// must not spend the other, and neither is charged twice for one request.
+//
+// Both are fakes here on purpose. What is under test is which component a
+// request spends, and a real Redis would only add a second counter to watch
+// without making that clearer. The budgets' own Redis behaviour is proven in the
+// budget's own integration tests.
 func TestRegisterAPI_IPRateLimit_DoesNotConsumeTheEmailBudget(t *testing.T) {
 	ctx := context.Background()
 	db := registrationtestdb.New(testPool)
@@ -543,11 +677,20 @@ func TestRegisterAPI_IPRateLimit_DoesNotConsumeTheEmailBudget(t *testing.T) {
 	)
 
 	limiter := testutil.NewCountingPinRateLimiter()
+	budget := testutil.NewCountingPINEmailBudget()
 
-	app, emailSender := testutil.NewAppWithLimiter(testPool, limiter)
+	app, emailSender := testutil.NewAppWithPINEmailBudget(
+		testPool,
+		&testutil.FakeEnricher{},
+		nil,
+		limiter,
+		budget,
+	)
 
 	// Enough requests to be more than the email budget would allow.
-	for range registration.PinRateLimitMax + 2 {
+	const attempts = config.DefaultPINEmailBudgetPerEmailMax + 2
+
+	for range attempts {
 		req := httptest.NewRequest(
 			http.MethodPost,
 			"/auth/register/verification/"+verificationID.String()+pinPath,
@@ -565,20 +708,32 @@ func TestRegisterAPI_IPRateLimit_DoesNotConsumeTheEmailBudget(t *testing.T) {
 		)
 	}
 
-	// The email budget was spent once per request that actually reached the
-	// service, and the IP budget once per request that reached the route.
+	// The IP budget is spent once per request that reached the route. It is
+	// mounted as middleware, so it knows nothing about the address being mailed.
 	require.Equal(
 		t,
-		registration.PinRateLimitMax+2,
-		limiter.CallsIn(testutil.PinEmailNamespace),
-	)
-	require.Equal(
-		t,
-		registration.PinRateLimitMax+2,
+		attempts,
 		limiter.CallsIn(testutil.PinIPNamespace),
 	)
+	require.Equal(
+		t,
+		0,
+		limiter.CallsIn(testutil.PinEmailNamespace),
+		"the per-address PIN budget is no longer spent through this limiter",
+	)
 
-	require.Len(t, emailSender.Messages, registration.PinRateLimitMax+2)
+	// The email budget is spent once per request that actually reached the
+	// service, on the address rather than on the verification, and the
+	// deployment-wide budget once alongside it.
+	require.Equal(t, attempts, budget.PerEmailCount())
+	require.Equal(t, attempts, budget.GlobalCount())
+	require.Len(t, budget.PerEmailSubjects, attempts)
+
+	for _, subject := range budget.PerEmailSubjects {
+		require.Equal(t, "ip-not-email@example.com", subject)
+	}
+
+	require.Len(t, emailSender.Messages, attempts)
 }
 
 // The retry delay a refused caller receives must be a whole number of seconds a

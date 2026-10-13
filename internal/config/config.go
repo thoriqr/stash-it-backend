@@ -47,6 +47,16 @@ type Config struct {
 	// configuration error.
 	PasswordWorkConcurrency int
 	PasswordWorkWait        time.Duration
+
+	// PINEmailBudget bounds how many verification PIN emails may be issued, per
+	// address and in total, over a rolling window.
+	//
+	// It is loaded and validated here for the same reason as the values above and
+	// for one more: the global figure is chosen to stay under a delivery
+	// provider's plan quota, and that quota belongs to an account rather than to
+	// this repository. It changes when the plan does, and it must not change by
+	// requiring a release.
+	PINEmailBudget PINEmailBudget
 }
 
 func Load() (Config, error) {
@@ -102,6 +112,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	pinEmailBudget, err := loadPINEmailBudget()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -115,5 +130,7 @@ func Load() (Config, error) {
 
 		PasswordWorkConcurrency: passwordWorkConcurrency,
 		PasswordWorkWait:        passwordWorkWait,
+
+		PINEmailBudget: pinEmailBudget,
 	}, nil
 }

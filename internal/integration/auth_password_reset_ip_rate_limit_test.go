@@ -56,6 +56,22 @@ func resetApp(
 	return testutil.NewAppWithTrustedProxy(testPool, limiter)
 }
 
+// resetAppWithBudget builds the app with a caller-supplied PIN email budget as
+// well as a caller-supplied limiter.
+//
+// It exists because this feature now spends the same per-address budget as
+// registration, so a test about that budget has to be able to see what was spent
+// rather than running against a budget that admits everything.
+func resetAppWithBudget(
+	t *testing.T,
+	limiter auth.RateLimiter,
+	budget auth.PINEmailBudget,
+) (*fiber.App, *testutil.FakeEmailSender) {
+	t.Helper()
+
+	return testutil.NewAppWithTrustedProxyAndBudget(testPool, limiter, budget)
+}
+
 // postResetFrom opens a password reset from the given client address.
 func postResetFrom(
 	t *testing.T,
@@ -650,7 +666,8 @@ func TestPasswordResetIPRateLimit_UnlimitedReadRouteSpendsNoBudget(t *testing.T)
 	require.NoError(t, db.TruncatePasswordResetData(ctx))
 
 	limiter := testutil.NewCountingPinRateLimiter()
-	app, _ := resetApp(t, limiter)
+	budget := testutil.NewCountingPINEmailBudget()
+	app, _ := resetAppWithBudget(t, limiter, budget)
 
 	const address = "198.51.100.86"
 
@@ -680,7 +697,8 @@ func TestPasswordResetIPRateLimit_UnlimitedReadRouteSpendsNoBudget(t *testing.T)
 
 	// The budgeted routes were not called here either.
 	require.Zero(t, limiter.CallsIn(testutil.LoginIPNamespace))
-	require.Zero(t, limiter.CallsIn(testutil.PinEmailNamespace))
+	require.Zero(t, budget.PerEmailCount())
+	require.Zero(t, budget.GlobalCount())
 }
 
 // An unusable limiter refuses verification rather than letting it through.

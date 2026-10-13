@@ -3,11 +3,11 @@ package password_reset
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/security"
@@ -18,6 +18,7 @@ type Service struct {
 	passwordHasher         *security.PasswordHasher
 	verificationCodeHasher *security.VerificationCodeHasher
 	emailSender            email.Sender
+	pinEmailBudget         PINEmailBudget
 }
 
 type RequestPasswordResetResult struct {
@@ -38,17 +39,24 @@ func NewService(
 	passwordHasher *security.PasswordHasher,
 	verificationCodeHasher *security.VerificationCodeHasher,
 	emailSender email.Sender,
+	pinEmailBudget PINEmailBudget,
 ) *Service {
 	return &Service{
 		repository:             repository,
 		passwordHasher:         passwordHasher,
 		verificationCodeHasher: verificationCodeHasher,
 		emailSender:            emailSender,
+		pinEmailBudget:         pinEmailBudget,
 	}
 }
 
 func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
+	// Delegates rather than repeating the rule. This feature and registration
+	// share one PIN email budget, and a shared budget is only shared if both
+	// features agree on what an address's key is — PostgreSQL compares TEXT
+	// case-sensitively, so a difference here would silently give every user two
+	// budgets instead of one. The definition lives with the feature that owns it.
+	return registration.NormalizeEmail(email)
 }
 
 // dummyVerificationID returns a placeholder verification id for an address that
@@ -210,12 +218,31 @@ func (s *Service) CreatePIN(
 // exactly the same terms.
 //
 // Keeping the workflow in one place is therefore not tidiness. Two copies of
-// this sequence are two rules to keep in step, and these two were already out of
-// step: /pin performed every step below without observing the cooldown /resend
-// enforced, which made the choice of route the way around it. The order inside
-// the sequence is load-bearing for the same reason — the cooldown is checked
-// before the code is generated and before anything is written, so a refusal
-// costs no row, no generated code and no message.
+// this sequence are two rules to keep in step, and the order inside it is
+// load-bearing in every direction:
+//
+//   - The cooldown is checked before either budget, so a caller already being told
+//     to wait is not also charged for asking. This matters most here of anywhere:
+//     the per-address allowance is ten a day, so a slot spent on a request that
+//     was never going to send is one this user cannot get back for a day.
+//   - The per-address budget is checked before the deployment-wide one, so a
+//     caller refused for its own address does not also spend a slot of the whole
+//     budget. The mirror case is the cheaper error.
+//   - Both are checked before anything is issued or sent, so a refusal costs no
+//     row, no generated code and no message.
+//
+// The database transaction and the send keep the order they had: the code is
+// persisted before the sender is called. That is what makes the global reservation
+// refundable on a database failure and not on a send failure, and it is why the
+// reservation is taken before either.
+//
+// **Known limitation, deliberately not fixed here.** Because the code is
+// persisted first, a delivery failure leaves the user with no usable code — the
+// previous one was invalidated by the same transaction — and with the cooldown
+// restarted. The cost is bounded and small: this flow returns the same
+// verification id when re-requested, so the recovery is one cooldown and one more
+// call rather than a new flow. Repairing the persisted state would mean changing
+// when a code becomes active, which is a schema and security change of its own.
 func (s *Service) issueVerificationCode(
 	ctx context.Context,
 	verificationID uuid.UUID,
@@ -236,8 +263,28 @@ func (s *Service) issueVerificationCode(
 		return uuid.Nil, err
 	}
 
+	// The per-address budget. This feature had none until now, which left the
+	// per-IP budget as the only ceiling on what one mailbox could be sent — a
+	// ceiling an attacker defeats by spreading requests across source addresses.
+	// The address is read from the row the flow already loads, so it costs no
+	// extra query, and it is why neither budget is middleware.
+	if _, err := s.reservePINEmailBudget(ctx, verification.Email); err != nil {
+		return uuid.Nil, err
+	}
+
+	// The deployment-wide budget, which is what keeps this application inside a
+	// provider's plan. It is reserved before the issuance transaction because that
+	// transaction invalidates the code the user is currently holding, and a
+	// request refused after it would have cost them that code for nothing.
+	global, err := s.reserveGlobalPINEmailBudget(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
 	code, err := s.verificationCodeHasher.Generate()
 	if err != nil {
+		s.refundGlobalPINEmailBudget(ctx, global)
+
 		return uuid.Nil, apperror.Internal(err)
 	}
 
@@ -261,6 +308,9 @@ func (s *Service) issueVerificationCode(
 		},
 	)
 	if err != nil {
+		// Nothing has been sent, so the slot is provably unused.
+		s.refundGlobalPINEmailBudget(ctx, global)
+
 		return uuid.Nil, err
 	}
 
@@ -269,8 +319,21 @@ func (s *Service) issueVerificationCode(
 		code,
 	)
 
-	if err := s.emailSender.Send(ctx, message); err != nil {
-		return uuid.Nil, apperror.Internal(err)
+	if err := s.pinEmailBudget.Deliver(
+		ctx,
+		global,
+		s.emailSender,
+		message,
+	); err != nil {
+		// The reservation is not refunded here. Deliver decides that on what the
+		// sender reported: a sender that never tried gives the slot back, and one
+		// that reached a provider and then failed does not.
+		return uuid.Nil, apperror.ServiceUnavailableWithRetryAfter(
+			CodePINEmailDeliveryFailed,
+			"the verification code could not be sent, please try again shortly",
+			verificationCooldownRemaining(),
+			err,
+		)
 	}
 
 	return verificationID, nil

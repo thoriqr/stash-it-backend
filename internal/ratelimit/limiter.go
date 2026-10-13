@@ -372,7 +372,12 @@ func toInt64(value any) (int64, error) {
 	}
 }
 
-// key builds the Redis key for a subject.
+// key builds the Redis key for a subject under this limiter's own prefix.
+func (l *Limiter) key(namespace string, subject string) string {
+	return deriveKey(keyPrefix, namespace, l.secret, subject)
+}
+
+// deriveKey builds a Redis key for a subject.
 //
 // The subject is HMAC'd rather than used directly, so a key never carries an email
 // address or anything else a caller would not want readable by anything holding
@@ -383,13 +388,18 @@ func toInt64(value any) (int64, error) {
 //
 // The error from a limiter names the namespace and never this value, so the key
 // does not need to be recoverable from anything this package returns.
-func (l *Limiter) key(namespace string, subject string) string {
-	mac := hmac.New(sha256.New, l.secret)
+//
+// It is a package function rather than a method on one limiter because the
+// sliding-window limiter derives its keys the same way and from a different
+// prefix. Sharing the derivation is what keeps the two from drifting apart on
+// the one property that decides whether a key is safe to write at all.
+func deriveKey(prefix, namespace string, secret []byte, subject string) string {
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(subject))
 
 	return fmt.Sprintf(
 		"%s:%s:%s",
-		keyPrefix,
+		prefix,
 		namespace,
 		hex.EncodeToString(mac.Sum(nil)),
 	)

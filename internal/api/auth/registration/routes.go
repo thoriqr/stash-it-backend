@@ -7,10 +7,19 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 )
 
+// Routes mounts the registration flow.
+//
+// The limiter parameter is the per-client-address budget, and it is
+// middleware.RateLimiter rather than anything this package declares: the service
+// no longer spends a limiter at all, because the per-address PIN budget is a
+// sliding window owned by internal/email and shared with the password reset
+// feature. What remains here is the request-rate dimension, which is the
+// middleware's own concern, and passwordreset.Routes takes the same type for the
+// same reason.
 func Routes(
 	router fiber.Router,
 	h *Handler,
-	pinRateLimiter PinRateLimiter,
+	pinRateLimiter middleware.RateLimiter,
 ) {
 	router.Post("/register/manual", h.RegisterManual)
 

@@ -60,7 +60,7 @@ func newTestServiceWithHasher(
 		hasher,
 		security.NewVerificationCodeHasher([]byte("test-secret")),
 		email.Sender(nil),
-		NewFakePinRateLimiter(),
+		NewFakePINEmailBudget(),
 	)
 
 	return testService{
@@ -68,7 +68,7 @@ func newTestServiceWithHasher(
 		socialService:       service,
 		repository:          repository,
 		emailSender:         &FakeEmailSender{},
-		pinRateLimiter:      NewFakePinRateLimiter(),
+		pinEmailBudget:      NewFakePINEmailBudget(),
 	}, repository
 }
 

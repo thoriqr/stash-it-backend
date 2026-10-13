@@ -353,8 +353,9 @@ func TestRegistrationIPRateLimit_NewNamespacesDoNotSpendExistingBudgets(t *testi
 	require.NoError(t, db.TruncateRegistrationData(ctx))
 
 	limiter := testutil.NewCountingPinRateLimiter()
+	budget := testutil.NewCountingPINEmailBudget()
 
-	app, _ := testutil.NewAppWithTrustedProxy(testPool, limiter)
+	app, _ := testutil.NewAppWithTrustedProxyAndBudget(testPool, limiter, budget)
 
 	const address = "198.51.100.65"
 
@@ -389,7 +390,16 @@ func TestRegistrationIPRateLimit_NewNamespacesDoNotSpendExistingBudgets(t *testi
 	// dimension, so it is the only one that reaches the email budget. A verify or
 	// finalize request never consults it, which is what keeps a mistyped PIN from
 	// spending the allowance that governs mailing a new one.
-	require.Equal(t, 1, limiter.CallsIn(testutil.PinEmailNamespace))
+	//
+	// The budget is a separate component from the limiter rather than another
+	// namespace on it, so this is asserted through it directly.
+	require.Equal(t, 1, budget.PerEmailCount())
+	require.Equal(t, 1, budget.GlobalCount())
+	require.Zero(
+		t,
+		limiter.CallsIn(testutil.PinEmailNamespace),
+		"the per-address PIN budget is no longer spent through this limiter",
+	)
 
 	// And the budgets belonging to other flows were never touched at all.
 	require.Zero(t, limiter.CallsIn(testutil.GoogleAuthIPNamespace))

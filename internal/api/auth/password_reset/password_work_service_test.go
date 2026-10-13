@@ -15,6 +15,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 )
 
 // Finalization hashes a password exactly as login verifies one and registration
@@ -58,15 +59,19 @@ func newTestServiceWithHasher(
 
 	repository := mocks.NewMockRepository(ctrl)
 
+	budget := testutil.NewCountingPINEmailBudget()
+
 	return &testService{
 		passwordResetService: passwordreset.NewService(
 			repository,
 			hasher,
 			security.NewVerificationCodeHasher([]byte("test-secret")),
 			&FakeEmailSender{},
+			budget,
 		),
-		repository:  repository,
-		emailSender: &FakeEmailSender{},
+		repository:     repository,
+		emailSender:    &FakeEmailSender{},
+		pinEmailBudget: budget,
 	}
 }
 

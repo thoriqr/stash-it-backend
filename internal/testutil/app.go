@@ -42,16 +42,51 @@ func (f *fakeGoogleTokenVerifier) Verify(
 	return f.identity, f.err
 }
 
+// FakeEmailSender records the messages it was asked to deliver.
+//
+// The append is guarded because a concurrent test drives several requests through
+// the app at once, and an unguarded append is a genuine race rather than a merely
+// untidy one. FakeEnricher below is guarded for the same reason. `Messages` stays
+// an exported field so the tests that already read it do not have to change; those
+// reads happen between requests, never during one.
 type FakeEmailSender struct {
+	mutex    sync.Mutex
 	Messages []email.Message
+
+	// err, when set, is returned instead of delivering. It exists so a test can
+	// reach the paths that only a failed send takes — the delivery-failure
+	// response, and the refund rule's two branches.
+	err error
 }
 
 func (s *FakeEmailSender) Send(
 	ctx context.Context,
 	message email.Message,
 ) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.err != nil {
+		return s.err
+	}
+
 	s.Messages = append(s.Messages, message)
+
 	return nil
+}
+
+// Fail makes every subsequent send return err, and is how a test reaches a
+// delivery that fails.
+//
+// It is a method rather than an exported field so that arming it and the handler
+// reading it are ordered by the same mutex. Setting a bare field from the test
+// goroutine and reading it inside the handler is a data race the detector would
+// flag, and the ordering the test intends would not be guaranteed.
+func (s *FakeEmailSender) Fail(err error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.err = err
 }
 
 // FakeEnricher stands in for the real extraction layer.
@@ -118,6 +153,7 @@ func NewAppWithLimiter(
 		&FakeEnricher{},
 		nil,
 		pinRateLimiter,
+		NewPermissivePINEmailBudget(),
 		NewPasswordWorkLimiter(),
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
@@ -139,6 +175,7 @@ func NewAppWithLimiters(
 		&FakeEnricher{},
 		nil,
 		pinRateLimiter,
+		NewPermissivePINEmailBudget(),
 		passwordWorkLimiter,
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
@@ -159,11 +196,31 @@ func NewAppWithTrustedProxy(
 	pool *pgxpool.Pool,
 	pinRateLimiter auth.RateLimiter,
 ) (*fiber.App, *FakeEmailSender) {
+	return NewAppWithTrustedProxyAndBudget(
+		pool,
+		pinRateLimiter,
+		NewPermissivePINEmailBudget(),
+	)
+}
+
+// NewAppWithTrustedProxyAndBudget builds the trusted-proxy app with a
+// caller-supplied PIN email budget as well.
+//
+// It exists for the test that shows the per-client-address budget and the
+// per-address email budget are separate counters: proving that needs both to be
+// real, and the email budget is only real when it is the production component
+// over a real Redis rather than a fake that admits everything.
+func NewAppWithTrustedProxyAndBudget(
+	pool *pgxpool.Pool,
+	pinRateLimiter auth.RateLimiter,
+	pinEmailBudget auth.PINEmailBudget,
+) (*fiber.App, *FakeEmailSender) {
 	return newApp(
 		pool,
 		&FakeEnricher{},
 		nil,
 		pinRateLimiter,
+		pinEmailBudget,
 		NewPasswordWorkLimiter(),
 		config.Config{
 			ClientIPSource:     config.ClientIPSourceProxy,
@@ -222,11 +279,40 @@ func NewAppWithEnqueuerAndLimiter(
 	enqueuer saveditem.SavedItemEnqueuer,
 	pinRateLimiter auth.RateLimiter,
 ) (*fiber.App, *FakeEmailSender) {
+	return NewAppWithPINEmailBudget(
+		pool,
+		enricher,
+		enqueuer,
+		pinRateLimiter,
+		NewPermissivePINEmailBudget(),
+	)
+}
+
+// NewAppWithPINEmailBudget builds the app with a caller-supplied PIN email budget
+// as well.
+//
+// The budget is injected as one object rather than one per feature for the same
+// reason the limiter is: production hands registration and password reset the same
+// instance, and that sharing is the property a test about shared budgets needs to
+// be able to assert. A test that supplied two would be asserting a wiring
+// production does not have.
+//
+// Every other constructor in this file defaults it to a permissive budget, so a
+// suite about anything other than PIN email budgets does not have to stand up
+// Redis to assert something else.
+func NewAppWithPINEmailBudget(
+	pool *pgxpool.Pool,
+	enricher enrichment.MetadataEnricher,
+	enqueuer saveditem.SavedItemEnqueuer,
+	pinRateLimiter auth.RateLimiter,
+	pinEmailBudget auth.PINEmailBudget,
+) (*fiber.App, *FakeEmailSender) {
 	return newApp(
 		pool,
 		enricher,
 		enqueuer,
 		pinRateLimiter,
+		pinEmailBudget,
 		NewPasswordWorkLimiter(),
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
@@ -246,6 +332,7 @@ func newApp(
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
 	pinRateLimiter auth.RateLimiter,
+	pinEmailBudget auth.PINEmailBudget,
 	passwordWorkLimiter *security.PasswordWorkLimiter,
 	cfg config.Config,
 ) (*fiber.App, *FakeEmailSender) {
@@ -254,6 +341,15 @@ func newApp(
 	log, err := logger.New("development")
 	if err != nil {
 		panic(err)
+	}
+
+	// The budget policy is resolved from configuration in the real binary. A test
+	// builds its Config literal field by field and would otherwise carry a
+	// zero-valued budget, which validates as nothing at all — so the defaults are
+	// filled in here, once, and every test app gets the same numbers production
+	// gets when the environment says nothing.
+	if cfg.PINEmailBudget == (config.PINEmailBudget{}) {
+		cfg.PINEmailBudget = config.DefaultPINEmailBudget()
 	}
 
 	proxySettings := cfg.ProxySettings()
@@ -293,6 +389,7 @@ func newApp(
 		emailSender,
 		googleTokenVerifier,
 		pinRateLimiter,
+		pinEmailBudget,
 		passwordWorkLimiter,
 	)
 

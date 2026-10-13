@@ -20,6 +20,7 @@ type testService struct {
 	passwordResetService *passwordreset.Service
 	repository           *mocks.MockRepository
 	emailSender          *FakeEmailSender
+	pinEmailBudget       *testutil.CountingPINEmailBudget
 }
 
 func newTestService(t *testing.T) *testService {
@@ -28,6 +29,7 @@ func newTestService(t *testing.T) *testService {
 	ctrl := gomock.NewController(t)
 	repository := mocks.NewMockRepository(ctrl)
 	emailSender := &FakeEmailSender{}
+	budget := testutil.NewCountingPINEmailBudget()
 
 	return &testService{
 		passwordResetService: passwordreset.NewService(
@@ -35,9 +37,11 @@ func newTestService(t *testing.T) *testService {
 			testutil.NewPasswordHasher(),
 			security.NewVerificationCodeHasher([]byte("test-secret")),
 			emailSender,
+			budget,
 		),
-		repository:  repository,
-		emailSender: emailSender,
+		repository:     repository,
+		emailSender:    emailSender,
+		pinEmailBudget: budget,
 	}
 }
 

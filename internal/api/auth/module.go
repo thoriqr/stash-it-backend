@@ -47,6 +47,25 @@ type RateLimiter interface {
 	) (ratelimit.Result, error)
 }
 
+// PINEmailBudget is what every feature that sends mail is bounded by.
+//
+// It is the union of what registration and password reset consume, declared here
+// rather than imported from either of them because this package is the one that
+// wires them together and it is the only place that can guarantee they were given
+// the *same* budget. Two features handed separate instances — or two separately
+// configured ones — would each have their own ceiling, and the whole point of
+// sharing is that there is one.
+//
+// It is distinct from RateLimiter above on purpose. That one counts request rates
+// in fixed windows and is mounted in front of handlers; this one bounds how much
+// mail leaves over a rolling day, and it is spent inside services where the
+// recipient is finally known. Conflating them would put a message budget on a
+// dimension that has no message in it.
+type PINEmailBudget interface {
+	registration.PINEmailBudget
+	passwordreset.PINEmailBudget
+}
+
 func RegisterModule(
 	app *fiber.App,
 	pool *pgxpool.Pool,
@@ -55,6 +74,7 @@ func RegisterModule(
 	emailSender email.Sender,
 	googleTokenVerifier login.GoogleTokenVerifier,
 	pinRateLimiter RateLimiter,
+	pinEmailBudget PINEmailBudget,
 	passwordWorkLimiter *security.PasswordWorkLimiter,
 ) {
 	authRouter := app.Group("/auth")
@@ -118,7 +138,7 @@ func RegisterModule(
 		passwordHasher,
 		verificationCodeHasher,
 		emailSender,
-		pinRateLimiter,
+		pinEmailBudget,
 	)
 
 	registrationHandler := registration.NewHandler(
@@ -172,6 +192,7 @@ func RegisterModule(
 		passwordHasher,
 		verificationCodeHasher,
 		emailSender,
+		pinEmailBudget,
 	)
 
 	passwordResetHandler := passwordreset.NewHandler(

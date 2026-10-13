@@ -2,6 +2,7 @@ package registration_test
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -23,20 +24,21 @@ type testService struct {
 	sessionCreator         *sessionmocks.MockSessionCreator
 	verificationCodeHasher *security.VerificationCodeHasher
 	emailSender            *FakeEmailSender
-	pinRateLimiter         *FakePinRateLimiter
+	pinEmailBudget         *FakePINEmailBudget
 }
 
 func newTestService(t *testing.T) testService {
 	t.Helper()
 
-	return newTestServiceWithLimiter(t, NewFakePinRateLimiter())
+	return newTestServiceWithBudget(t, NewFakePINEmailBudget())
 }
 
-// newTestServiceWithLimiter builds the service over a caller-supplied limiter, so
-// a test can model an exhausted budget or a limiter that cannot answer.
-func newTestServiceWithLimiter(
+// newTestServiceWithBudget builds the service over a caller-supplied budget, so a
+// test can model an exhausted budget, one that cannot answer, or one whose
+// deployment-wide reservation is refused while the per-address one is not.
+func newTestServiceWithBudget(
 	t *testing.T,
-	pinRateLimiter *FakePinRateLimiter,
+	pinEmailBudget *FakePINEmailBudget,
 ) testService {
 	t.Helper()
 
@@ -61,7 +63,7 @@ func newTestServiceWithLimiter(
 		testutil.NewPasswordHasher(),
 		verificationCodeHasher,
 		emailSender,
-		pinRateLimiter,
+		pinEmailBudget,
 	)
 
 	return testService{
@@ -71,78 +73,179 @@ func newTestServiceWithLimiter(
 		sessionCreator:         sessionCreator,
 		verificationCodeHasher: verificationCodeHasher,
 		emailSender:            emailSender,
-		pinRateLimiter:         pinRateLimiter,
+		pinEmailBudget:         pinEmailBudget,
 	}
 }
 
-// FakePinRateLimiter stands in for the Redis-backed limiter.
+// FakePINEmailBudget stands in for the shared sliding-window budget.
 //
-// It records what it was asked so a test can assert which namespace and subject a
-// service spent, which is how the two endpoints are shown to share one budget.
-type FakePinRateLimiter struct {
+// It records what it was asked so a test can assert which address a service spent
+// the per-address budget against and how many deployment-wide reservations it
+// took — which is how both issuance endpoints and both features are shown to draw
+// on one budget.
+//
+// The two reservations have independent outcomes on purpose. The whole point of
+// the ordering rules is that one can refuse while the other admits, and a fake
+// that could not express that could not test them.
+type FakePINEmailBudget struct {
 	mutex sync.Mutex
 
-	// Allowed is what Allow reports. False models an exhausted budget.
-	Allowed bool
+	// PerEmailAllowed is what the per-address reservation reports. False models an
+	// address that has spent its budget.
+	PerEmailAllowed bool
 
-	// Err, when set, is returned instead of Allowed.
-	Err error
+	// PerEmailErr, when set, is returned instead of a decision.
+	PerEmailErr error
 
-	// RetryAfter is the remaining window reported on a refusal.
-	RetryAfter time.Duration
+	// PerEmailRetryAfter is the wait reported on a per-address refusal.
+	PerEmailRetryAfter time.Duration
 
-	// Subjects records every subject asked about, in order.
-	Subjects []string
+	// GlobalAllowed is what the deployment-wide reservation reports.
+	GlobalAllowed bool
 
-	// Namespaces records every namespace asked about, in order.
-	Namespaces []string
+	// GlobalErr, when set, is returned instead of a decision.
+	GlobalErr error
 
-	// Policies records every policy given, in order.
-	Policies []ratelimit.Policy
+	// GlobalRetryAfter is the wait reported on a deployment-wide refusal.
+	GlobalRetryAfter time.Duration
 
-	counts map[string]int64
+	// DeliverErr, when set, is what Deliver reports without calling the sender.
+	// It stands in for a sender that was reached and failed.
+	DeliverErr error
+
+	// PerEmailSubjects records every address a per-address reservation was asked
+	// about, in order.
+	PerEmailSubjects []string
+
+	// PerEmailCalls counts per-address reservations.
+	PerEmailCalls int
+
+	// GlobalCalls counts deployment-wide reservations.
+	GlobalCalls int
+
+	// Refunds records every admission handed back, in order.
+	Refunds []string
+
+	admissionSeq int
 }
 
-func NewFakePinRateLimiter() *FakePinRateLimiter {
-	return &FakePinRateLimiter{Allowed: true}
+func NewFakePINEmailBudget() *FakePINEmailBudget {
+	return &FakePINEmailBudget{
+		PerEmailAllowed: true,
+		GlobalAllowed:   true,
+	}
 }
 
-func (l *FakePinRateLimiter) Allow(
+func (l *FakePINEmailBudget) ReservePerEmail(
 	_ context.Context,
-	namespace string,
-	subject string,
-	policy ratelimit.Policy,
-) (ratelimit.Result, error) {
+	normalizedEmail string,
+) (ratelimit.SlidingResult, error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
-	l.Namespaces = append(l.Namespaces, namespace)
-	l.Subjects = append(l.Subjects, subject)
-	l.Policies = append(l.Policies, policy)
+	l.PerEmailCalls++
+	l.PerEmailSubjects = append(l.PerEmailSubjects, normalizedEmail)
 
-	if l.counts == nil {
-		l.counts = map[string]int64{}
+	if l.PerEmailErr != nil {
+		return ratelimit.SlidingResult{}, l.PerEmailErr
 	}
 
-	l.counts[namespace]++
-
-	if l.Err != nil {
-		return ratelimit.Result{}, l.Err
+	if !l.PerEmailAllowed {
+		return ratelimit.SlidingResult{
+			Count:      int64(l.PerEmailCalls),
+			Allowed:    false,
+			RetryAfter: l.PerEmailRetryAfter,
+		}, nil
 	}
 
-	return ratelimit.Result{
-		Count:      l.counts[namespace],
-		Allowed:    l.Allowed,
-		RetryAfter: l.RetryAfter,
+	return ratelimit.SlidingResult{
+		Count:     int64(l.PerEmailCalls),
+		Allowed:   true,
+		Admission: "per-email-" + normalizedEmail,
 	}, nil
 }
 
-// CallsIn returns how many times the given namespace was consulted.
-func (l *FakePinRateLimiter) CallsIn(namespace string) int {
+func (l *FakePINEmailBudget) ReserveGlobal(
+	_ context.Context,
+) (ratelimit.SlidingResult, error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
-	return int(l.counts[namespace])
+	l.GlobalCalls++
+
+	if l.GlobalErr != nil {
+		return ratelimit.SlidingResult{}, l.GlobalErr
+	}
+
+	if !l.GlobalAllowed {
+		return ratelimit.SlidingResult{
+			Count:      int64(l.GlobalCalls),
+			Allowed:    false,
+			RetryAfter: l.GlobalRetryAfter,
+		}, nil
+	}
+
+	return ratelimit.SlidingResult{
+		Count:     int64(l.GlobalCalls),
+		Allowed:   true,
+		Admission: l.nextAdmission(),
+	}, nil
+}
+
+func (l *FakePINEmailBudget) RefundGlobal(
+	_ context.Context,
+	admission string,
+) error {
+	// An empty admission is not a refund, and recording it would let a test count
+	// one that the production component would never have performed.
+	if admission == "" {
+		return nil
+	}
+
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	l.Refunds = append(l.Refunds, admission)
+
+	return nil
+}
+
+// Deliver applies the real refund rule rather than a simplified one, so a test
+// that injects this fake is not blind to the one behaviour it is not meant to be
+// permissive about: whether a failed send gives the deployment-wide slot back.
+func (l *FakePINEmailBudget) Deliver(
+	ctx context.Context,
+	global ratelimit.SlidingResult,
+	sender email.Sender,
+	message email.Message,
+) error {
+	var err error
+
+	if l.DeliverErr != nil {
+		err = l.DeliverErr
+	} else {
+		err = sender.Send(ctx, message)
+	}
+
+	if err != nil && !email.Attempted(err) {
+		_ = l.RefundGlobal(ctx, global.Admission)
+	}
+
+	return err
+}
+
+func (l *FakePINEmailBudget) nextAdmission() string {
+	l.admissionSeq++
+
+	return "global-" + strconv.Itoa(l.admissionSeq)
+}
+
+// RefundCount returns how many reservations were handed back.
+func (l *FakePINEmailBudget) RefundCount() int {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	return len(l.Refunds)
 }
 
 type FakeEmailSender struct {

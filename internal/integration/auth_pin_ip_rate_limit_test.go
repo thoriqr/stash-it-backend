@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	registration "github.com/thoriqr/stash-it-backend/internal/api/auth/registration"
+	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	registrationtestdb "github.com/thoriqr/stash-it-backend/internal/testutil/db/registration/generated"
@@ -37,13 +38,26 @@ import (
 // exist. That is deliberate rather than a shortcut: the client budget is spent in
 // front of the handler, so those requests are counted in full, and nothing is
 // issued for them. Reaching for the client budget through a real verification
-// instead would run into the per-email budget — 5 an hour against 20 in ten
+// instead would run into the per-address budget — 10 a day against 20 in ten
 // minutes — and every assertion would be about whichever budget was smaller.
 
 const ipRateLimitTestSecret = "ip-rate-limit-integration-secret"
 
-// newIPLimitedApp builds the app with the real Redis-backed limiter, clearing the
-// limiter's keys first so one test cannot see another's counts.
+// emailBudgetWindow is the rolling window the test budget runs on. It is one
+// minute rather than a day so a test that needs an entry to age out does not have
+// to wait for it, and nothing here depends on the real value: the point of these
+// tests is which counter decides a request, not how long a real deployment would
+// hold its budget.
+const emailBudgetWindow = time.Minute
+
+// newIPLimitedApp builds the app with the real Redis-backed limiter and the real
+// Redis-backed PIN email budget, clearing both limiters' keys first so one test
+// cannot see another's counts.
+//
+// Both are real because the tests here are about which of the two counters
+// decides a request. A permissive budget would make the per-address budget
+// invisible, and every "the client budget, not the email one" assertion would be
+// asserting nothing.
 func newIPLimitedApp(t *testing.T) (*fiber.App, *testutil.FakeEmailSender) {
 	t.Helper()
 
@@ -52,9 +66,21 @@ func newIPLimitedApp(t *testing.T) (*fiber.App, *testutil.FakeEmailSender) {
 
 	resetRateLimitKeys(t, client)
 
-	return testutil.NewAppWithTrustedProxy(
+	require.NoError(
+		t,
+		testutil.ResetPINEmailBudgetKeys(t.Context(), client),
+	)
+
+	return testutil.NewAppWithTrustedProxyAndBudget(
 		testPool,
 		ratelimit.New(client, []byte(ipRateLimitTestSecret)),
+		testutil.NewRedisPINEmailBudget(
+			client,
+			[]byte(ipRateLimitTestSecret),
+			config.DefaultPINEmailBudgetPerEmailMax,
+			emailBudgetWindow,
+			config.DefaultPINEmailBudgetGlobalMax,
+		),
 	)
 }
 
@@ -386,11 +412,11 @@ func TestPinIPRateLimit_EmailBudgetIsSeparate(t *testing.T) {
 
 	const address = "198.51.100.40"
 
-	// The email budget allows 5 an hour and the client budget allows 20 in ten
-	// minutes, so six requests with the cooldown aged between them is past the
-	// email budget and well within the client one. The sixth must be refused for
+	// The email budget allows 10 a day and the client budget allows 20 in ten
+	// minutes, so eleven requests with the cooldown aged between them is past the
+	// email budget and well within the client one. The eleventh must be refused for
 	// saying so, which is only observable if the two counters are separate.
-	for range registration.PinRateLimitMax {
+	for range config.DefaultPINEmailBudgetPerEmailMax {
 		outcome := postFrom(t, app, verificationID, address)
 		require.Equal(t, http.StatusCreated, outcome.status, outcome.code)
 
@@ -410,8 +436,12 @@ func TestPinIPRateLimit_EmailBudgetIsSeparate(t *testing.T) {
 	)
 	require.Equal(t, "PIN_RATE_LIMIT_EXCEEDED", outcome.code)
 
-	// Six attempts against a budget of five, so exactly five were issued.
-	require.Len(t, emailSender.Messages, registration.PinRateLimitMax)
+	// Eleven attempts against a budget of ten, so exactly ten were issued.
+	require.Len(
+		t,
+		emailSender.Messages,
+		config.DefaultPINEmailBudgetPerEmailMax,
+	)
 
 	// The client budget was spent too, but nowhere near its own limit: it counted
 	// all six and refused none. If the two were one counter, the sixth would have

@@ -3,33 +3,52 @@ package registration
 import (
 	"context"
 
+	"github.com/thoriqr/stash-it-backend/internal/email"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 )
 
-// PinRateLimiter is the budget one email address has for having a PIN issued.
+// PINEmailBudget is what bounds how much PIN mail this feature may cause.
 //
-// It is keyed by the address rather than by the verification being acted on,
-// which is the whole reason it exists. The verification cooldown is per
-// verification, so an address with many of them would otherwise be able to
-// request a code from each in turn and the cooldown would not slow it down at all.
-// Keying by address makes one budget cover every verification for that address.
+// It is two budgets behind one component, and both are spent by the same two
+// routes. The per-address budget is shared with the password reset feature — the
+// two features issue the same act to the same kind of recipient, so they draw on
+// one allowance — and the deployment-wide budget is shared with everything that
+// sends mail at all.
 //
-// The same limiter instance also backs the per-IP budget mounted on the routes
-// themselves, under a different namespace. Two budgets on one limiter is the
-// intended shape: they guard different dimensions, neither stands in for the
-// other, and keeping them on one component means one Redis and one script own
-// both.
+// **It declares its own interface rather than importing one, and the password
+// reset feature declares an identical one.** That duplication is the point: a
+// consumer names what it consumes, so a change to either declaration cannot
+// silently change what the other depends on. The method sets must stay the same
+// or the wiring stops satisfying both.
 //
-// The subject passed in is expected to be an already-normalized address. The
-// limiter hashes whatever it is given and never interprets it, so producing the
-// canonical form stays with the feature that owns the rule for it.
-type PinRateLimiter interface {
-	Allow(
+// Deliver is here rather than being called as sender.Send followed by a refund so
+// that the rule about which failures may be refunded lives in one place instead of
+// once per feature. Two copies of a rule about provider failures is two rules to
+// keep in step, and the direction they could drift in is the one that costs
+// money.
+//
+// The subject passed to ReservePerEmail is expected to be an already-normalized
+// address. The budget hashes whatever it is given and never interprets it, so
+// producing the canonical form stays with this feature, which owns the rule for
+// what an address is. That rule is what makes the shared budget a shared budget:
+// two features keying the same allowance on two spellings would each have their
+// own.
+type PINEmailBudget interface {
+	ReservePerEmail(
 		ctx context.Context,
-		namespace string,
-		subject string,
-		policy ratelimit.Policy,
-	) (ratelimit.Result, error)
+		normalizedEmail string,
+	) (ratelimit.SlidingResult, error)
+
+	ReserveGlobal(ctx context.Context) (ratelimit.SlidingResult, error)
+
+	RefundGlobal(ctx context.Context, admission string) error
+
+	Deliver(
+		ctx context.Context,
+		global ratelimit.SlidingResult,
+		sender email.Sender,
+		message email.Message,
+	) error
 }
 
 type VerificationSubjectType string
