@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -18,12 +19,33 @@ import (
 // search route.
 func Routes(
 	router fiber.Router,
-	handler *Handler,
+	h *Handler,
 	verifier *security.AccessTokenVerifier,
+	userRateLimiter middleware.RateLimiter,
 ) {
+	// Search is bounded per authenticated user, and mounted between Auth and the
+	// handler for the reason every other user budget in this application is
+	// mounted there: the subject is the verified identity and there is nothing to
+	// key on before Auth has run, and a refused request must never reach the scan
+	// it guards. A refusal performs no query at all, so there is no partial state
+	// to reconcile.
+	//
+	// It is keyed on the account rather than on an address because the work is
+	// proportional to the rows that account owns. See SearchUserRateLimitMax for
+	// what that costs and for why nothing else bounds it.
+	searchUserLimit := middleware.UserRateLimit(
+		userRateLimiter,
+		searchUserRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    SearchUserRateLimitMax,
+			Window: SearchUserRateLimitWindow,
+		},
+	)
+
 	router.Get(
 		"/",
 		middleware.Auth(verifier),
-		handler.Search,
+		searchUserLimit,
+		h.Search,
 	)
 }

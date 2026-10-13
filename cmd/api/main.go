@@ -286,6 +286,7 @@ func main() {
 		app,
 		pool,
 		cfg,
+		pinRateLimiter,
 	)
 
 	// Enrichment fetches a URL the user supplied, so it goes through the guarded

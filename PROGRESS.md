@@ -558,6 +558,61 @@ Search behavior:
 - Collections cap at 5.
 - Cursor pagination, autocomplete, and suggestions are not implemented.
 
+#### Search is now bounded per authenticated user — implemented
+
+`GET /search` carries a per-user budget: **30 requests per minute**, namespace
+`search-user`, mounted as `middleware.UserRateLimit` after `Auth` and before the
+handler. `search.RegisterModule` takes the existing `pinRateLimiter` instance, so
+there is no second Redis connection, secret or limiter.
+
+The reason is that search is the only route whose cost is proportional to
+something the caller owns rather than being a fixed amount of work. Both search
+statements are user-scoped, so no cross-user scan is possible — but the plan
+examines **all** of that account's rows. The predicate is three `ILIKE '%q%'`
+clauses and three `word_similarity()` calls per row, and the *function* form of
+`word_similarity` cannot be answered from the trigram index, so the index changes
+the access path without reducing rows read. `migrations/000023` already records
+this: domain and url are "simply resolved by a sequential scan on the user-scoped
+subset".
+
+**What was measured, and what it is not.** The cost profile was established
+against a **disposable PostgreSQL container** running this project's baseline
+schema, with synthetic accounts at 100 / 1,000 / 10,000 / 50,000 saved items and
+`EXPLAIN (ANALYZE, BUFFERS)` on the exact production SQL:
+
+| Saved items | Plan | Rows examined | Buffers | Execution time |
+| ----------- | ---- | ------------- | ------- | -------------- |
+| 100 | Index Scan | 100 | 19 hit | 1.8 ms |
+| 1,000 | Index Scan | 1,000 | 65 hit | 17.9 ms |
+| 10,000 | Bitmap Heap Scan | 10,000 | 471 hit | 184 ms |
+| 50,000 | Parallel Seq Scan | 50,000 | 2,821 hit | 483 ms |
+
+A query matching **nothing** at 50,000 items cost 452 ms — the scan does not get
+cheaper for a selective query, because selectivity cannot be used. All buffers
+were `shared hit`, so this is CPU rather than I/O. The sort is not a factor
+(top-N heapsort, 44 kB). `SearchCollections` measured 0.094 ms and needs nothing.
+
+**That benchmark does not guarantee production latency.** It ran on an idle
+developer machine, not production hardware under concurrent load, against
+synthetic data, and the pool is unconfigured (`max(4, NumCPU)` connections), so
+absolute numbers will differ. What it establishes is the *shape* — cost linear in
+the account's own rows — not an optimal rate.
+
+**Thirty a minute is a provisional threshold, not a measured optimum.** It is
+chosen to sit comfortably above interactive use (a search box is person-driven,
+so even deliberate exploration is a handful of requests a minute), at three times
+the enrichment budget because the two routes have opposite interactive
+characters. The one-minute window matches the enrichment convention and means a
+burst costs a user a minute of degraded search rather than ten. Reassess against
+real traffic.
+
+**Follow-up not done here:** making the query cheap rather than rationing it.
+Indexing `domain` and `url` with `pg_trgm`, or moving the fuzzy predicate to the
+index-accelerated `<%` operator, would reduce the scan itself and is the better
+fix on the merits. It is a schema and query change, was explicitly out of scope
+for this task, and would not have prevented the connection-exhaustion shape in the
+meantime — which is why the limiter landed first.
+
 Search is complete and committed.
 
 ### SQLC generated-model cleanup

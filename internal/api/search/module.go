@@ -6,6 +6,7 @@ import (
 
 	searchdb "github.com/thoriqr/stash-it-backend/internal/api/search/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -16,6 +17,7 @@ func RegisterModule(
 	app *fiber.App,
 	pool *pgxpool.Pool,
 	cfg config.Config,
+	userRateLimiter middleware.RateLimiter,
 ) {
 	searchQueries := searchdb.New(pool)
 
@@ -39,5 +41,6 @@ func RegisterModule(
 		app.Group("/search"),
 		searchHandler,
 		accessTokenVerifier,
+		userRateLimiter,
 	)
 }

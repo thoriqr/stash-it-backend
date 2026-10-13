@@ -486,6 +486,16 @@ const (
 	// become a way to lock a user out of signing in with a credential they still
 	// hold.
 	RefreshIPNamespace = "refresh-ip"
+
+	// SearchUserNamespace is the per-user budget on GET /search, spent after Auth
+	// and before the handler.
+	//
+	// It is separate from both saved-item budgets because the three routes cost
+	// different things: a save inserts and enqueues, enrichment performs an
+	// outbound fetch in the API process, and a search scans a user-scoped row set
+	// whose size the account itself controls. A user who has saturated one must
+	// still be able to use the others.
+	SearchUserNamespace = "search-user"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

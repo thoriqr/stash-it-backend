@@ -412,6 +412,7 @@ func newApp(
 		app,
 		pool,
 		cfg,
+		pinRateLimiter,
 	)
 
 	enrichment.RegisterModule(

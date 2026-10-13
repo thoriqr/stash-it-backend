@@ -23,6 +23,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/security"
+	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
 )
 
@@ -47,6 +48,10 @@ func newHandlerTestApp(
 		app.Group("/search"),
 		search.NewHandler(search.NewService(repo)),
 		security.NewAccessTokenVerifier([]byte(handlerTestAccessTokenSecret)),
+		// The handler tests are about the handler's responses, not about the budget
+		// in front of it. A limiter that admits everything keeps them testing one
+		// thing; `internal/integration` covers the budget itself against real Redis.
+		testutil.NewPermissivePinRateLimiter(),
 	)
 
 	return app
