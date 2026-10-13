@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,6 +102,109 @@ func TestSession_CreateSession(t *testing.T) {
 	assert.False(t, createdSession.RevokedAt.Valid)
 	assert.True(t, createdRefreshToken.IssuedAt.Valid)
 	assert.False(t, createdRefreshToken.ReplacedBy.Valid)
+}
+
+// CreateSession writes two rows in one transaction: the session, and the refresh
+// token that belongs to it. The second write is the one that can fail, because
+// token_hash carries a unique index, so this is the write whose failure has to
+// undo the first.
+//
+// The service cannot produce that failure on its own — a refresh token is 32
+// random bytes, so the hashes never collide in practice — which is exactly why it
+// is worth forcing here. The trigger is a real constraint violation rather than
+// an injected fault, so what is exercised is the transaction the repository
+// actually opens, not a stand-in for it.
+func TestSession_CreateSession_RollsBackWhenRefreshTokenInsertFails(t *testing.T) {
+	ctx := context.Background()
+
+	db := sessiondbtest.New(testPool)
+
+	require.NoError(t, db.TruncateSessionData(ctx))
+
+	userID, err := db.CreateSessionUser(ctx, sessiondbtest.CreateSessionUserParams{
+		Email:       "rollback@test.com",
+		DisplayName: "Rollback Test User",
+	})
+	require.NoError(t, err)
+
+	repository := session.NewRepository(
+		sessiondb.New(testPool),
+		testPool,
+	)
+
+	// Held by the first, successful CreateSession below, and collided on by the
+	// second.
+	const duplicateHash = "duplicate-refresh-token-hash"
+
+	newSessionParams := func() sessiondb.CreateSessionParams {
+		return sessiondb.CreateSessionParams{
+			UserID:   userID,
+			Platform: "web",
+			AbsoluteExpiresAt: pgtype.Timestamptz{
+				Time:  time.Now().Add(24 * time.Hour),
+				Valid: true,
+			},
+		}
+	}
+
+	createdSession, createdRefreshToken, err := repository.CreateSession(
+		ctx,
+		newSessionParams(),
+		duplicateHash,
+	)
+	require.NoError(t, err)
+
+	_, _, err = repository.CreateSession(
+		ctx,
+		newSessionParams(),
+		duplicateHash,
+	)
+	require.Error(t, err)
+
+	// The failure is the unique index and not something incidental, so this test
+	// cannot quietly start passing for a different reason than the one it names.
+	var pgErr *pgconn.PgError
+
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(
+		t,
+		"refresh_tokens_token_hash_idx",
+		pgErr.ConstraintName,
+		"the duplicate hash must be what fails the insert",
+	)
+
+	appErr := apperror.FromError(err)
+
+	require.Equal(t, http.StatusInternalServerError, appErr.Status)
+	require.Equal(t, apperror.CodeInternal, appErr.Code)
+
+	// No orphan. The sessions insert succeeded inside the transaction that then
+	// failed, so a missing rollback would leave a second session row with no
+	// token on it, and this count would be 2.
+	sessionCount, err := db.CountAllSessionsForUser(ctx, userID)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		int64(1),
+		sessionCount,
+		"a failed CreateSession must not leave a session row behind",
+	)
+
+	// And the row that did survive is the one that should have: still owned by
+	// the user, still active, and still the parent of the only token.
+	survivingSession, err := db.GetSessionState(ctx, createdSession.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, userID, survivingSession.UserID)
+	require.False(t, survivingSession.RevokedAt.Valid)
+
+	survivingTokens, err := db.GetRefreshTokensForSession(ctx, createdSession.ID)
+	require.NoError(t, err)
+
+	require.Len(t, survivingTokens, 1)
+	require.Equal(t, createdRefreshToken.ID, survivingTokens[0].ID)
+	require.False(t, survivingTokens[0].ReplacedBy.Valid)
 }
 
 // There is deliberately no unlocked refresh-token read to test. The tests below
@@ -381,6 +485,61 @@ func TestSession_RefreshToken_Replaced(t *testing.T) {
 		replacedToken.ID,
 		uuid.UUID(currentOldToken.ReplacedBy.Bytes),
 	)
+
+	// The session is revoked. This is the whole point of the policy, and it is a
+	// separate write from the one the refused request made, so it has to be read
+	// back rather than inferred from the 401: returning SESSION_REVOKED commits
+	// nothing here, and only the committed write ends the session. The
+	// concurrent case in auth_session_concurrency_test.go asserts the same thing
+	// for the racing path; this is the sequential one, which is what an attacker
+	// replaying a stolen token actually exercises.
+	updatedSession, err := db.GetSessionState(ctx, sessionRecord.ID)
+	require.NoError(t, err)
+
+	require.True(
+		t,
+		updatedSession.RevokedAt.Valid,
+		"reuse of a rotated token must leave the session revoked",
+	)
+
+	// The whole token chain, which is the only way to tell "revoked the session
+	// and stopped" from "revoked the session and rotated anyway".
+	//
+	// Two rows, the same two that were seeded. A rejected reuse must not issue a
+	// successor, and must not disturb the link the previous rotation wrote: the
+	// token that was already replaced still names the token that replaced it, and
+	// the token that was live is still live, so nothing was consumed.
+	tokens, err := db.GetRefreshTokensForSession(ctx, sessionRecord.ID)
+	require.NoError(t, err)
+
+	require.Len(
+		t,
+		tokens,
+		2,
+		"a rejected reuse must not issue a refresh token",
+	)
+
+	tokenIDs := make(map[uuid.UUID]bool, len(tokens))
+	for _, token := range tokens {
+		tokenIDs[token.ID] = true
+	}
+
+	require.True(t, tokenIDs[oldToken.ID], "the rotated token must still be there")
+	require.True(
+		t,
+		tokenIDs[replacedToken.ID],
+		"the live token must still be there",
+	)
+
+	for _, token := range tokens {
+		if token.ID == replacedToken.ID {
+			require.False(
+				t,
+				token.ReplacedBy.Valid,
+				"the live token must not be rotated by a refused reuse",
+			)
+		}
+	}
 }
 
 func TestSession_RefreshToken_AbsoluteExpired(t *testing.T) {

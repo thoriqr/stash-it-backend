@@ -107,3 +107,16 @@ WHERE id = sqlc.arg(id);
 UPDATE sessions
 SET last_activity_at = sqlc.arg(last_activity_at)
 WHERE id = sqlc.arg(id);
+
+-- name: CountAllSessionsForUser :one
+-- Every session row a user has, revoked ones included.
+--
+-- CountUserSessions in the login and registration test packages filters on
+-- revoked_at IS NULL, which is right for asserting that a login created exactly
+-- one usable session and wrong for asserting that a failed CreateSession left
+-- nothing behind: the row a rollback has to remove is not revoked, so either
+-- count would find it, but a test about orphan rows should not depend on that
+-- coincidence to notice one.
+SELECT COUNT(*)
+FROM sessions
+WHERE user_id = sqlc.arg(user_id);

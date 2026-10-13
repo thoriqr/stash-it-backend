@@ -181,6 +181,45 @@ shaped for paging over a collection rather than describing one item.
   does not disclose whether another user's ID exists.
 - Invalid UUID path parameters return 400 `BAD_REQUEST`.
 
+**`documentation/auth-sessions.md` is the reference** for the session feature:
+how access tokens, refresh tokens and the session row relate, which guarantees
+the database enforces and which are only application convention, what `FOR UPDATE
+OF rt, s` is locking and why, the accepted trade-offs, and the testing strategy.
+Read it before changing rotation, reuse detection, revocation or session expiry.
+
+### Auth session architecture — documented
+
+`documentation/auth-sessions.md` was written as a reference for the session
+feature and linked from "Authentication and ownership" above. Documentation only:
+no Go code, SQL, migration, generated file, dependency or API contract changed,
+and nothing was committed.
+
+The session design itself is **unchanged and was not reopened**. A review of the
+feature found no defect in the refresh-token rotation path; the gaps it found were
+missing test coverage, which a separate change closed. Two things are recorded
+here rather than acted on:
+
+- **`GET /auth/sessions` ordering has no unique tie-breaker.** The query is
+  `ORDER BY last_activity_at DESC` with `LIMIT`/`OFFSET`, and `last_activity_at`
+  is not unique — it defaults to `NOW()`, which is constant within a transaction,
+  and refresh rewrites it with `NOW()` too. Tied rows can therefore be duplicated
+  or skipped across a page boundary. `sessions.id` is `uuidv7()` and unique, so
+  adding `id DESC` would make the order total, and `AGENTS.md` already requires a
+  unique tie-breaker for the collection listings. **Deferred, not implemented.** Two
+  things a future change should decide rather than assume: the tie-breaker fixes
+  ties but not the fact that the sort key is mutable, so refreshing on any device
+  still reorders rows between page requests; and moving this endpoint to a cursor
+  is a separate product decision already recorded as 19f. Rationale and the full
+  inventory are in the reference document.
+- **`POST /auth/refresh` has no rate-limit budget.** The module's rule is that a
+  route reachable without a credential carries a per-IP budget unless it is a
+  pure read that consumes nothing — the two continuation reads are deliberately
+  unlimited for exactly that reason. Refresh is neither bounded nor a pure read:
+  every request opens a transaction, and a valid one inserts a refresh-token row
+  and takes an exclusive lock on a session. It belongs to item 4 of the standing
+  order under "Next Step"; a budget would need its own namespace, since `AGENTS.md`
+  forbids sharing a counter across flows and the limiter fails closed.
+
 ### Domain derivation
 
 `domain` is derived server-side from the submitted URL using Go's `net/url`.

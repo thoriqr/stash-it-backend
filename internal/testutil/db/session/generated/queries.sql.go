@@ -12,6 +12,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAllSessionsForUser = `-- name: CountAllSessionsForUser :one
+SELECT COUNT(*)
+FROM sessions
+WHERE user_id = $1
+`
+
+// Every session row a user has, revoked ones included.
+//
+// CountUserSessions in the login and registration test packages filters on
+// revoked_at IS NULL, which is right for asserting that a login created exactly
+// one usable session and wrong for asserting that a failed CreateSession left
+// nothing behind: the row a rollback has to remove is not revoked, so either
+// count would find it, but a test about orphan rows should not depend on that
+// coincidence to notice one.
+func (q *Queries) CountAllSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countAllSessionsForUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSessionUser = `-- name: CreateSessionUser :one
 INSERT INTO users (
     email,

@@ -100,6 +100,12 @@ Security-critical. Leave unchanged unless the task is explicitly about auth.
 
 Implementation lives in `internal/security` and `internal/api/auth/session`.
 
+**`documentation/auth-sessions.md` is the reference** for the feature's
+architecture, which guarantees the database enforces and which are only
+convention, its accepted trade-offs and its testing strategy. The bullets below
+are the policy in brief; read that file before changing rotation, reuse
+detection, revocation or session expiry.
+
 - Access token = HS256 JWT carrying `sub` (user) and `sid` (session); the verifier
   pins the algorithm and requires both claims.
 - Refresh tokens are opaque and stored **hashed only**, rotated through a
