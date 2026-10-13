@@ -19,6 +19,7 @@ import (
 	passwordreset "github.com/thoriqr/stash-it-backend/internal/api/auth/password_reset"
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
+	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	passwordresetdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/password_reset/generated"
 )
@@ -635,14 +636,14 @@ func TestPasswordResetIPRateLimit_RedisFailureFailsClosed(t *testing.T) {
 	require.Zero(t, state.VerificationCodeCount)
 }
 
-// The two routes that are not budgeted stay that way.
+// The one route that is not budgeted stays that way.
 //
-// VerifyPasswordReset and the continuation lookup are outside the scope of the
-// change that budgeted the other four routes, and pending their own security
-// review. They are mounted with no middleware, so no budget is consulted for
-// them, and this test exists to stop a later change from quietly giving them one
-// and implying they had been assessed.
-func TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget(t *testing.T) {
+// The continuation lookup is a pure read — one indexed lookup that writes
+// nothing — and a client watching its own reset while waiting out the sixty
+// second cooldown would spend a budget without bounding any work. It is mounted
+// with no middleware, so no budget is consulted for it, and this test exists to
+// stop a later change from quietly giving it one.
+func TestPasswordResetIPRateLimit_UnlimitedReadRouteSpendsNoBudget(t *testing.T) {
 	ctx := context.Background()
 
 	db := passwordresetdbtest.New(testPool)
@@ -653,38 +654,385 @@ func TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget(t *testing.T) {
 
 	const address = "198.51.100.86"
 
-	// A verification id that resolves to nothing keeps every one of these a pure
-	// refusal, so what is being counted is the middleware rather than the flow.
-	unknown := uuid.New()
-
 	for range passwordreset.RequestIPRateLimitMax + 5 {
-		postPinVerifyFrom(t, app, unknown, address)
+		continuation := resetCall(
+			t,
+			app,
+			http.MethodGet,
+			"/auth/password-reset/continuation",
+			"",
+			address,
+		)
+
+		// 401 rather than 409: the header is what this route authenticates with,
+		// and an absent one is refused before a token is ever looked up. It is
+		// still a pure refusal that consults no budget, which is the point.
+		require.Equal(t, http.StatusUnauthorized, continuation.status)
 	}
 
-	continuation := resetCall(
-		t,
-		app,
-		http.MethodGet,
-		"/auth/password-reset/continuation",
-		"",
-		address,
-	)
-
-	// 401 rather than 409: the header is what this route authenticates with, and
-	// an absent one is refused before a token is ever looked up. It is still a
-	// pure refusal that consults no budget, which is the point.
-	require.Equal(t, http.StatusUnauthorized, continuation.status)
-
-	// Not one budget was consulted, so no number of calls to these two could
+	// Not one budget was consulted, so no number of calls to this route could
 	// ever exhaust one.
 	require.Zero(t, limiter.CallsIn(testutil.ResetRequestIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.ResetStatusIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.ResetPinIPNamespace))
+	require.Zero(t, limiter.CallsIn(testutil.ResetVerifyIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.ResetFinalizeIPNamespace))
 
 	// The budgeted routes were not called here either.
 	require.Zero(t, limiter.CallsIn(testutil.LoginIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.PinEmailNamespace))
+}
+
+// An unusable limiter refuses verification rather than letting it through.
+//
+// Failing open would hand anyone the ability to switch the ceiling off by causing
+// the failure that produces it. This widens the blast radius of a Redis outage,
+// and the widening is deliberate: a request that reached the handler would spend
+// a code attempt, which is a resource the five-attempt budget exists to protect.
+func TestPasswordResetIPRateLimit_VerifyRedisFailureFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	limiter := testutil.UnavailablePinRateLimiter(
+		errors.New("redis unreachable"),
+	)
+
+	app, _ := resetApp(t, limiter)
+
+	outcome := postPinVerifyFrom(
+		t,
+		app,
+		uuid.New(),
+		"198.51.100.95",
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, outcome.status)
+	require.Equal(t, middleware.CodeIPRateLimitUnavailable, outcome.code)
+
+	// No fabricated wait: the counter has no window to name, and inventing one
+	// would tell the client to come back at a moment nobody chose.
+	require.Empty(t, outcome.retryAfter)
+}
+
+// The verification budget is spent after exactly its own number of requests, and
+// the refusal carries a wait derived from the counter rather than from the
+// configured window.
+//
+// The real limiter is used, because the wait is produced by the counter's own
+// remaining TTL. A fake can be told what to report, which would only prove the
+// fake reports what it was told.
+func TestPasswordResetIPRateLimit_VerifyExceededCarriesRetryAfter(t *testing.T) {
+	ctx := context.Background()
+
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	app, _ := newIPLimitedApp(t)
+
+	const address = "198.51.100.96"
+
+	// A verification id that resolves to nothing keeps every request a pure
+	// refusal: the budget is charged in front of the handler, so a request that
+	// would have been answered 404 is still counted, and nothing is consumed.
+	var waits []int
+
+	for range passwordreset.VerifyIPRateLimitMax + 3 {
+		outcome := postPinVerifyFrom(t, app, uuid.New(), address)
+
+		if outcome.status == http.StatusNotFound {
+			continue
+		}
+
+		require.Equal(t, http.StatusTooManyRequests, outcome.status)
+		require.Equal(t, middleware.CodeIPRateLimitExceeded, outcome.code)
+
+		require.NotEmpty(
+			t,
+			outcome.retryAfter,
+			"a 429 must tell the client when to come back",
+		)
+
+		seconds, err := strconv.Atoi(outcome.retryAfter)
+		require.NoError(t, err)
+		require.Positive(t, seconds)
+		require.LessOrEqual(
+			t,
+			seconds,
+			int(passwordreset.VerifyIPRateLimitWindow.Seconds()),
+			"the wait must never exceed the window it came from",
+		)
+
+		waits = append(waits, seconds)
+	}
+
+	require.Len(
+		t,
+		waits,
+		3,
+		"the budget should be spent after exactly its own number of requests",
+	)
+
+	// A refused request does not push the window forward, so the reported wait can
+	// only hold steady or fall.
+	for index := 1; index < len(waits); index++ {
+		require.LessOrEqualf(
+			t,
+			waits[index],
+			waits[index-1],
+			"a refused request must not extend the window: waits %v",
+			waits,
+		)
+	}
+}
+
+// The verification budget is charged before the handler, so a refused request
+// spends no code attempt and changes no verification state.
+//
+// This is the property that makes the budget worth having. The five-attempt limit
+// belongs to the code row, and a refused request must not eat into it: a caller
+// behind a shared address would otherwise be unable to verify at all, having had
+// their budget spent by requests it never got to make.
+func TestPasswordResetIPRateLimit_VerifyRefusalSpendsNoCodeAttempt(t *testing.T) {
+	ctx := context.Background()
+
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	const emailAddress = "verify-budget@example.com"
+
+	verificationID := openPendingReset(t, emailAddress)
+
+	// Issue a code and pin its hash to a PIN the tests below never submit.
+	// postPinVerifyFrom always submits "123456", so hashing "654321" makes every
+	// request a genuine wrong guess — which is what spends an attempt. Pinning the
+	// code to "123456" instead would make the first request succeed and consume it.
+	require.Equal(
+		t,
+		http.StatusCreated,
+		resetCall(
+			t,
+			testApp,
+			http.MethodPost,
+			"/auth/password-reset/verification/"+verificationID.String()+"/pin",
+			"",
+			"",
+		).status,
+	)
+
+	require.NoError(
+		t,
+		db.SetVerificationCodeHash(
+			ctx,
+			passwordresetdbtest.SetVerificationCodeHashParams{
+				CodeHash: security.NewVerificationCodeHasher(
+					[]byte("integration-test-verification-secret"),
+				).Hash("654321"),
+				VerificationRequestID: verificationID,
+			},
+		),
+	)
+
+	attemptsBefore, err := countVerificationCodeAttempts(t, verificationID)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		int32(0),
+		attemptsBefore,
+		"a freshly issued code starts at zero",
+	)
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	const address = "198.51.100.97"
+
+	// Far more wrong guesses than one code can spend. The per-code budget is
+	// enforced by the database and is independent of this IP budget, so the
+	// counter stops at five no matter how many requests arrive.
+	for attempt := range passwordreset.VerifyIPRateLimitMax {
+		outcome := postPinVerifyFrom(t, app, verificationID, address)
+
+		require.NotEqualf(
+			t,
+			http.StatusTooManyRequests,
+			outcome.status,
+			"attempt %d should be within budget, got %s",
+			attempt,
+			outcome.code,
+		)
+	}
+
+	attemptsSpent, err := countVerificationCodeAttempts(t, verificationID)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		int32(passwordreset.VerificationCodeMaxAttempts),
+		attemptsSpent,
+		"the per-code limit caps attempts regardless of how many requests arrive",
+	)
+
+	require.Less(
+		t,
+		int(attemptsSpent),
+		passwordreset.VerifyIPRateLimitMax,
+		"the IP budget and the per-code limit are separate ceilings",
+	)
+
+	// Now the IP budget is spent. These are refused in front of the handler, so
+	// they must not spend anything further.
+	for range 3 {
+		refused := postPinVerifyFrom(t, app, verificationID, address)
+
+		require.Equal(t, http.StatusTooManyRequests, refused.status)
+		require.Equal(t, middleware.CodeIPRateLimitExceeded, refused.code)
+	}
+
+	attemptsAfter, err := countVerificationCodeAttempts(t, verificationID)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		attemptsSpent,
+		attemptsAfter,
+		"a refused verification must not spend a code attempt",
+	)
+
+	// And the flow is untouched: still pending, still holding its one code, with
+	// no credential written.
+	state, err := db.GetPasswordResetVerificationState(ctx, verificationID)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		string(passwordreset.VerificationRequestPending),
+		state.VerificationStatus,
+		"a refused verification must not change the request's state",
+	)
+	require.Equal(t, int32(1), state.PinIssuedCount)
+
+	counts, err := db.CountPasswordResetStateForEmail(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(1), counts.VerificationCodeCount)
+	require.Equal(t, int64(1), counts.PendingResetCount)
+	require.Equal(t, int64(0), counts.CredentialCount)
+}
+
+// The budget belongs to the address, so one client's flood must not stop another
+// behind the same proxy from verifying.
+func TestPasswordResetIPRateLimit_VerifyOneAddressDoesNotSpendAnother(t *testing.T) {
+	ctx := context.Background()
+
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	const (
+		flooder   = "198.51.100.98"
+		neighbour = "198.51.100.99"
+	)
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	for range passwordreset.VerifyIPRateLimitMax {
+		postPinVerifyFrom(t, app, uuid.New(), flooder)
+	}
+
+	require.Equal(
+		t,
+		http.StatusTooManyRequests,
+		postPinVerifyFrom(t, app, uuid.New(), flooder).status,
+	)
+
+	// Same moment, same endpoint, different address. If the counter were shared
+	// across addresses this would be a 429 too.
+	accepted := postPinVerifyFrom(t, app, uuid.New(), neighbour)
+
+	require.Equal(
+		t,
+		http.StatusNotFound,
+		accepted.status,
+		accepted.code,
+	)
+}
+
+// Verification and issuance are adjacent steps of one flow and are two different
+// acts, so exhausting one must not spend the other's allowance. A caller who
+// mistyped a PIN has to be able to ask for a replacement afterwards.
+func TestPasswordResetIPRateLimit_VerifyAndIssuanceAreSeparate(t *testing.T) {
+	ctx := context.Background()
+
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	const address = "198.51.100.87"
+
+	for range passwordreset.VerifyIPRateLimitMax {
+		postPinVerifyFrom(t, app, uuid.New(), address)
+	}
+
+	require.Equal(
+		t,
+		http.StatusTooManyRequests,
+		postPinVerifyFrom(t, app, uuid.New(), address).status,
+		"the verification budget should be spent",
+	)
+
+	// The issuance budget is a different counter and is untouched. A caller who
+	// burned their verification allowance can still ask for a new code.
+	require.Zero(
+		t,
+		limiter.CallsIn(testutil.ResetPinIPNamespace),
+		"spending the verify budget must not touch the issuance budget",
+	)
+
+	issued := postIssuanceFrom(
+		t,
+		app,
+		uuid.New(),
+		"/pin",
+		address,
+	)
+
+	require.NotEqual(
+		t,
+		http.StatusTooManyRequests,
+		issued.status,
+		"issuance must remain available after the verify budget is spent: %s",
+		issued.code,
+	)
+}
+
+// countVerificationCodeAttempts reads the attempt counter off the live code row.
+//
+// The query is written inline rather than added to the sqlc test target, which is
+// what auth_register_concurrency_test.go does for its equivalent counts: it has
+// exactly one caller, and the generated test package is not the place for it.
+func countVerificationCodeAttempts(
+	t *testing.T,
+	verificationID uuid.UUID,
+) (int32, error) {
+	t.Helper()
+
+	var attempts int32
+
+	err := testPool.QueryRow(
+		context.Background(),
+		`SELECT attempts
+		 FROM verification_codes
+		 WHERE verification_request_id = $1
+		   AND consumed_at IS NULL
+		   AND invalidated_at IS NULL`,
+		verificationID,
+	).Scan(&attempts)
+
+	return attempts, err
 }
 
 // One address exhausting a reset budget must not lock anyone else out, which is

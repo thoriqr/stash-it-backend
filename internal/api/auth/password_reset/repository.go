@@ -152,7 +152,54 @@ func (r *repository) GetActivePasswordResetByEmail(
 	return reset, true, nil
 }
 
+// pendingPasswordResetEmailIndex is the partial unique index that guarantees at
+// most one pending reset per address. It is the authority on that invariant;
+// everything this repository does before the insert is an optimization that
+// avoids hitting it.
+const pendingPasswordResetEmailIndex = "pending_password_resets_email_pending_idx"
+
+// CreatePasswordReset opens a reset for an address, or reports the one already
+// open.
+//
+// Two requests for an address with no reset yet cannot both be decided by the
+// lookup below, and they must not be: GetPendingPasswordResetByEmailForUpdate
+// locks a row, and there is no row yet. Both proceed to the insert and one of
+// them loses on pending_password_resets_email_pending_idx. That loser is not an
+// error the caller should have to distinguish from the sequential case, so it
+// simply runs again: by then the winner has committed, the lookup finds its row,
+// and the ordinary already-pending path produces the same answer the second
+// sequential request would have got.
+//
+// The retry is a single re-run rather than a loop, and it only happens on that one
+// constraint. A second loss, or any other failure, is reported as it is.
 func (r *repository) CreatePasswordReset(
+	ctx context.Context,
+	params CreatePasswordResetParams,
+) (passwordresetdb.VerificationRequest, error) {
+	result, err := r.createPasswordResetOnce(ctx, params)
+	if !isPendingPasswordResetEmailConflict(err) {
+		return result, err
+	}
+
+	return r.createPasswordResetOnce(ctx, params)
+}
+
+// isPendingPasswordResetEmailConflict reports whether err is the unique violation
+// raised by the one-pending-reset-per-address index.
+//
+// The error has already been mapped, but mapping keeps the driver error as the
+// cause, so the constraint can still be read off it.
+func isPendingPasswordResetEmailConflict(err error) bool {
+	var pgErr *pgconn.PgError
+
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+
+	return pgErr.ConstraintName == pendingPasswordResetEmailIndex
+}
+
+func (r *repository) createPasswordResetOnce(
 	ctx context.Context,
 	params CreatePasswordResetParams,
 ) (passwordresetdb.VerificationRequest, error) {
@@ -208,7 +255,6 @@ func (r *repository) CreatePasswordReset(
 	if err != nil {
 		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
 	}
-
 
 	if err := tx.Commit(ctx); err != nil {
 		return passwordresetdb.VerificationRequest{}, apperror.Internal(err)
@@ -512,7 +558,7 @@ func mapPasswordResetDBError(err error) error {
 
 	if errors.As(err, &pgErr) {
 		switch pgErr.ConstraintName {
-		case "pending_password_resets_email_pending_idx":
+		case pendingPasswordResetEmailIndex:
 			return apperror.ConflictWith(
 				CodePasswordResetAlreadyPending,
 				"password reset already pending",

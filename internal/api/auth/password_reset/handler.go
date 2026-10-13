@@ -207,6 +207,9 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // VerifyPasswordReset godoc
 // @Summary Verify password reset
 // @Description Verify a password reset using the verification PIN.
+// @Description This route is budgeted per client address. The budget bounds the
+// @Description work a wrong guess costs; the five-attempt limit on the
+// @Description verification code is separate and is enforced by the database.
 // @Description Possible error codes:
 // @Description - VERIFICATION_NOT_PENDING
 // @Description - PASSWORD_RESET_NOT_PENDING
@@ -214,6 +217,9 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // @Description - INVALID_VERIFICATION_CODE
 // @Description - VERIFICATION_CODE_ATTEMPTS_EXCEEDED
 // @Description - RESOURCE_NOT_FOUND
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
 // @Accept json
@@ -224,7 +230,9 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid request"
 // @Failure 404 {object} swagger.APIErrorResponse "Verification not found"
 // @Failure 409 {object} swagger.APIErrorResponse "Verification conflict"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no code attempt was spent"
 // @Router /auth/password-reset/verification/{verification_id}/verify [post]
 func (h *Handler) VerifyPasswordReset(c fiber.Ctx) error {
 	verificationID, err := uuid.Parse(c.Params("verification_id"))

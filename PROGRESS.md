@@ -2259,6 +2259,7 @@ not cost the same thing, and a flood of one must not spend another's allowance.
 | Request | `POST /auth/password-reset` | `password-reset-request-ip` | 10 / 10 min |
 | Status | `GET /password-reset/verification/:verification_id` | `password-reset-status-ip` | 60 / 10 min |
 | PIN issuance | `POST .../pin` **and** `POST .../resend` | `password-reset-pin-ip` | 20 / 10 min |
+| Verification | `POST .../verify` | `password-reset-verify-ip` | 20 / 10 min |
 | Finalization | `POST /auth/password-reset/finalize` | `password-reset-finalize-ip` | 10 / 15 min |
 
 **Why these values.**
@@ -2516,33 +2517,228 @@ directory and diffing, which is what was done.
 
 ### Still open from the audit
 
-Three findings from the password reset audit are **unresolved**. None is fixed by
-this change and none is claimed to be.
+Three findings from the password reset audit were **unresolved**. One has since
+been closed and two have not.
 
 - **F3 — no per-address budget on PIN issuance in this feature.** Registration
   pairs its `pin-ip` counter with a per-address `pin-email` budget of five an
   hour; password reset has no second dimension, so `password-reset-pin-ip` is the
-  only ceiling on what one address can be mailed. The effective brute-force
-  ceiling against the six-digit code is bounded — one open reset per address per
-  fifteen minutes, and five attempts per code — but it is well above the "five
-  attempts" a reader of `VerificationCodeMaxAttempts` would assume.
-- **F4 — `CreatePasswordReset` has no single re-run on
-  `pending_password_resets_email_pending_idx`.** Two simultaneous *first* requests
-  for one address both find no open reset, both insert, and one loses on the
-  unique index, answering `409 PASSWORD_RESET_ALREADY_PENDING` with no
-  verification id. Registration solved the identical structural problem with one
-  re-run gated on that constraint.
+  only ceiling on what one address can be mailed. **The per-client-address part of
+  F3 is now closed** — `/verify` carries `password-reset-verify-ip`. **The
+  per-address part is still open**, and the exposure is stated in full under
+  "Cross-code guessing is not solved by this" in the section below, together with
+  why a threshold has deliberately not been invented.
+- **F4 — `CreatePasswordReset` had no single re-run on
+  `pending_password_resets_email_pending_idx`.** **Now closed**: it takes the same
+  single gated re-run registration uses, with an integration test that fails
+  without it.
 - **F5 — no unique index on `password_reset_continuations.pending_password_reset_id`.**
   Registration has `registration_continuations_pending_registration_unique_idx`;
   this feature has only a non-unique index. The flow is currently safe because
   `MarkVerificationRequestVerified` is the single-use authority inside the
   transaction, but it is the only guard of the three that a constraint does not
-  also enforce. Adding it requires a migration, which was out of scope.
+  also enforce. **Still open**, and it needs a migration plus a separate decision
+  about whether the extra constraint is wanted at all.
 
 ### Not done here
 
-`POST /auth/password-reset/verification/:verification_id/verify` and
-`GET /auth/password-reset/continuation` remain unbudgeted and unreviewed.
+`GET /auth/password-reset/continuation` remains unbudgeted. It is a pure read, and
+registration reaches the same conclusion on its own continuation route.
+
+---
+
+## Password reset verification budget, creation race, and passwordless reset — implemented
+
+Three changes. The first bounds the PIN verification route; the second stops a
+double-tapped reset request from being refused; the third closes a coverage gap
+that had never been tested end to end.
+
+### A budget for `POST .../verify`
+
+`password-reset-verify-ip`, **20 per 10 minutes** per client address, mounted in
+front of the handler.
+
+**The value is registration's `verify-ip` policy, unchanged.** The route does the
+same act at the same cost — one verification lookup, one code lookup, one HMAC
+comparison, and a counter write on failure — so there is no reason for the two
+features to differ, and `registration/constants.go` already carries the reasoning.
+
+**This is a ceiling on cost, not on guessing.** The five-attempt limit per
+verification code is untouched and remains the thing that caps guesses; it is
+enforced by the database (`GetActiveVerificationCode` refuses to return a code
+that has reached the limit, and `IncrementVerificationCodeAttempts` re-checks
+`attempts < max` under the row lock). No second, application-level attempt
+counter was added. What the new budget bounds is the work a request costs **even
+when it guesses wrong**, which nothing else bounded.
+
+The namespace is its own rather than a reuse of registration's `verify-ip`, for
+the same reason every other namespace here is separate: a caller who has spent
+their password-reset verification allowance has spent nothing of registration's,
+and one flow's flood must not lock the other out.
+
+### Cross-code guessing is **not** solved by this, and no per-address budget was added
+
+The five-attempt limit belongs to one `verification_codes` row. Issuing a
+replacement code creates a new row whose counter starts at zero, so the limit does
+not accumulate across codes. What currently stands between an attacker and a full
+sweep of the six-digit space is the combination of:
+
+- `password-reset-verify-ip` — 20 requests per address per 10 minutes. **Per client
+  address, not per account**, so it is trivially multiplied by rotating source
+  addresses.
+- `password-reset-pin-ip` — 20 issuances per client address per 10 minutes.
+- The sixty-second per-verification resend cooldown, which is what actually stops
+  code re-arming within one reset.
+- One open reset per address at a time — `pending_password_resets_email_pending_idx`
+  plus the fifteen-minute reset lifetime — so a new reset cannot be opened while
+  the old one is live.
+- Five attempts per code.
+
+**Password reset has no per-address PIN budget.** Registration pairs its `pin-ip`
+counter with a second dimension, `pin-email` at five an hour, charged against the
+address inside the service. Password reset has no equivalent, and
+`password-reset-pin-ip` is therefore the only ceiling on what one address can be
+mailed. That was already recorded as a gap when the IP budgets were added and it
+is **still open**.
+
+It is deliberately left open rather than closed here. A per-address issuance
+budget is keyed on an address a caller does not control: anyone can request a
+reset for someone else's address repeatedly and spend their budget, locking the
+real owner out of recovering their own account. That is the same reasoning that
+keeps `google-auth-ip` free of a per-email dimension, and it is a product decision
+rather than a missing control. Setting a threshold without deciding that trade-off
+would implement a denial primitive against account recovery, which is a worse
+outcome than the exposure it removes. **The decision is left open, with the
+exposure stated above so it can be made deliberately.**
+
+### Two simultaneous first requests now share one reset
+
+`CreatePasswordReset` is now a single re-run gated on one constraint, mirroring
+`registration.CreateManualRegistration`.
+
+Neither request can be decided by the lookup inside the transaction, because there
+is no row yet for it to lock: both find nothing, both proceed to the insert, and
+one loses on `pending_password_resets_email_pending_idx`. The loser is now run
+again; by then the winner has committed, the lookup finds its row, and the ordinary
+already-pending path produces exactly the answer the second sequential request
+would have got.
+
+**The retry condition is exact:** it fires only when `errors.As` recovers a
+`*pgconn.PgError` whose `ConstraintName` is `pending_password_resets_email_pending_idx`.
+It is a **single** re-run, not a loop. Any other unique violation, any other
+database error, and a second loss are all reported as they are. No sleep, no
+force-expiration, and no change to the reset-expiration policy. `mapPasswordResetDBError`
+is unchanged, so a second loss still reports `PASSWORD_RESET_ALREADY_PENDING`
+rather than being swallowed.
+
+### A reset now has end-to-end coverage for an account with no password
+
+A social registration creates no `password_credentials` row, so finalization has
+to *create* the credential rather than update it. A mock cannot show that — it
+cannot distinguish an upsert that inserted from one that updated, which is the
+entire claim — so the new test drives the real HTTP flow against real PostgreSQL
+for an account with no credential, from request through to signing in again.
+
+### Verification
+
+**Verify budget** — five integration tests:
+
+- `VerifyRedisFailureFailsClosed` — an unusable limiter gives `503`
+  `IP_RATE_LIMIT_UNAVAILABLE` with **no fabricated `Retry-After`**.
+- `VerifyExceededCarriesRetryAfter` — walked against **real Redis**, because a
+  fake can be told what to report. Asserts exactly three refusals after exactly
+  `VerifyIPRateLimitMax` accepted requests, a positive wait never exceeding the
+  window, and that a refused request does not extend it.
+- `VerifyRefusalSpendsNoCodeAttempt` — the property the budget exists for. Twenty
+  wrong guesses within budget move the code's counter to exactly five and no
+  further, the next three requests are refused `429`, and the counter is unchanged
+  afterwards. The verification is still `pending`, still holds one code, and no
+  credential exists.
+- `VerifyOneAddressDoesNotSpendAnother` — a neighbour is unaffected.
+- `VerifyAndIssuanceAreSeparate` — spending the verify budget leaves the issuance
+  budget untouched, so a caller who mistyped a PIN can still ask for a new code.
+
+The wrong guesses in that test are genuine: the code is pinned to a PIN the tests
+never submit. An earlier version pinned it to the PIN the requests *did* submit,
+which made the first request succeed and consume the code — the test then passed
+for the wrong reason and had to be corrected.
+
+**Creation race** — three integration tests, the first using the shared
+`runConcurrently` barrier and no sleeps:
+
+- `ConcurrentFirstRequestsShareOneReset` — every request answered `201`, every
+  response naming the **same** `verification_id`, exactly one pending reset and
+  exactly one verification request, and the shared id provably addressing the row
+  that exists. It then issues a PIN against it, so the id is shown to be usable
+  rather than merely equal.
+- `SecondRequestReusesTheOpenReset` — the sequential already-pending path is
+  unchanged, which is the path the retry's second pass runs on.
+- `UnknownAddressStillWritesNothing` — concurrent requests for an address no
+  account holds still answer `201`, still hand out **distinct** placeholders, and
+  still write nothing. The retry must not have turned the non-enumerating path
+  into one that creates rows.
+
+**The participant count is 64, and that is a measured choice.** The window between
+the locking SELECT returning "no rows" and the INSERT is microseconds, while each
+request spends far longer before it. With two contenders one usually commits first
+and the loser is absorbed by the ordinary already-pending path, so **a
+two-participant version of this test passed with the retry removed and proved
+nothing**. Measured on this setup with the retry removed: 16 contenders produce
+four or five conflicts every run, 32 produce six or seven, and 64 produce seven on
+every run across repeated trials. Sixty-four is used so the race is entered
+reliably rather than usually. These requests use the suite's permissive app so
+arranging the contention never spends a budget under test.
+
+**Both changes were verified to be detected by their tests.** Removing the retry
+fails `ConcurrentFirstRequestsShareOneReset` on **three runs out of three**.
+Removing the middleware from the verify route fails the verify budget tests.
+
+**Passwordless reset** — `EndToEndForAccountWithoutCredential` asserts from HTTP
+and PostgreSQL that the account starts with no credential, that the continuation
+route reports `has_password_credential == false` **before** finalization and
+consumes nothing, that finalization succeeds, that exactly one credential exists
+afterwards, that it is not the plaintext and verifies against the new password,
+that the reset is `completed` and the continuation consumed, that both seeded
+sessions are revoked, that **signing in with the new password works**, and that
+replaying the continuation is refused. The sign-in is the only external proof that
+the row written is a real credential rather than a well-formed one.
+`ContinuationReportsCredentialPresenceAccurately` covers both account shapes
+side by side; the existing end-to-end test for an account that already has a
+credential is untouched.
+
+No production defect surfaced from the passwordless case. The upsert behaves as
+designed and was not changed.
+
+### Swagger
+
+`docs/swagger.json`, `docs/swagger.yaml` and `docs/docs.go` are regenerated. The
+diff is confined to the verify route: its description plus the new `429` and `503`
+responses (`swagger.json` and `docs.go`: 3 hunks, +13/-1 each; `swagger.yaml`:
+4 hunks, +16/-0). Nothing else in the document moved.
+
+```sh
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -parseInternal
+```
+
+The generator was measured against a scratch output directory before being pointed
+at `docs/`, so the churn figure above is observed rather than assumed. `go.mod` and
+`go.sum` are unchanged by it.
+
+### Commands run, and their results
+
+```sh
+go build ./...                                              # exit 0
+go vet ./...                                                # exit 0
+go test ./internal/api/auth/password_reset/... -count=1     # all pass
+go test ./internal/integration/ -run 'TestRequestPasswordReset_' -count=3
+                                                            # pass
+go test ./internal/integration/ -run 'TestPasswordResetIPRateLimit_Verify' -count=1
+                                                            # 5/5 pass
+go test ./internal/integration/ -run 'PasswordReset|PasswordWork' -count=1
+                                                            # all pass
+go test ./... -count=1                                      # exit 0
+go test -race ./... -count=1                                # exit 0, no DATA RACE
+```
 
 ---
 

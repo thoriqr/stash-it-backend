@@ -431,6 +431,17 @@ const (
 	// nothing to do because neither route requires authentication.
 	ResetPinIPNamespace = "password-reset-pin-ip"
 
+	// ResetVerifyIPNamespace is the per-client-address budget on
+	// POST /auth/password-reset/verification/:verification_id/verify, spent before
+	// the handler.
+	//
+	// It is its own namespace rather than a reuse of VerifyIPNamespace even though
+	// the policy and the work are identical: a namespace is one flow's budget, so
+	// a caller who has spent their password-reset verification allowance has
+	// spent nothing of registration's. Merging them would let one flow's flood
+	// lock the other out.
+	ResetVerifyIPNamespace = "password-reset-verify-ip"
+
 	// ResetFinalizeIPNamespace is the per-client-address budget on
 	// POST /auth/password-reset/finalize, spent before the handler.
 	//

@@ -725,7 +725,7 @@ const docTemplate = `{
         },
         "/auth/password-reset/verification/{verification_id}/verify": {
             "post": {
-                "description": "Verify a password reset using the verification PIN.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INVALID_VERIFICATION_CODE\n- VERIFICATION_CODE_ATTEMPTS_EXCEEDED\n- RESOURCE_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "description": "Verify a password reset using the verification PIN.\nThis route is budgeted per client address. The budget bounds the\nwork a wrong guess costs; the five-attempt limit on the\nverification code is separate and is enforced by the database.\nPossible error codes:\n- VERIFICATION_NOT_PENDING\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INVALID_VERIFICATION_CODE\n- VERIFICATION_CODE_ATTEMPTS_EXCEEDED\n- RESOURCE_NOT_FOUND\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -779,8 +779,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting or client address resolution is unavailable, so no code attempt was spent",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

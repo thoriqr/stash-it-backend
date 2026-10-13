@@ -113,6 +113,64 @@ const (
 // registration and login budget so exhausting one flow cannot lock another out.
 const pinIPRateLimitNamespace = "password-reset-pin-ip"
 
+// VerifyIPRateLimitMax and VerifyIPRateLimitWindow bound how often one client
+// address may reach the PIN verification route.
+//
+// This is a ceiling on cost, not on guessing, and the distinction matters. The
+// per-code attempt limit already caps guesses at five, and it is enforced by the
+// database rather than by anything here: `GetActiveVerificationCode` will not
+// return a code that has reached it, and `IncrementVerificationCodeAttempts`
+// re-checks `attempts < max` under the row lock. What this bounds is the work a
+// request costs **even when it guesses wrong** — a verification lookup, a code
+// lookup, an HMAC comparison, and on failure a write to the attempt counter.
+// Nothing else bounds that, so an attacker holding a valid verification id could
+// otherwise repeat it as fast as the endpoint will answer.
+//
+// It deliberately does not reuse the PIN issuance budget. Issuing a code sends a
+// message, which is expensive; verifying one sends nothing. Charging them to one
+// allowance would mean a user who mistypes a PIN spends the budget that also
+// governs mailing a replacement, and cannot recover from the mistake that cost
+// it.
+//
+// **The value is deliberately identical to registration's `verify-ip` policy.**
+// The route does the same act at the same cost — one verification lookup, one
+// code lookup, one HMAC comparison, and a counter write on failure — and
+// matching is what makes the two features comparable rather than merely similar.
+// Twenty in ten minutes is where a genuine flow, which makes at most a handful of
+// verify calls, cannot reach it, while a shared address behind CGNAT is very
+// unlikely to hit it by accident.
+//
+// **This does not bound cross-code guessing.** The five-attempt budget belongs to
+// one `verification_codes` row, so a freshly issued code starts a fresh one. See
+// PROGRESS.md for what still stands between an attacker and a full sweep, and for
+// the per-address budget that remains an open decision.
+//
+// **These are initial engineering estimates, not production-validated
+// thresholds.** No deployment has been selected and no traffic has been observed.
+const (
+	VerifyIPRateLimitMax    = 20
+	VerifyIPRateLimitWindow = 10 * time.Minute
+)
+
+// verifyIPRateLimitNamespace groups the verification counters in Redis.
+//
+// It is separate from pinIPRateLimitNamespace because verification and issuance
+// are different acts with different costs, and sharing one would let a caller
+// spend the issuance allowance simply by verifying, or the verification allowance
+// by asking for codes.
+//
+// It is **its own namespace rather than a reuse of registration's `verify-ip`**,
+// even though the policy and the work are identical. A namespace is one flow's
+// budget: a caller who has spent their password-reset verification allowance has
+// spent nothing of registration's, and merging them would let one flow's flood
+// lock the other out. That is the same reasoning that keeps every other pair of
+// namespaces in this application separate.
+//
+// It is separate from every login budget because reaching this route is not an
+// authentication attempt, and an exhausted reset budget must not lock anyone out
+// of signing in with a password they already have.
+const verifyIPRateLimitNamespace = "password-reset-verify-ip"
+
 // FinalizeIPRateLimitMax and FinalizeIPRateLimitWindow bound how often one client
 // address may reach the finalization route.
 //

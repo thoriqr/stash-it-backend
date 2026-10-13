@@ -9,19 +9,19 @@ import (
 
 // Routes mounts the password reset flow.
 //
-// Four of these routes carry a per-address budget; two do not, and the difference
-// is deliberate rather than incomplete.
+// Five of these routes carry a per-address budget; one does not, and the
+// difference is deliberate rather than incomplete.
 //
-// The four that do are the ones that either reveal something about an address,
+// The five that do are the ones that either reveal something about an address,
 // cost real money to serve, or do expensive work. Each gets its own namespace and
 // its own policy, because they are different acts: opening a reset, reading one,
-// mailing a code and hashing a password do not cost the same thing and a flood of
-// one must not spend another's allowance.
+// mailing a code, verifying one and hashing a password do not cost the same thing
+// and a flood of one must not spend another's allowance.
 //
-// The two that do not — /verify and /continuation — are outside the scope of this
-// change and are **pending their own security review**. They are mounted exactly
-// as they were, with no middleware, and nothing about them should be read as
-// having been assessed.
+// The one that does not — the continuation lookup — is a pure read that is
+// deliberately left unlimited, on the same reasoning registration applies to its
+// own: limiting it would cost a polling client its budget without bounding any
+// expensive work. See the note on the route below.
 func Routes(
 	router fiber.Router,
 	h *Handler,
@@ -87,6 +87,24 @@ func Routes(
 		h.ResendVerification,
 	)
 
+	// Verification is bounded separately from issuance, and for a different
+	// reason. Issuing sends a message and is expensive; verifying sends nothing,
+	// but it does cost a verification lookup, a code lookup, an HMAC comparison
+	// and a write on failure. Nothing else bounds that, so this route carries its
+	// own budget.
+	//
+	// Mounted in front of the handler so a verification id that is not a UUID
+	// never becomes a request the handler sees, and so a refused request spends
+	// no code attempt.
+	verifyIPLimit := middleware.IPRateLimit(
+		rateLimiter,
+		verifyIPRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    VerifyIPRateLimitMax,
+			Window: VerifyIPRateLimitWindow,
+		},
+	)
+
 	// Finalization is bounded separately again, and it is the only route here that
 	// performs an Argon2id derivation. The shared PasswordWorkLimiter bounds how
 	// many derivations run at once across the whole process, which protects the
@@ -106,12 +124,17 @@ func Routes(
 		},
 	)
 
-	// Not rate limited, and not yet reviewed. See the note on Routes.
 	router.Post(
 		"/password-reset/verification/:verification_id/verify",
+		verifyIPLimit,
 		h.VerifyPasswordReset,
 	)
 
+	// Deliberately unlimited. It is a pure read — one indexed lookup that consumes
+	// nothing and writes nothing — and a client that watches its own reset's state
+	// while waiting out the sixty-second cooldown would spend a budget without
+	// bounding any work. Registration reaches the same conclusion for the same
+	// reason on its own continuation route.
 	router.Get(
 		"/password-reset/continuation",
 		h.GetPasswordResetContinuation,
