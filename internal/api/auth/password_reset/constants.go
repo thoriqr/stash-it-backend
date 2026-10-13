@@ -112,3 +112,51 @@ const (
 // allowance that governs mailing a replacement, and separate from every
 // registration and login budget so exhausting one flow cannot lock another out.
 const pinIPRateLimitNamespace = "password-reset-pin-ip"
+
+// FinalizeIPRateLimitMax and FinalizeIPRateLimitWindow bound how often one client
+// address may reach the finalization route.
+//
+// This is the one route in this feature that performs an Argon2id derivation, and
+// it is budgeted for the same reason registration's equivalent route is: the
+// shared `security.PasswordWorkLimiter` bounds how many derivations run at once
+// across the whole process, but that is a capacity limit and not a rate limit. It
+// stops the process being overrun; it does not stop one caller from holding every
+// slot indefinitely and turning every legitimate login, registration and password
+// reset into a refusal for as long as they keep it there.
+//
+// The values are deliberately identical to registration's equivalent policy
+// (10 per 15 minutes). Both routes perform one derivation per request and cost the
+// same to serve, so matching them is what makes the two features comparable
+// rather than merely similar — and, more importantly, neither should be loose
+// enough for one caller to occupy the shared pool continuously.
+//
+// Ten in fifteen minutes is set where a genuine user cannot reach it: one
+// finalization completes a reset, and a user who mistypes their password may retry
+// a couple of times. The window is the longest of this feature's budgets for the
+// same reason registration's is — a single finalization is the most expensive
+// request in the flow, so the budget stays generous per unit of work.
+//
+// **These are initial engineering estimates, not production-validated
+// thresholds.** No deployment has been selected and no traffic has been observed.
+const (
+	FinalizeIPRateLimitMax    = 10
+	FinalizeIPRateLimitWindow = 15 * time.Minute
+)
+
+// finalizeIPRateLimitNamespace groups the finalization counters in Redis.
+//
+// It is deliberately its own namespace rather than a reuse of registration's
+// `finalize-ip`, even though the policy and the work are identical. A namespace is
+// one flow's budget: a caller who has exhausted their password-reset allowance has
+// spent nothing of registration's, and merging the two would let one flow's flood
+// lock the other out. It is also separate from requestIPRateLimitNamespace,
+// statusIPRateLimitNamespace and pinIPRateLimitNamespace, so that a caller who
+// mistypes a PIN, or who is watching a flow's status, cannot thereby spend the
+// allowance that governs the one Argon2id derivation in the flow — and so that
+// exhausting finalization cannot be used to starve the steps that lead to it.
+//
+// It is separate from every registration and login budget for the same reason
+// those are separate from each other: finalizing a reset is not authentication,
+// and an exhausted reset budget must not lock anyone out of signing in with a
+// password they already have.
+const finalizeIPRateLimitNamespace = "password-reset-finalize-ip"

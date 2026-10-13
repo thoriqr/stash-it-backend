@@ -2,6 +2,7 @@ package password_reset
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -447,6 +448,39 @@ func (s *Service) FinalizePasswordReset(
 	// needs the caller's deadline. Nothing else about this flow changes.
 	passwordHash, err := s.passwordHasher.Hash(ctx, params.Password)
 	if err != nil {
+		if errors.Is(err, security.ErrPasswordWorkCapacityTimeout) {
+			// The password was never hashed, so nothing about this reset has been
+			// decided: the continuation is untouched, the pending reset is still
+			// pending, no credential was written and no session was revoked. The
+			// refusal happens before the finalization transaction opens, which is
+			// what makes those all true rather than merely likely.
+			//
+			// It has to reach the caller as its own answer rather than as a fault.
+			// Nothing is broken — the server is momentarily full — and nothing was
+			// wrong with the password either, so telling the caller theirs is
+			// unacceptable would send them off to choose a different one.
+			//
+			// Only the capacity timeout becomes this. A cancelled context or an
+			// expired deadline stays a fault, because the two ask the caller to do
+			// different things: this one means come back shortly, while a
+			// cancellation means the caller went away and the work should stop.
+			// Folding them together would report a request nobody is waiting for
+			// as merely busy.
+			//
+			// The wait comes from the hasher rather than from a constant here,
+			// because it is the deployment's configured value and the header it
+			// produces has to be the same number the caller was actually kept
+			// waiting for.
+			return apperror.ServiceUnavailableWithRetryAfter(
+				CodePasswordWorkUnavailable,
+				"the server is busy, please try again shortly",
+				s.passwordHasher.Wait(),
+				err,
+			)
+		}
+
+		// Anything else is a fault: a failure to generate the salt, or a context
+		// that ended before the derivation could start.
 		return apperror.Internal(err)
 	}
 

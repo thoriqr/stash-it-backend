@@ -489,7 +489,7 @@ const docTemplate = `{
         },
         "/auth/password-reset/finalize": {
             "post": {
-                "description": "Complete a password reset using a valid password reset continuation token.\nPossible error codes:\n- PASSWORD_RESET_CONTINUATION_REQUIRED\n- PASSWORD_RESET_CONTINUATION_CONSUMED\n- PASSWORD_RESET_CONTINUATION_EXPIRED\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Complete a password reset using a valid password reset continuation token.\nThis route performs the one Argon2id derivation in the flow and is\ntherefore budgeted per client address separately from every other\nroute here.\nPossible error codes:\n- PASSWORD_RESET_CONTINUATION_REQUIRED\n- PASSWORD_RESET_CONTINUATION_CONSUMED\n- PASSWORD_RESET_CONTINUATION_EXPIRED\n- PASSWORD_RESET_NOT_PENDING\n- PASSWORD_RESET_EXPIRED\n- PASSWORD_WORK_UNAVAILABLE\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -543,8 +543,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "No password-work capacity was available, so the password was never hashed and nothing was changed; rate limiting or client address resolution is also unavailable",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

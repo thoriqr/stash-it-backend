@@ -430,6 +430,17 @@ const (
 	// would let a caller double its allowance by switching endpoints, which costs
 	// nothing to do because neither route requires authentication.
 	ResetPinIPNamespace = "password-reset-pin-ip"
+
+	// ResetFinalizeIPNamespace is the per-client-address budget on
+	// POST /auth/password-reset/finalize, spent before the handler.
+	//
+	// It is its own namespace rather than a reuse of FinalizeIPNamespace even
+	// though the policy and the work are identical: a namespace is one flow's
+	// budget, so a caller who has exhausted their password-reset allowance has
+	// spent nothing of registration's. Merging them would let one flow's flood
+	// lock the other out, which is the same reasoning that keeps every other pair
+	// here separate.
+	ResetFinalizeIPNamespace = "password-reset-finalize-ip"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

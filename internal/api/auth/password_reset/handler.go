@@ -310,12 +310,19 @@ func (h *Handler) GetPasswordResetContinuation(c fiber.Ctx) error {
 // FinalizePasswordReset godoc
 // @Summary Finalize password reset
 // @Description Complete a password reset using a valid password reset continuation token.
+// @Description This route performs the one Argon2id derivation in the flow and is
+// @Description therefore budgeted per client address separately from every other
+// @Description route here.
 // @Description Possible error codes:
 // @Description - PASSWORD_RESET_CONTINUATION_REQUIRED
 // @Description - PASSWORD_RESET_CONTINUATION_CONSUMED
 // @Description - PASSWORD_RESET_CONTINUATION_EXPIRED
 // @Description - PASSWORD_RESET_NOT_PENDING
 // @Description - PASSWORD_RESET_EXPIRED
+// @Description - PASSWORD_WORK_UNAVAILABLE
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
 // @Accept json
@@ -326,7 +333,9 @@ func (h *Handler) GetPasswordResetContinuation(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
 // @Failure 401 {object} swagger.APIErrorResponse "Password reset continuation token is required"
 // @Failure 409 {object} swagger.APIErrorResponse "Password reset continuation is invalid or expired"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "No password-work capacity was available, so the password was never hashed and nothing was changed; rate limiting or client address resolution is also unavailable"
 // @Router /auth/password-reset/finalize [post]
 func (h *Handler) FinalizePasswordReset(c fiber.Ctx) error {
 	var req FinalizePasswordResetRequest

@@ -9,21 +9,19 @@ import (
 
 // Routes mounts the password reset flow.
 //
-// Three of these routes carry a per-address budget; three do not, and the
-// difference is deliberate rather than incomplete.
+// Four of these routes carry a per-address budget; two do not, and the difference
+// is deliberate rather than incomplete.
 //
-// The three that do are the ones that either reveal something about an address
-// or cost real money to serve. Each gets its own namespace and its own policy,
-// because they are different acts: opening a reset, reading one, and mailing a
-// code do not cost the same thing and a flood of one must not spend another's
-// allowance.
+// The four that do are the ones that either reveal something about an address,
+// cost real money to serve, or do expensive work. Each gets its own namespace and
+// its own policy, because they are different acts: opening a reset, reading one,
+// mailing a code and hashing a password do not cost the same thing and a flood of
+// one must not spend another's allowance.
 //
-// The three that do not — /verify, /continuation and /finalize — are outside
-// the scope of this change and are **pending their own security review**. They
-// are mounted exactly as they were, with no middleware, and nothing about them
-// should be read as having been assessed. In particular /finalize performs the
-// one Argon2id derivation in this flow and is currently unbounded, which is a
-// known gap rather than a decision.
+// The two that do not — /verify and /continuation — are outside the scope of this
+// change and are **pending their own security review**. They are mounted exactly
+// as they were, with no middleware, and nothing about them should be read as
+// having been assessed.
 func Routes(
 	router fiber.Router,
 	h *Handler,
@@ -89,6 +87,25 @@ func Routes(
 		h.ResendVerification,
 	)
 
+	// Finalization is bounded separately again, and it is the only route here that
+	// performs an Argon2id derivation. The shared PasswordWorkLimiter bounds how
+	// many derivations run at once across the whole process, which protects the
+	// process but does not stop one caller from holding every slot indefinitely;
+	// this bounds how often a caller may ask.
+	//
+	// Mounted in front of the handler so a request carrying no continuation token,
+	// or one that is already consumed, still costs the client a budget rather than
+	// being free — and, more to the point, so a refused request never reaches the
+	// hashing step at all.
+	finalizeIPLimit := middleware.IPRateLimit(
+		rateLimiter,
+		finalizeIPRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    FinalizeIPRateLimitMax,
+			Window: FinalizeIPRateLimitWindow,
+		},
+	)
+
 	// Not rate limited, and not yet reviewed. See the note on Routes.
 	router.Post(
 		"/password-reset/verification/:verification_id/verify",
@@ -102,6 +119,7 @@ func Routes(
 
 	router.Post(
 		"/password-reset/finalize",
+		finalizeIPLimit,
 		h.FinalizePasswordReset,
 	)
 }

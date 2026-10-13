@@ -2259,6 +2259,7 @@ not cost the same thing, and a flood of one must not spend another's allowance.
 | Request | `POST /auth/password-reset` | `password-reset-request-ip` | 10 / 10 min |
 | Status | `GET /password-reset/verification/:verification_id` | `password-reset-status-ip` | 60 / 10 min |
 | PIN issuance | `POST .../pin` **and** `POST .../resend` | `password-reset-pin-ip` | 20 / 10 min |
+| Finalization | `POST /auth/password-reset/finalize` | `password-reset-finalize-ip` | 10 / 15 min |
 
 **Why these values.**
 
@@ -2316,12 +2317,232 @@ No deployment has been selected and no traffic observed.
 
 ### Not covered — pending review
 
-`POST /auth/password-reset/verification/:verification_id/verify`,
-`GET /auth/password-reset/continuation` and `POST /auth/password-reset/finalize`
-are **outside this change and pending their own security review.** They are
-mounted with no middleware, unchanged, and nothing about them should be read as
-having been assessed. In particular `/finalize` is the only Argon2id derivation in
-this flow and is currently unbounded per address — a known gap, not a decision.
+`POST /auth/password-reset/verification/:verification_id/verify` and
+`GET /auth/password-reset/continuation` are **outside this change and pending
+their own security review.** They are mounted with no middleware, unchanged, and
+nothing about them should be read as having been assessed.
+
+`POST /auth/password-reset/finalize` was in this list too. It is no longer — see
+below.
+
+---
+
+## Password reset finalization: a budget and a capacity mapping — implemented
+
+Two changes, in the order they were made. The first bounds how often one client
+address may reach the route; the second gives the refusal the shared password-work
+limiter can produce a truthful answer.
+
+### A budget for `POST /auth/password-reset/finalize`
+
+`password-reset-finalize-ip`, **10 per 15 minutes** per client address.
+
+`/finalize` is the only route in this flow that performs an Argon2id derivation, and
+it was the last unbounded route that could reach one. The reasoning is the one
+registration applied to the same route:
+
+- `security.PasswordWorkLimiter` bounds how many derivations run **at once**
+  across the whole process. That protects the process.
+- It does **not** stop one caller from holding every slot indefinitely and
+  re-acquiring on release. A caller holding a valid continuation token could keep
+  the pool occupied and turn every legitimate login, manual registration and
+  password reset into a refusal for as long as they kept it there. `registration/constants.go`
+  states this explicitly for `finalize-ip`, and the same applies here.
+
+The values are **deliberately identical to registration's `finalize-ip`** — same
+route, one derivation per request, same cost to serve. Matching is what makes the
+two features comparable rather than merely similar.
+
+The namespace is its own. `finalize-ip` is registration's, and a namespace is one
+flow's budget: a caller who has exhausted their password-reset allowance has spent
+nothing of registration's, and merging them would let one flow's flood lock the
+other out. It is also separate from `password-reset-request-ip`,
+`password-reset-status-ip` and `password-reset-pin-ip`, so that exhausting the one
+expensive route cannot be used to starve the steps leading to it, and so that a
+caller who mistypes a PIN cannot spend the allowance that governs the derivation.
+
+It is mounted **in front of** the handler, so a request carrying no continuation
+token, or one that is already consumed, is still charged — and, more to the point,
+so a refused request never reaches the hashing step at all.
+
+**These thresholds are initial engineering estimates, not production-validated
+values.** No deployment has been selected and no traffic observed. Revisit them
+against real traffic and real shared addresses. By count, this and
+registration's `finalize-ip` (10) are the tightest budgets in the application;
+`password-reset-request-ip` shares the count but opens its window twice as often.
+
+### `PASSWORD_WORK_UNAVAILABLE` on password reset
+
+`FinalizePasswordReset` previously mapped every failure from
+`passwordHasher.Hash` to `500 INTERNAL_SERVER_ERROR`. Capacity exhaustion is not a
+fault, so a momentarily busy server reported itself as a broken one, and the
+response carried **no `Retry-After`** — leaving a client told only "500" with no
+instruction and nothing to act on.
+
+It now returns `503 SERVICE_UNAVAILABLE` with `PASSWORD_WORK_UNAVAILABLE`, the
+message `the server is busy, please try again shortly`, and a `Retry-After`
+derived from `PasswordHasher.Wait()` — the same number the caller was actually
+kept waiting for, read from the limiter rather than repeated as a constant. The
+value matches `login`'s and `registration`'s deliberately: it is the same
+condition with the same recovery for every caller that performs password work,
+while the declarations stay in separate packages so a change to one cannot
+silently change another.
+
+**Only the capacity timeout becomes this.** `PasswordWorkLimiter.Acquire` reports
+a cancelled context and an exhausted budget through the same return value and they
+ask the caller to do opposite things — come back shortly, or stop — so a cancelled
+request or an expired deadline stays a `500` and carries no `Retry-After`.
+
+**Nothing is decided when hashing is refused.** The refusal happens before the
+finalization transaction opens, so the continuation is not consumed, the pending
+reset is not completed, no credential is written and no session is revoked. That
+is asserted against the tables rather than inferred, and the capability is shown
+to still work by completing the same reset once capacity returns.
+
+### Verification
+
+**Unit** — `internal/api/auth/password_reset/password_work_service_test.go`, five
+tests over a hasher whose only slot is held from outside the request, so nothing
+waits for a real derivation:
+
+- `CapacityExhaustionIs503` — `503`, `PASSWORD_WORK_UNAVAILABLE`, the literal
+  string matched against login's and registration's, and a `Retry-After` that is
+  present, positive and no greater than the configured wait.
+- `CapacityExhaustionIsNotAnythingElse` — not `429`, not `400`, not `401`, not `500`.
+- `CapacityExhaustionSaysNothingInternal` — the message is exactly the public one
+  and names no mechanism.
+- `SucceedsOnceCapacityReturns` — the identical request succeeds after the slot is
+  released.
+- `CancelledContextIsNotCapacityExhaustion` — a cancelled request is **not**
+  reported as a busy server; it stays `500` and carries no `Retry-After`.
+
+The atomicity assertion is an **absence**: `UpsertPasswordCredentialAndCompleteReset`
+is never stubbed on any refusal path, and gomock fails on an unexpected call, so
+the refusal is proven to happen before the finalization transaction is entered. In
+`SucceedsOnceCapacityReturns` the expectation is registered only *after* the
+refusal, so registering it up front would have permitted the refusal to take it.
+
+**Integration** — `internal/integration`, six tests:
+
+- `FinalizeBudgetIsEnforcedAheadOfTheHandler` — the first `Max` requests answer
+  `401` (reaching the handler) and the next answers `429` +
+  `IP_RATE_LIMIT_EXCEEDED`, so the middleware and the handler cannot be confused
+  for one another. The namespace, the subject and the policy are read from the
+  limiter's own accounting, and registration's `finalize-ip` is asserted
+  **untouched**.
+- `FinalizeExceededCarriesRetryAfter` — the wait proven against **real Redis**,
+  because a fake can be told what to report; it is positive, never exceeds the
+  window it came from, and never extends it.
+- `FinalizeRefusalConsumesNothing` — a valid token presented from an exhausted
+  address is refused `429`, and the tables are then read to show the reset still
+  `pending` and no credential written. The capability is then shown to be intact
+  by completing the same reset against a fresh limiter.
+- `FinalizeOneAddressDoesNotSpendAnother` — one address's flood does not lock a
+  neighbour out of the same continuation.
+- `FinalizeRedisFailureFailsClosed` — an unusable limiter gives `503`
+  `IP_RATE_LIMIT_UNAVAILABLE` with **no fabricated `Retry-After`**, and changes
+  nothing.
+- `PasswordWorkCapacityIs503` — driven over HTTP against the saturated
+  `saturatedApp`: `503`, `PASSWORD_WORK_UNAVAILABLE`, and `Retry-After` equal to
+  `ceil(configured wait)`.
+
+**State preservation** is asserted from the tables, not inferred from a status
+code, and the two refusal paths assert different sets because they are seeded
+differently:
+
+- `PasswordWorkCapacityIs503` seeds a real credential and an active session, so it
+  can assert all four — `consumed_at` still null, the reset still `pending`, the
+  stored hash still verifying against the **old** password, and the user's session
+  still active.
+- `FinalizeRefusalConsumesNothing` seeds no credential, so it asserts what that
+  fixture can show — the reset still `pending` and `password_credentials` still
+  empty for the address.
+
+Both then complete the same reset successfully, which is what distinguishes
+"nothing was changed" from "something was changed and then consumed".
+
+`TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget` was **narrowed**
+rather than deleted: `/finalize` left that test's premise, and `/verify` and
+`/continuation` remain unreviewed and unbudgeted.
+
+**Both changes were verified to be detected by these tests.** Removing the
+`PASSWORD_WORK_UNAVAILABLE` branch fails four of the five unit tests (the
+cancellation one correctly still passes, because it asserts behaviour that must
+*not* change). Removing the middleware from the route fails all five rate-limit
+integration tests. Nothing here is a test that would pass either way.
+
+**Commands run, and their results:**
+
+```sh
+go build ./...                                              # exit 0
+go vet ./...                                                # exit 0
+go test ./internal/api/auth/password_reset/... -v -count=1  # 27/27 pass
+go test ./internal/integration/ -run 'PasswordReset|PasswordWork' -v -count=1
+                                                            # 39/39 pass
+go test ./... -count=1                                      # exit 0, 20 packages ok
+go test -race ./... -count=1                                # exit 0, no DATA RACE
+```
+
+The race detector **was** run, on the whole module, and passed; this change adds no
+concurrent code, and the two concurrency characterization tests from the audit sit
+alongside it unchanged. The new tests were additionally run with `-count=12`
+(integration) and `-count=5` (unit) with no flakes.
+
+### Swagger
+
+`docs/swagger.json`, `docs/swagger.yaml` and `docs/docs.go` are regenerated from
+the updated handler annotations. They are the only generated artefacts touched, and
+the regeneration was verified to produce **no unrelated churn**: the diff across
+all three is the finalize description plus the two new `429` and `503` responses
+(`swagger.json` and `docs.go`: 3 hunks, +13/-1 each; `swagger.yaml`: 4 hunks,
++18/-0).
+
+The generator was run at the version this module pins:
+
+```sh
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -parseInternal
+```
+
+The `@version` suffix matters and resolves outside this module's dependency graph,
+so `go.mod` and `go.sum` are unchanged by it — verified by hash before and after.
+
+**A correction to an earlier note in this file's history:** the previously installed
+`swag` binary reports itself as `v1.16.4`, and that was previously read as a
+version mismatch against the pinned `v1.16.6`. It is not one. swaggo/swag
+`v1.16.6` hardcodes `Version = "v1.16.4"` in its own `version.go`, so the two
+report the same string and the installed binary's label says nothing about which
+source it was built from. Churn had to be measured by generating into a scratch
+directory and diffing, which is what was done.
+
+### Still open from the audit
+
+Three findings from the password reset audit are **unresolved**. None is fixed by
+this change and none is claimed to be.
+
+- **F3 — no per-address budget on PIN issuance in this feature.** Registration
+  pairs its `pin-ip` counter with a per-address `pin-email` budget of five an
+  hour; password reset has no second dimension, so `password-reset-pin-ip` is the
+  only ceiling on what one address can be mailed. The effective brute-force
+  ceiling against the six-digit code is bounded — one open reset per address per
+  fifteen minutes, and five attempts per code — but it is well above the "five
+  attempts" a reader of `VerificationCodeMaxAttempts` would assume.
+- **F4 — `CreatePasswordReset` has no single re-run on
+  `pending_password_resets_email_pending_idx`.** Two simultaneous *first* requests
+  for one address both find no open reset, both insert, and one loses on the
+  unique index, answering `409 PASSWORD_RESET_ALREADY_PENDING` with no
+  verification id. Registration solved the identical structural problem with one
+  re-run gated on that constraint.
+- **F5 — no unique index on `password_reset_continuations.pending_password_reset_id`.**
+  Registration has `registration_continuations_pending_registration_unique_idx`;
+  this feature has only a non-unique index. The flow is currently safe because
+  `MarkVerificationRequestVerified` is the single-use authority inside the
+  transaction, but it is the only guard of the three that a constraint does not
+  also enforce. Adding it requires a migration, which was out of scope.
+
+### Not done here
+
+`POST /auth/password-reset/verification/:verification_id/verify` and
+`GET /auth/password-reset/continuation` remain unbudgeted and unreviewed.
 
 ---
 

@@ -23,14 +23,14 @@ import (
 	passwordresetdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/password_reset/generated"
 )
 
-// These tests drive the three budgeted password reset routes through HTTP with a
+// These tests drive the four budgeted password reset routes through HTTP with a
 // limiter the test controls, so the whole path is exercised: route, middleware,
 // handler, service, limiter, and the message that would have been sent.
 //
 // Nothing here needs Redis. The limiter's own Redis binding is proven by the
 // limiter's own integration tests; what these pin is which namespace each route
-// spends, that the two issuance routes share one, and that a refusal costs
-// nothing.
+// spends, that the two issuance routes share one, that the finalize budget is
+// enforced ahead of the handler, and that a refusal costs nothing.
 
 // resetOutcome is one response, reduced to what a rate-limit assertion needs.
 type resetOutcome struct {
@@ -300,6 +300,7 @@ func TestPasswordResetIPRateLimit_EachRouteSpendsItsOwnBudget(t *testing.T) {
 	require.Zero(t, limiter.CallsIn(testutil.PinIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.VerifyIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.FinalizeIPNamespace))
+	require.Zero(t, limiter.CallsIn(testutil.ResetFinalizeIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.LoginIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.GoogleAuthIPNamespace))
 }
@@ -634,13 +635,13 @@ func TestPasswordResetIPRateLimit_RedisFailureFailsClosed(t *testing.T) {
 	require.Zero(t, state.VerificationCodeCount)
 }
 
-// The three routes that are not budgeted stay that way.
+// The two routes that are not budgeted stay that way.
 //
-// VerifyPasswordReset, the continuation lookup and finalization are outside the
-// scope of this change and pending their own security review. They are mounted
-// with no middleware, so no budget is consulted for them, and this test exists to
-// stop a later change from quietly giving them one and implying they had been
-// assessed.
+// VerifyPasswordReset and the continuation lookup are outside the scope of the
+// change that budgeted the other four routes, and pending their own security
+// review. They are mounted with no middleware, so no budget is consulted for
+// them, and this test exists to stop a later change from quietly giving them one
+// and implying they had been assessed.
 func TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget(t *testing.T) {
 	ctx := context.Background()
 
@@ -652,28 +653,12 @@ func TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget(t *testing.T) {
 
 	const address = "198.51.100.86"
 
-	verificationID := openPendingReset(t, "unreviewed@example.com")
-
 	// A verification id that resolves to nothing keeps every one of these a pure
 	// refusal, so what is being counted is the middleware rather than the flow.
 	unknown := uuid.New()
 
 	for range passwordreset.RequestIPRateLimitMax + 5 {
 		postPinVerifyFrom(t, app, unknown, address)
-
-		finalize := resetCall(
-			t,
-			app,
-			http.MethodPost,
-			"/auth/password-reset/finalize",
-			`{"password":"new-password"}`,
-			address,
-		)
-
-		// No continuation token is offered, so this is refused on the absent
-		// credential rather than on an unusable one. Either way it is a pure
-		// refusal that consults no budget.
-		require.Equal(t, http.StatusUnauthorized, finalize.status)
 	}
 
 	continuation := resetCall(
@@ -690,17 +675,16 @@ func TestPasswordResetIPRateLimit_UnreviewedRoutesSpendNoBudget(t *testing.T) {
 	// pure refusal that consults no budget, which is the point.
 	require.Equal(t, http.StatusUnauthorized, continuation.status)
 
-	// Not one budget was consulted, so no number of calls to these three could
+	// Not one budget was consulted, so no number of calls to these two could
 	// ever exhaust one.
 	require.Zero(t, limiter.CallsIn(testutil.ResetRequestIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.ResetStatusIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.ResetPinIPNamespace))
+	require.Zero(t, limiter.CallsIn(testutil.ResetFinalizeIPNamespace))
 
 	// The budgeted routes were not called here either.
 	require.Zero(t, limiter.CallsIn(testutil.LoginIPNamespace))
 	require.Zero(t, limiter.CallsIn(testutil.PinEmailNamespace))
-
-	_ = verificationID
 }
 
 // One address exhausting a reset budget must not lock anyone else out, which is
@@ -732,5 +716,451 @@ func TestPasswordResetIPRateLimit_OneAddressDoesNotSpendAnother(t *testing.T) {
 		t,
 		http.StatusCreated,
 		postResetFrom(t, app, "neighbour-check@example.com", neighbour).status,
+	)
+}
+
+// postResetFinalizeFrom calls the finalization route from the given client
+// address, carrying the given continuation token.
+//
+// It builds the request rather than reusing resetCall, because resetCall serves
+// the routes that take no credential in a header and therefore never learned to
+// send one. A finalization without the header is refused before it reaches the
+// flow, which would make every budget assertion below meaningless.
+func postResetFinalizeFrom(
+	t *testing.T,
+	app *fiber.App,
+	token string,
+	password string,
+	address string,
+) resetOutcome {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/auth/password-reset/finalize",
+		strings.NewReader(`{"password":"`+password+`"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Password-Reset-Continuation", token)
+	req.Header.Set("X-Forwarded-For", address)
+
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 60 * time.Second})
+	require.NoError(t, err)
+
+	outcome := resetOutcome{
+		status:     resp.StatusCode,
+		retryAfter: resp.Header.Get(fiber.HeaderRetryAfter),
+	}
+
+	if outcome.status < 400 {
+		return outcome
+	}
+
+	var decoded registerAPIError
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
+
+	outcome.code = decoded.Error.Code
+
+	return outcome
+}
+
+// openResetWithContinuation drives the whole password reset flow through the real
+// endpoints on the shared app and returns a continuation token that production
+// code minted, together with the account it belongs to.
+//
+// The flow runs on testApp rather than on the app under test so that arranging a
+// fixture never spends the budget the test is about: testApp carries its own
+// limiter instance, and its finalize counter is not the one being exhausted.
+//
+// A token the application issued is what makes the assertions below meaningful. A
+// refusal that consumed it would turn a momentarily expensive route into a user
+// who can never finish the reset, and only a real capability can show that.
+func openResetWithContinuation(
+	t *testing.T,
+	emailAddress string,
+) (uuid.UUID, string) {
+	t.Helper()
+
+	userID, verificationID, issuedPIN := startPasswordResetWithPIN(
+		t,
+		emailAddress,
+	)
+
+	minted := verifyPasswordResetPIN(verificationID, issuedPIN)
+	require.NoError(t, minted.err)
+	require.Equal(t, http.StatusOK, minted.status, minted.code)
+	require.NotEmpty(t, minted.token)
+
+	return userID, minted.token
+}
+
+// The finalize budget is spent before the handler runs.
+//
+// The route is the only one in this flow that performs an Argon2id derivation, so
+// its requests are charged even when they are refused: a request carrying no
+// continuation token never reaches the hashing step, and charging only the ones
+// that got that far would leave the expensive path free to flood.
+//
+// Every request below is refused by the handler rather than by the budget, which
+// is what makes the boundary observable: the first Max requests answer 401 and the
+// next answers 429, so the two layers cannot be confused for one another.
+func TestPasswordResetIPRateLimit_FinalizeBudgetIsEnforcedAheadOfTheHandler(t *testing.T) {
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	const address = "198.51.100.87"
+
+	// No token is offered, so every request is a pure refusal that reaches the
+	// header check and nothing else. Nothing can be consumed by any of them, which
+	// is what keeps this a measurement of the budget rather than of the flow.
+	for range passwordreset.FinalizeIPRateLimitMax {
+		outcome := postResetFinalizeFrom(t, app, "", "new-password", address)
+
+		require.Equal(
+			t,
+			http.StatusUnauthorized,
+			outcome.status,
+			"attempt within budget should reach the handler, got %s",
+			outcome.code,
+		)
+	}
+
+	exhausted := postResetFinalizeFrom(t, app, "", "new-password", address)
+
+	require.Equal(t, http.StatusTooManyRequests, exhausted.status)
+	require.Equal(t, middleware.CodeIPRateLimitExceeded, exhausted.code)
+
+	// It was the finalize budget, charged against this address, under this
+	// policy. Asserted from the limiter's own accounting rather than from the
+	// status code, because a request refused by the wrong budget would also be a
+	// 429.
+	require.Equal(
+		t,
+		passwordreset.FinalizeIPRateLimitMax+1,
+		limiter.CallsIn(testutil.ResetFinalizeIPNamespace),
+	)
+	// Every consultation was charged against this one address, which is what makes
+	// the budget per-address rather than global.
+	chargedTo := limiter.SubjectsIn(testutil.ResetFinalizeIPNamespace)
+	require.Len(
+		t,
+		chargedTo,
+		passwordreset.FinalizeIPRateLimitMax+1,
+		"one subject per request, and no other",
+	)
+
+	for _, subject := range chargedTo {
+		require.Equal(
+			t,
+			address,
+			subject,
+			"namespace charged the wrong address",
+		)
+	}
+
+	require.Equal(
+		t,
+		ratelimit.Policy{
+			Max:    passwordreset.FinalizeIPRateLimitMax,
+			Window: passwordreset.FinalizeIPRateLimitWindow,
+		},
+		limiter.Policies[len(limiter.Policies)-1],
+		"the policy must be the one this feature declares",
+	)
+
+	// Registration's identically-shaped budget is a different counter. The two
+	// routes perform the same work, so merging them is the tempting mistake, and
+	// it would let one flow's flood lock the other out.
+	require.Zero(
+		t,
+		limiter.CallsIn(testutil.FinalizeIPNamespace),
+		"password reset must not spend registration's finalize budget",
+	)
+}
+
+// A refused finalization carries a wait the client can act on, and it is derived
+// from the counter rather than from the configured window.
+//
+// The real limiter is used, because the wait is produced by the counter's own
+// remaining TTL. A fake can be told what to report, which would only prove the
+// fake reports what it was told — which is why this is a separate test from the
+// one that walks the budget.
+func TestPasswordResetIPRateLimit_FinalizeExceededCarriesRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	app, _ := newIPLimitedApp(t)
+
+	const address = "198.51.100.92"
+
+	var waits []int
+
+	for range passwordreset.FinalizeIPRateLimitMax + 3 {
+		outcome := postResetFinalizeFrom(
+			t,
+			app,
+			"",
+			"new-password",
+			address,
+		)
+
+		if outcome.status == http.StatusUnauthorized {
+			continue
+		}
+
+		require.Equal(t, http.StatusTooManyRequests, outcome.status)
+		require.NotEmpty(
+			t,
+			outcome.retryAfter,
+			"a 429 must tell the client when to come back",
+		)
+
+		seconds, err := strconv.Atoi(outcome.retryAfter)
+		require.NoError(t, err)
+		require.Positive(t, seconds)
+		require.LessOrEqual(
+			t,
+			seconds,
+			int(passwordreset.FinalizeIPRateLimitWindow.Seconds()),
+			"the wait must never exceed the window it came from",
+		)
+
+		waits = append(waits, seconds)
+	}
+
+	require.NotEmpty(t, waits, "the budget was never spent")
+
+	// A refused request does not push the window forward, so the reported wait can
+	// only hold steady or fall.
+	for index := 1; index < len(waits); index++ {
+		require.LessOrEqualf(
+			t,
+			waits[index],
+			waits[index-1],
+			"a refused request must not extend the window: waits %v",
+			waits,
+		)
+	}
+}
+
+// A refused finalization changes nothing.
+//
+// The budget is charged in front of the handler, so the request that is turned
+// away never runs the transaction: the continuation stays unconsumed, the reset
+// stays pending, and the credential is untouched. Reading the tables is what
+// proves it, because a refusal is also what a consumed continuation would answer
+// on the next attempt.
+func TestPasswordResetIPRateLimit_FinalizeRefusalConsumesNothing(t *testing.T) {
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	const emailAddress = "finalize-refusal@example.com"
+
+	_, token := openResetWithContinuation(t, emailAddress)
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	const address = "198.51.100.88"
+
+	for range passwordreset.FinalizeIPRateLimitMax {
+		postResetFinalizeFrom(t, app, "", "new-password", address)
+	}
+
+	// A real, valid continuation presented from an address that has spent its
+	// budget. This is the request that would complete the reset if anything let it
+	// through.
+	refused := postResetFinalizeFrom(
+		t,
+		app,
+		token,
+		"a-brand-new-password",
+		address,
+	)
+
+	require.Equal(t, http.StatusTooManyRequests, refused.status)
+	require.Equal(t, middleware.CodeIPRateLimitExceeded, refused.code)
+
+	state, err := db.GetPasswordResetState(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		string(passwordreset.PendingPasswordResetPending),
+		state.PasswordResetStatus,
+		"a refused finalization must not complete the reset",
+	)
+
+	counts, err := db.CountPasswordResetStateForEmail(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.Zero(
+		t,
+		counts.CredentialCount,
+		"a refused finalization must not write a credential",
+	)
+
+	// The capability is intact, so the very same request succeeds once the budget
+	// reopens. That is what makes the Retry-After a real instruction rather than a
+	// dead end, and it is only observable if the refusal consumed nothing: a
+	// consumed continuation would answer 409 here instead.
+	//
+	// A fresh limiter stands in for a reopened window. Waiting one out would make
+	// the test depend on a clock rather than on behaviour.
+	reopened, _ := resetApp(t, testutil.NewCountingPinRateLimiter())
+
+	accepted := postResetFinalizeFrom(
+		t,
+		reopened,
+		token,
+		"a-brand-new-password",
+		address,
+	)
+
+	require.Equal(
+		t,
+		http.StatusOK,
+		accepted.status,
+		"a refused finalization must leave the continuation usable: %s",
+		accepted.code,
+	)
+
+	finalState, err := db.GetPasswordResetFinalState(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.True(
+		t,
+		finalState.ConsumedAt.Valid,
+		"the reset completed only once the budget reopened",
+	)
+	require.Equal(
+		t,
+		string(passwordreset.PendingPasswordResetCompleted),
+		finalState.PasswordResetStatus,
+	)
+}
+
+// One address spending the finalize budget must not lock another out, which is
+// the whole reason the budget is per address rather than global.
+func TestPasswordResetIPRateLimit_FinalizeOneAddressDoesNotSpendAnother(t *testing.T) {
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	const emailAddress = "finalize-neighbour@example.com"
+
+	_, token := openResetWithContinuation(t, emailAddress)
+
+	limiter := testutil.NewEnforcingPinRateLimiter()
+	app, _ := resetApp(t, limiter)
+
+	const (
+		flooder  = "198.51.100.89"
+		neighbour = "198.51.100.94"
+	)
+
+	for range passwordreset.FinalizeIPRateLimitMax {
+		postResetFinalizeFrom(t, app, "", "new-password", flooder)
+	}
+
+	require.Equal(
+		t,
+		http.StatusTooManyRequests,
+		postResetFinalizeFrom(t, app, "", "new-password", flooder).status,
+	)
+
+	// Same moment, same endpoint, same continuation, different address. If the
+	// counter were shared across addresses this would be a 429 too, and the reset
+	// would be unreachable behind one noisy neighbour.
+	accepted := postResetFinalizeFrom(
+		t,
+		app,
+		token,
+		"a-brand-new-password",
+		neighbour,
+	)
+
+	require.Equal(
+		t,
+		http.StatusOK,
+		accepted.status,
+		accepted.code,
+	)
+
+	finalState, err := db.GetPasswordResetFinalState(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.True(
+		t,
+		finalState.ConsumedAt.Valid,
+		"the neighbour's finalization must have completed the reset",
+	)
+	require.Equal(
+		t,
+		string(passwordreset.PendingPasswordResetCompleted),
+		finalState.PasswordResetStatus,
+	)
+}
+
+// An unusable limiter refuses finalization rather than letting it through.
+//
+// Failing open would hand anyone the ability to switch the ceiling off by causing
+// the failure that produces it. This widens the blast radius of a Redis outage,
+// and the widening is deliberate: a request that reached the handler would
+// perform an Argon2id derivation that nothing was counting.
+func TestPasswordResetIPRateLimit_FinalizeRedisFailureFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	db := passwordresetdbtest.New(testPool)
+	require.NoError(t, db.TruncatePasswordResetData(ctx))
+
+	const emailAddress = "finalize-redis-down@example.com"
+
+	_, token := openResetWithContinuation(t, emailAddress)
+
+	limiter := testutil.UnavailablePinRateLimiter(
+		errors.New("redis unreachable"),
+	)
+
+	app, _ := resetApp(t, limiter)
+
+	outcome := postResetFinalizeFrom(
+		t,
+		app,
+		token,
+		"a-brand-new-password",
+		"198.51.100.93",
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, outcome.status)
+	require.Equal(t, middleware.CodeIPRateLimitUnavailable, outcome.code)
+
+	// No fabricated wait: the counter has no window to name, so inventing one
+	// would tell the client to come back at a moment nobody chose.
+	require.Empty(t, outcome.retryAfter)
+
+	state, err := db.GetPasswordResetState(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.Equal(
+		t,
+		string(passwordreset.PendingPasswordResetPending),
+		state.PasswordResetStatus,
+		"a refused finalization must not complete the reset",
+	)
+
+	counts, err := db.CountPasswordResetStateForEmail(ctx, emailAddress)
+	require.NoError(t, err)
+
+	require.Zero(
+		t,
+		counts.CredentialCount,
+		"a limiter outage must not be a way to reset a password",
 	)
 }
