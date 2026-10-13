@@ -802,11 +802,15 @@ honest consequence of `platform` being free text published by the page.
   registration route that sends a message or does expensive work is now
   limited: see "Registration rate limiting" and "Registration verification and
   finalization" below. Manual login has two budgets and Google authentication
-  has one. Password reset, saved items, collections, search and enrichment
-  remain deliberately unlimited for now. `GetVerification` and
-  `GetRegistrationContinuation` are deliberately unlimited as well: both are
-  pure reads, and one of them is what a client polls to learn when it may
-  resend.
+  has one. Password reset is limited on all four of its working routes, and the
+  two saved-item routes that cost something beyond a read are limited per user:
+  see "Per-user budgets on the saved-item routes" below. **Collections, search,
+  and the reads and deletes on saved items remain deliberately unlimited.** The
+  collection and search routes spend no shared resource beyond an ordinary query
+  and hold no cursor or lock that outlives the request.
+  `GetVerification` and `GetRegistrationContinuation` are deliberately unlimited
+  as well: both are pure reads, and one of them is what a client polls to learn
+  when it may resend.
 - A possible one-off backfill of items enriched before automatic organization
   existed, which are still in `Unsorted` with a platform. This is an open product
   decision rather than a gap in the mechanism, and it would be a separate
@@ -2739,6 +2743,205 @@ go test ./internal/integration/ -run 'PasswordReset|PasswordWork' -count=1
 go test ./... -count=1                                      # exit 0
 go test -race ./... -count=1                                # exit 0, no DATA RACE
 ```
+
+---
+
+## Per-user budgets on the saved-item routes — implemented
+
+Two of the four routes in `internal/api/saved_item` and
+`internal/api/enrichment` now carry a budget keyed on the authenticated user
+rather than on a client address. Both are mounted **after `middleware.Auth`** and
+**before the handler**, in the order that matters: the identity is what is being
+charged, and a refused request must never reach the work it guards.
+
+| Route | Namespace | Policy |
+| --- | --- | --- |
+| `POST /saved-items` | `saved-item-create-user` | 60 per 10 minutes |
+| `POST /saved-items/:id/enrich` | `saved-item-enrich-user` | 10 per minute |
+
+### Why the user and not the address
+
+Every rate limit in this application before these two is keyed on a client
+address, because every one guards a route reachable **without authentication**,
+where an address is the only thing a caller has. These two routes are different:
+they act on rows owned by exactly one account, and every query they run is
+already scoped by that account.
+
+- An address budget does not survive a caller changing address, so it is not a
+  ceiling on one account at all — it is a ceiling on one network path.
+- It charges a household or an office behind one NAT for each other's activity,
+  which for `/enrich` would mean one person fixing several items could exhaust a
+  colleague's allowance.
+- The identity is **already verified** by `middleware.Auth` and is the thing
+  ownership is checked against, so it costs nothing to use and cannot be forged.
+
+`security.AccessTokenClaims.Subject` is used directly. It is a required claim —
+`AccessTokenVerifier` rejects a token without one — so the subject is never
+invented, empty, or attacker-chosen.
+
+### Why these two routes and no others
+
+A budget is only worth having where it bounds something shared.
+
+- `POST /saved-items/:id/enrich` is **the only route in the application that
+  performs an outbound fetch inside the API process**. Each call holds a handler
+  and a database connection for as long as `security.OutboundFetchTimeout`
+  permits. Every other page read happens in the worker, where
+  `WorkerConcurrency` already bounds it. That makes this the tightest budget in
+  the application: the scarce resource is shared by every account.
+- `POST /saved-items` is cheap in itself — a lookup, one insert, one queue write
+  — but it is what **arranges** unbounded work: every save enqueues an
+  enrichment task, the producer sets no `asynq.Unique` or `TaskID`, and the queue
+  is not capped. What the budget bounds is queue growth, not the insert.
+- `GET /saved-items/:id` and `DELETE /saved-items/:id` are deliberately **not**
+  limited. Neither fetches, enqueues, nor writes enrichment state; they cost what
+  every other authenticated read costs. A limit there would bound nothing.
+- **Collection and search routes are untouched.** They hold no cursor or lock that
+  outlives a request, perform no outbound fetch, and enqueue nothing.
+
+**These thresholds are initial engineering estimates, not production-validated
+values.** No deployment has been selected and no traffic observed. Ten a minute
+for `/enrich` sits where a person cannot reach it by re-enriching deliberately
+while a genuine user fixing several items in a row still fits; sixty in ten
+minutes for a save is well above ordinary use. Revisit both against real traffic.
+
+### Separate namespaces, deliberately
+
+The two routes cost different things, so they must not share one allowance: a
+user who has been throttled for saving must still be able to refresh an item
+whose page looks wrong, and the reverse. One shared counter would let a caller
+saturating the cheap route starve the expensive one. Both are also separate from
+every auth namespace — reaching either route is not an authentication attempt,
+and an exhausted save budget must never lock anyone out of signing in.
+
+### Redis failures — fail closed, on both routes
+
+An unreachable counter is **not** permission. Letting a request through would let
+anyone remove the ceiling by causing the failure that produces it, so both routes
+answer `503 USER_RATE_LIMIT_UNAVAILABLE` with **no `Retry-After`** (there is no
+known recovery time) and perform no work: a refused save writes no row and
+enqueues nothing, a refused enrichment performs no fetch and writes no
+enrichment state.
+
+**The save's fail-closed policy is a choice, not the only defensible one, and is
+recorded as such.** The enrichment route has no real alternative — it spends an
+outbound fetch inline and that is precisely the work the budget exists to bound.
+The save could honestly have been treated as cheap enough to accept blind. It was
+not, because a save schedules a task on a queue nobody can currently measure, and
+accepting writes while blind to the queue is how that queue grows unbounded
+exactly when the process is already in trouble.
+
+### Error codes
+
+`USER_RATE_LIMIT_EXCEEDED` (429, with `Retry-After`) and
+`USER_RATE_LIMIT_UNAVAILABLE` (503) are declared in `internal/middleware` beside
+the middleware, alongside the existing `IP_RATE_LIMIT_*` pair. They name the
+**dimension**, not the endpoint — the path already says which route refused, and
+the namespace is what says which operation — which is the convention
+`middleware.IPRateLimit` already followed.
+
+A request that reaches the limiter with no verified claims is a `500`, not a 429
+and not an invented subject. It is unreachable when the middleware is mounted
+after `Auth`, so reaching it means a wiring mistake; merging every unidentifiable
+request into one counter would hand a caller the choice of which budget it lands
+in.
+
+### Wiring
+
+`saveditem.RegisterModule` and `enrichment.RegisterModule` each take one
+`middleware.RateLimiter`. `cmd/api/main.go` passes the **same**
+`pinRateLimiter` instance it already builds for the auth budgets — one limiter
+serves every budget in the process, and a limiter per feature would make the
+total the sum of the parts. `collection.RegisterModule` is unchanged.
+
+`internal/testutil` gained `NewAppWithEnqueuerAndLimiter`, because the existing
+constructors could supply an enricher or a limiter but not both. One limiter is
+still injected for the whole app, as production does it, so cross-namespace
+isolation stays testable.
+
+### Verification
+
+**Middleware unit tests** — `internal/middleware/user_ratelimit_test.go`, ten
+tests: the subject is the token's subject and nothing else; two accounts are two
+budgets; `429` carries a whole-second `Retry-After` (rounded up, never negative,
+fractional waits covered); `503` fabricates no wait; a refusal does not reach the
+handler; an unauthenticated request is refused by `Auth` with the limiter **never
+asked**; missing claims is a `500` and never becomes a subject; and mounting the
+limiter *before* `Auth` is asserted to break the route rather than merely leave it
+unbounded.
+
+**Integration tests** — `internal/integration/saved_item_user_rate_limit_test.go`,
+nine tests driving the real app, handlers, services, repositories and PostgreSQL,
+with only the limiter substituted:
+
+- `WithinBudgetChargesTheCallersAccount` / `WithinBudgetFetches` — assert the
+  namespace, the subject **and the exact policy**, so a route consulting a
+  limiter under the right name with a different allowance cannot pass.
+- `ExceededCreatesNothingAndQueuesNothing` — `429` with `Retry-After`, zero rows,
+  zero queued tasks.
+- `ExceededDoesNotFetchAndWritesNothing` — `429`, the enricher was never called,
+  and `enrichment_status` is still `pending` with no `last_enriched_at`.
+- `TheTwoBudgetsAreIndependent` — exhausting either leaves the other whole.
+- `OneAccountDoesNotSpendAnother` — a full 60-request flood from one account, then
+  a **neighbour** still gets `201`.
+- `UnreachableCounterFailsClosed` — both routes, with no side effect in either
+  case.
+- `UnauthenticatedIsRefusedBeforeTheBudget` — `401` on both routes, with no
+  account created and an enrichment id that does not exist, so the answer is
+  shown not to depend on the row situation.
+- `ReadsAndDeletesAreNotLimited` — a limiter that refuses **everything** is wired
+  in and both limited routes still work, while `GET` and `DELETE` consult neither
+  namespace. This is what pins the deliberate scope.
+
+**These tests were verified to detect the limiter's absence.** Removing the
+middleware from both routes fails **7 of the 9** integration tests. The two that
+still pass are the negative tests by design —
+`UnauthenticatedIsRefusedBeforeTheBudget` and `ReadsAndDeletesAreNotLimited`
+assert what must *not* happen, which is true with or without the middleware.
+Nothing in the file is a test that would pass either way about the limiter's
+presence.
+
+The new tests were additionally run at `-count=3` (integration) and `-count=5`
+(middleware) with no flakes.
+
+### Swagger
+
+`docs/swagger.json`, `docs/swagger.yaml` and `docs/docs.go` are regenerated from
+the updated handler annotations. The diff is confined to the two limited routes:
+each gains a description line, two error codes in its description list, and `429`
+and `503` responses. **No other route in the document moved** — verified by
+reading the full diff, not by trusting the generator.
+
+```sh
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -parseInternal
+```
+
+### Still open
+
+- **Failing closed on `POST /saved-items` is a deliberate choice** recorded above,
+  not a settled decision. It is the one policy here with a reasonable
+  alternative, and which is right depends on how the save path is expected to
+  behave during a Redis outage.
+- **No per-item or per-URL budget was added.** Two accounts hitting `/enrich`
+  about the same URL are both charged, and the worker can still be asked to fetch
+  the same page repeatedly. Adding one needs a decision about whether duplicate
+  enrichment is acceptable product behaviour, which it may well be.
+- **The thresholds are unmeasured**, as stated above.
+
+### Commands run, and their results
+
+```sh
+go build ./...                                              # exit 0
+go vet ./...                                                # exit 0
+go test ./internal/middleware/ -run TestUserRateLimit -count=5
+                                                             # pass
+go test ./internal/integration/ -run 'TestSavedItemCreateUserRateLimit|TestSavedItemEnrichUserRateLimit|TestSavedItemUserRateLimit' -count=3
+                                                             # pass
+go test ./... -count=1                                      # exit 0, 20 packages ok
+go test -race ./... -count=1                                # exit 0, no DATA RACE
+```
+
+The race detector **was** run on the whole module and passed.
 
 ---
 

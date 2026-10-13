@@ -452,6 +452,25 @@ const (
 	// lock the other out, which is the same reasoning that keeps every other pair
 	// here separate.
 	ResetFinalizeIPNamespace = "password-reset-finalize-ip"
+
+	// SavedItemCreateUserNamespace is the per-user budget on POST /saved-items,
+	// spent after Auth and before the handler.
+	//
+	// It is keyed on the account rather than on a client address because what the
+	// route schedules — one enrichment task per save, unbounded and deduplicated
+	// by nothing — belongs to the account whose rows it is growing. An address
+	// budget would not survive a caller changing address, and would charge a
+	// shared address for the activity of everyone behind it.
+	SavedItemCreateUserNamespace = "saved-item-create-user"
+
+	// SavedItemEnrichUserNamespace is the per-user budget on
+	// POST /saved-items/:id/enrich, spent after Auth and before the handler.
+	//
+	// It is separate from SavedItemCreateUserNamespace because the two routes cost
+	// different things and must not spend one allowance: this one performs an
+	// outbound fetch inside the API process, while a save pushes its fetch to the
+	// worker. One user saturating one must still be able to use the other.
+	SavedItemEnrichUserNamespace = "saved-item-enrich-user"
 )
 
 // UnavailablePinRateLimiter returns a limiter that cannot answer, standing in for

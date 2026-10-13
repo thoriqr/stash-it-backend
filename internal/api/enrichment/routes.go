@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
+	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -20,10 +21,28 @@ func Routes(
 	router fiber.Router,
 	handler *Handler,
 	verifier *security.AccessTokenVerifier,
+	userRateLimiter middleware.RateLimiter,
 ) {
+	// This is the only route in the application that performs an outbound fetch
+	// inside the API process, so its budget is the tightest one here and it is
+	// mounted between Auth and the handler: a refused request must never fetch a
+	// page, and must never write enrichment state.
+	//
+	// It runs after Auth because the budget belongs to the account. The identity is
+	// already verified, and it is the thing every query on this path is scoped by.
+	enrichUserLimit := middleware.UserRateLimit(
+		userRateLimiter,
+		enrichUserRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    EnrichUserRateLimitMax,
+			Window: EnrichUserRateLimitWindow,
+		},
+	)
+
 	router.Post(
 		"/:id/enrich",
 		middleware.Auth(verifier),
+		enrichUserLimit,
 		handler.Enrich,
 	)
 }

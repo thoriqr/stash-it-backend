@@ -158,13 +158,18 @@ func main() {
 	// Rate limiting reuses the connection above rather than opening another, so
 	// the process still has one pool and one Close. The limiter refuses to answer
 	// when Redis is unreachable, which is why Check runs here: a feature that
-	// guards sending email treats an unreachable counter as a refusal, and this
-	// line is where that wiring mistake would otherwise be discovered by a user
-	// rather than at startup.
+	// guards sending email, or performing an outbound fetch, treats an unreachable
+	// counter as a refusal, and this line is where that wiring mistake would
+	// otherwise be discovered by a user rather than at startup.
 	//
 	// The secret keys the subject hash and is the same one verification codes are
 	// HMAC'd with, which is already required at startup and already a secret this
 	// process holds.
+	//
+	// One limiter serves every budget in the process. It is passed by
+	// interface to each feature that spends one, so a feature names its own
+	// namespace and policy while the counter behind them all stays a single
+	// connection and a single Lua script.
 	pinRateLimiter := ratelimit.New(
 		redisClient,
 		[]byte(cfg.VerificationCodeSecret),
@@ -216,6 +221,7 @@ func main() {
 		pool,
 		cfg,
 		enrichmentProducer,
+		pinRateLimiter,
 		log,
 	)
 
@@ -247,6 +253,7 @@ func main() {
 		pool,
 		cfg,
 		metadataEnricher,
+		pinRateLimiter,
 		log,
 	)
 

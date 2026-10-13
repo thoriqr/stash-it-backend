@@ -28,12 +28,15 @@ func NewHandler(service Service) *Handler {
 // @Description If the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.
 // @Description The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
 // @Description Enrichment never changes which collection the item is in.
+// @Description This is the only endpoint that fetches a page inside the API process, so it is rate limited per authenticated user. The budget is spent before the request reaches this handler: a refused enrichment performs no fetch and writes no enrichment state.
 // @Description Possible error codes:
 // @Description - SAVED_ITEM_NOT_FOUND
 // @Description - BAD_REQUEST
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
+// @Description - USER_RATE_LIMIT_EXCEEDED
+// @Description - USER_RATE_LIMIT_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags SavedItem
 // @Produce json
@@ -43,6 +46,8 @@ func NewHandler(service Service) *Handler {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid saved item ID"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
 // @Failure 404 {object} swagger.APIErrorResponse "Saved item not found"
+// @Failure 429 {object} swagger.APIErrorResponse "Rate limit exceeded for this user"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting is unavailable, so the fetch is not attempted"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /saved-items/{id}/enrich [post]
 func (h *Handler) Enrich(c fiber.Ctx) error {

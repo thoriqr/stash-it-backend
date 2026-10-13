@@ -7,6 +7,7 @@ import (
 
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -23,6 +24,7 @@ func RegisterModule(
 	pool *pgxpool.Pool,
 	cfg config.Config,
 	enqueuer SavedItemEnqueuer,
+	userRateLimiter middleware.RateLimiter,
 	log *zap.Logger,
 ) {
 	savedItemQueries := saveditemdb.New(pool)
@@ -49,5 +51,6 @@ func RegisterModule(
 		app.Group("/saved-items"),
 		savedItemHandler,
 		accessTokenVerifier,
+		userRateLimiter,
 	)
 }

@@ -2545,12 +2545,15 @@ paths:
         The response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as "this page has nothing" rather than "this page has not been read yet".
         enrichment_status is the value the row was stored with, which on a fresh save is always "pending". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports "completed". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.
         The save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.
+        Saving is rate limited per authenticated user. The budget is spent before the request reaches this handler, so a refused save creates nothing and queues nothing: there is no partial state to reconcile.
         Possible error codes:
         - VALIDATION_ERROR
         - INVALID_URL
         - INVALID_AUTHORIZATION_HEADER
         - INVALID_ACCESS_TOKEN
         - ACCESS_TOKEN_EXPIRED
+        - USER_RATE_LIMIT_EXCEEDED
+        - USER_RATE_LIMIT_UNAVAILABLE
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Save URL request
@@ -2574,8 +2577,16 @@ paths:
           description: Invalid or expired access token
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Rate limit exceeded for this user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting is unavailable, so the save is refused
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       security:
@@ -2758,12 +2769,15 @@ paths:
         If the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.
         The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
         Enrichment never changes which collection the item is in.
+        This is the only endpoint that fetches a page inside the API process, so it is rate limited per authenticated user. The budget is spent before the request reaches this handler: a refused enrichment performs no fetch and writes no enrichment state.
         Possible error codes:
         - SAVED_ITEM_NOT_FOUND
         - BAD_REQUEST
         - INVALID_AUTHORIZATION_HEADER
         - INVALID_ACCESS_TOKEN
         - ACCESS_TOKEN_EXPIRED
+        - USER_RATE_LIMIT_EXCEEDED
+        - USER_RATE_LIMIT_UNAVAILABLE
         - INTERNAL_SERVER_ERROR
       parameters:
       - description: Saved item ID
@@ -2791,8 +2805,16 @@ paths:
           description: Saved item not found
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Rate limit exceeded for this user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
         "500":
           description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting is unavailable, so the fetch is not attempted
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
       security:

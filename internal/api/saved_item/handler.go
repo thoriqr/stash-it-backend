@@ -26,12 +26,15 @@ func NewHandler(service SavedItemService) *Handler {
 // @Description The response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as "this page has nothing" rather than "this page has not been read yet".
 // @Description enrichment_status is the value the row was stored with, which on a fresh save is always "pending". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports "completed". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.
 // @Description The save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.
+// @Description Saving is rate limited per authenticated user. The budget is spent before the request reaches this handler, so a refused save creates nothing and queues nothing: there is no partial state to reconcile.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_URL
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
+// @Description - USER_RATE_LIMIT_EXCEEDED
+// @Description - USER_RATE_LIMIT_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags SavedItem
 // @Accept json
@@ -41,6 +44,8 @@ func NewHandler(service SavedItemService) *Handler {
 // @Success 201 {object} CreateSavedItemAPIResponse "The saved item's id, url, collection_id and enrichment_status"
 // @Failure 400 {object} swagger.ValidationErrorResponse "Validation error or invalid URL"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 429 {object} swagger.APIErrorResponse "Rate limit exceeded for this user"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting is unavailable, so the save is refused"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /saved-items [post]
 func (h *Handler) Create(c fiber.Ctx) error {

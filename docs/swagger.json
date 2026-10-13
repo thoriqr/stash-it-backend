@@ -1731,7 +1731,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Save a URL to the current user's inbox. The domain is derived server-side from the submitted URL by lowercasing the host and removing a single leading \"www.\"; the remote page is never fetched and no metadata extraction is performed. Platform and title are left null and are populated later by background enrichment.\nThe response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as \"this page has nothing\" rather than \"this page has not been read yet\".\nenrichment_status is the value the row was stored with, which on a fresh save is always \"pending\". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports \"completed\". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.\nThe save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Save a URL to the current user's inbox. The domain is derived server-side from the submitted URL by lowercasing the host and removing a single leading \"www.\"; the remote page is never fetched and no metadata extraction is performed. Platform and title are left null and are populated later by background enrichment.\nThe response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as \"this page has nothing\" rather than \"this page has not been read yet\".\nenrichment_status is the value the row was stored with, which on a fresh save is always \"pending\". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports \"completed\". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.\nThe save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.\nSaving is rate limited per authenticated user. The budget is spent before the request reaches this handler, so a refused save creates nothing and queues nothing: there is no partial state to reconcile.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -1772,8 +1772,20 @@
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Rate limit exceeded for this user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so the save is refused",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -1982,7 +1994,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fetches the page at the saved item's URL and stores the metadata it exposes, such as title, platform, description and preview image.\nThis acts on exactly one saved item. It is not a batch operation and never touches other saved items.\nA page is not required to expose every field. Whatever is found is stored and the rest stay null, so an item with only a title is still enriched successfully.\nIf the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nEnrichment never changes which collection the item is in.\nPossible error codes:\n- SAVED_ITEM_NOT_FOUND\n- BAD_REQUEST\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Fetches the page at the saved item's URL and stores the metadata it exposes, such as title, platform, description and preview image.\nThis acts on exactly one saved item. It is not a batch operation and never touches other saved items.\nA page is not required to expose every field. Whatever is found is stored and the rest stay null, so an item with only a title is still enriched successfully.\nIf the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nEnrichment never changes which collection the item is in.\nThis is the only endpoint that fetches a page inside the API process, so it is rate limited per authenticated user. The budget is spent before the request reaches this handler: a refused enrichment performs no fetch and writes no enrichment state.\nPossible error codes:\n- SAVED_ITEM_NOT_FOUND\n- BAD_REQUEST\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -2025,8 +2037,20 @@
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Rate limit exceeded for this user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so the fetch is not attempted",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }

@@ -7,6 +7,7 @@ import (
 
 	enrichmentdb "github.com/thoriqr/stash-it-backend/internal/api/enrichment/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -22,6 +23,7 @@ func RegisterModule(
 	pool *pgxpool.Pool,
 	cfg config.Config,
 	enricher MetadataEnricher,
+	userRateLimiter middleware.RateLimiter,
 	log *zap.Logger,
 ) {
 	enrichmentQueries := enrichmentdb.New(pool)
@@ -52,5 +54,6 @@ func RegisterModule(
 		app.Group("/saved-items"),
 		enrichmentHandler,
 		accessTokenVerifier,
+		userRateLimiter,
 	)
 }

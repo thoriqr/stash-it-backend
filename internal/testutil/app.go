@@ -199,11 +199,34 @@ func NewAppWithEnqueuer(
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
 ) (*fiber.App, *FakeEmailSender) {
-	return newApp(
+	return NewAppWithEnqueuerAndLimiter(
 		pool,
 		enricher,
 		enqueuer,
 		NewPermissivePinRateLimiter(),
+	)
+}
+
+// NewAppWithEnqueuerAndLimiter builds the app with a caller-supplied enricher,
+// enqueuer and rate limiter.
+//
+// One limiter serves every budget in the process, exactly as the composition root
+// does it, so a test that is about a saved-item budget can hand in a limiter that
+// spends a real one without also arranging what the authentication routes do. A
+// limiter is injected as one object rather than one per namespace because that is
+// what production wires: the namespaces are what tell two budgets apart, and a
+// limiter per namespace would make the isolation untestable.
+func NewAppWithEnqueuerAndLimiter(
+	pool *pgxpool.Pool,
+	enricher enrichment.MetadataEnricher,
+	enqueuer saveditem.SavedItemEnqueuer,
+	pinRateLimiter auth.RateLimiter,
+) (*fiber.App, *FakeEmailSender) {
+	return newApp(
+		pool,
+		enricher,
+		enqueuer,
+		pinRateLimiter,
 		NewPasswordWorkLimiter(),
 		config.Config{ClientIPSource: config.ClientIPSourcePeer},
 	)
@@ -278,6 +301,7 @@ func newApp(
 		pool,
 		cfg,
 		enqueuer,
+		pinRateLimiter,
 		log,
 	)
 
@@ -298,6 +322,7 @@ func newApp(
 		pool,
 		cfg,
 		enricher,
+		pinRateLimiter,
 		log,
 	)
 
