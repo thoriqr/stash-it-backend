@@ -22,6 +22,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
+	"github.com/thoriqr/stash-it-backend/internal/api/user"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	"github.com/thoriqr/stash-it-backend/internal/email"
@@ -252,6 +253,25 @@ func main() {
 		return
 	}
 
+	// The password hasher is built here rather than inside either module that uses
+	// it, because it is not an auth resource and two sibling modules now depend on
+	// it: auth's registration, login and password-reset flows, and the user
+	// profile's password endpoint.
+	//
+	// It has to be one value. security.NewPasswordHasher wraps the process-wide
+	// limiter and bounds Hash, Verify and DummyVerify with it, so a hasher built
+	// from a second limiter would not be a second copy of the same protection — it
+	// would be a second allowance, and the number of derivations running at once
+	// would be the sum of the two instead of the configured maximum. Building it
+	// once here, from the single limiter above, is what makes "one derivation at a
+	// time" mean one across the whole process.
+	//
+	// This is the cost of the user feature being a sibling of auth rather than a
+	// submodule of it, and it is the right trade: the profile endpoints have no
+	// other business with the auth module, and a hasher reached through
+	// auth.RegisterModule would make that dependency real.
+	passwordHasher := security.NewPasswordHasher(passwordWorkLimiter)
+
 	auth.RegisterModule(
 		app,
 		pool,
@@ -261,7 +281,14 @@ func main() {
 		googleTokenVerifier,
 		pinRateLimiter,
 		pinEmailBudget,
-		passwordWorkLimiter,
+		passwordHasher,
+	)
+
+	user.RegisterModule(
+		app,
+		pool,
+		cfg,
+		passwordHasher,
 	)
 
 	// The enqueuer is injected rather than built inside saved_item so that the save

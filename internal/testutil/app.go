@@ -15,6 +15,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
+	"github.com/thoriqr/stash-it-backend/internal/api/user"
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
@@ -428,6 +429,11 @@ func newApp(
 		},
 	}
 
+	// Built once here for the same reason cmd/api/main.go builds it once: the
+	// limiter it wraps is process-wide and now has two consumers, so two hashers
+	// would be two allowances rather than two views of one.
+	passwordHasher := security.NewPasswordHasher(passwordWorkLimiter)
+
 	auth.RegisterModule(
 		app,
 		pool,
@@ -437,7 +443,14 @@ func newApp(
 		googleTokenVerifier,
 		pinRateLimiter,
 		pinEmailBudget,
-		passwordWorkLimiter,
+		passwordHasher,
+	)
+
+	user.RegisterModule(
+		app,
+		pool,
+		cfg,
+		passwordHasher,
 	)
 
 	saveditem.RegisterModule(

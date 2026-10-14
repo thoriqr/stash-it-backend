@@ -7,6 +7,261 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-15 — User Service: profile and password credential
+
+Implemented. `internal/api/user/` is a complete vertical slice, registered as a
+**sibling** of `auth` in `cmd/api/main.go`.
+
+| Endpoint              | Status | Notes                                             |
+| --------------------- | ------ | ------------------------------------------------- |
+| `GET /users/me`       | done   | 200, authenticated only, no caller-supplied user id |
+| `PATCH /users/me`     | done   | 200, `display_name` only, returns the written row  |
+| `PUT /users/me/password` | done | 200, creates or changes depending on what the rows hold |
+
+**No route accepts a user id.** There is no `:id` parameter and no `user_id` in
+any query or body, so "read somebody else's profile" is not a request this API
+can express. Every handler reads the id from the verified token's `sub` claim and
+the current session from its `sid` claim, through a safe two-value type assertion
+rather than the unchecked form most handlers in this repository use.
+
+**The password hasher is now built in `cmd/api/main.go`** and passed to both
+`auth.RegisterModule` and `user.RegisterModule` as the same value. This is the
+whole cost of the feature being a sibling rather than a submodule:
+`security.NewPasswordHasher` wraps the process-wide `PasswordWorkLimiter`, so a
+hasher built from a second limiter would be a second *allowance* rather than a
+second view of one, and the derivations running at once would be the sum.
+`internal/api/auth/module.go` now receives the hasher instead of building it.
+
+### What `GET /users/me` reports, and what it refuses to
+
+```json
+{ "data": { "user": {
+    "id": "…", "email": "…", "display_name": "…",
+    "has_password_credential": true,
+    "created_at": "…",
+    "identities": [ {
+        "provider": "google", "linked_at": "…",
+        "email_snapshot": "user@example.com",
+        "display_name_snapshot": "John Doe"
+    } ]
+} }, "message": "user retrieved successfully" }
+```
+
+- **`email_verified_at` is deliberately absent.** The column is `NOT NULL` with no
+  default, so every account has a value and reporting it presents a constant as
+  information. There is no verification flow for a client to gate on.
+- **`provider_subject` is never reported.** It is the credential the identity is
+  bound to at the provider, and the row id is an internal identifier no endpoint
+  addresses.
+- **`provider` is the stored string, verbatim.** The column is `VARCHAR(32)` with
+  no check constraint and no registry, and the only value written today is
+  `google`. A client must render one it has not seen rather than switching over a
+  set the server maintains.
+- **`identities` is always an array, never null**, ordered `created_at ASC, id ASC`.
+- **The session id is deliberately not returned.** The caller's own session is
+  already in the verified token, and publishing it would create a second,
+  client-echoable copy of a security identifier where no endpoint accepts one
+  today. `GET /auth/sessions` answers "which device am I on" with the device name,
+  the platform and an `is_current` flag, so nothing is lost.
+
+#### The snapshots are history, and that is the whole point of them
+
+`email_snapshot` and `display_name_snapshot` are what the provider asserted about
+the account **at the moment the link was made**. They are reported as stored, which
+means three things follow and all three are deliberate:
+
+- **They are not copies of the account's own email and display name, and are not
+  reconciled with them.** Migration `000026` removed the duplicate address from
+  `account_link_confirmations` for exactly this reason — the account's own email is
+  the authoritative one. A snapshot that has drifted from the account is a fact
+  about *when the link was made*, not an inconsistency for this endpoint to
+  correct. `PROGRESS.md` records the same reasoning for `auth_identities`
+  generally: nothing has ever refreshed these columns, and they are not tied to
+  `users.email` by any foreign key or trigger.
+- **Nothing is fetched from the provider to update them.** Deciding what to do
+  about a stale snapshot belongs to the frontend; an endpoint that contacted a
+  provider on every profile read would make reading a profile a network call.
+- **Both are nullable, and nullability is preserved.** `pgtype.Text` in the
+  projection, `*string` in the response, and `Valid` — not `String` — is what the
+  mapper tests. A provider that asserted **nothing** reports JSON `null`; a
+  provider that asserted an **empty value** reports `""`. Those are different
+  facts, and collapsing them would tell a client the provider said something when
+  it did not. Neither is ever filled in from the account's current profile.
+
+The keys are always present on every identity, including the null ones, so a client
+can read one without first checking whether it arrived.
+
+**Mutation-tested.** Replacing the `Valid` check in `nullableText` with an
+unconditional `&value.String` fails both the mapper unit test and
+`TestGetProfile_SnapshotsPreserveStoredNullability`, so the distinction is asserted
+rather than merely intended.
+
+### `PUT /users/me/password` is one endpoint, and the database decides
+
+The endpoint serves both cases and never trusts the client about which it is.
+`has_password_credential` is a rendering hint; the service asks the database and
+applies the rule it finds.
+
+| Case | Behaviour |
+|---|---|
+| No credential | `current_password` must be absent — supplying one is `400 UNEXPECTED_CURRENT_PASSWORD`, not silently ignored. One Argon2id `Hash`. Plain `INSERT`. **Revokes nothing.** |
+| Credential exists | `current_password` required (`400 CURRENT_PASSWORD_REQUIRED`). `Verify` → `Hash` → conditional `UPDATE` + revocation in one transaction. Revokes every other session. |
+
+**Creating a first password revokes nothing, and that asymmetry is deliberate.**
+Nothing was compromised — there was no credential to compromise. Evicting every
+other signed-in device of an account using Google sign-in on a phone and a laptop
+would punish its owner for adding a password. Only the branch that *replaces* a
+secret evicts, because that is the one an owner might replace because they believe
+it was seen.
+
+**The create branch uses a plain `INSERT`, and this is not a style choice.** The
+password-reset flow writes the same table with `INSERT … ON CONFLICT DO UPDATE`,
+which is correct there and wrong here: reset has already proven mailbox control and
+does not need to know whether a credential existed. Under an upsert two concurrent
+creators **both succeed** and the second silently overwrites the first — both
+callers told they had set the password they submitted. Under an `INSERT` the loser
+loses on `password_credentials_pkey` and is told `409
+PASSWORD_CREDENTIAL_ALREADY_EXISTS`.
+
+**The change branch's write is conditioned on the hash it verified.**
+`UpdatePasswordCredentialIfUnchanged` carries `previous_password_hash` — the value
+read and verified — in its `WHERE`. Without it two concurrent changes from one
+session both write and the last wins invisibly; with it the second matches no row
+and is refused `409 PASSWORD_ALREADY_CHANGED`. The guard sits **before** the
+revocation inside the transaction, so a request whose credential was replaced by a
+concurrent one never signs the account's other devices out of a change it did not
+make.
+
+**Neither the pre-read nor the branch choice authorizes anything.** Both are
+values, not permissions: the authority is the `INSERT` that the primary key
+refuses, or the conditional `UPDATE` that returns zero rows. No `FOR UPDATE` and no
+check-then-act, so there is no lock-ordering to reason about.
+
+**Hashing and verification happen outside the transaction.** A
+`503 PASSWORD_WORK_UNAVAILABLE` therefore writes nothing at all — no credential, no
+revocation — which is the property `password_reset` established and which is
+asserted by gomock strictness on every refusal path.
+
+**`DummyVerify` is deliberately absent.** It exists so an unauthenticated login
+against an unknown address pays the same Argon2id cost as a known one. The caller
+here is authenticated and already knows whether it holds a credential, so there is
+no unknown-account branch to equalize.
+
+### Revocation does not take effect immediately — and the docs say so
+
+Changing a password writes `sessions.revoked_at` for every other session and
+preserves the caller's, in one transaction with the credential write. **It does
+not invalidate an already-issued access token.** Access tokens are stateless and
+`middleware.Auth` never consults the database, so a token issued before the change
+keeps working until its own expiry — up to `AccessTokenLifetime`. This is the
+documented trade-off in `documentation/auth-sessions.md` and
+`AGENTS.md`, not a gap introduced here.
+
+Two consequences recorded so neither is "fixed" later: the Swagger description
+names it explicitly, and `TestUserSwagger_DoesNotPromiseImmediateTokenInvalidation`
+asserts the description says "stateless" and "15 minutes". **Preserving the
+caller's own session grants an attacker nothing** — a caller reaching this endpoint
+already holds a live token for it — and revoking it would log the legitimate user
+out of the tab they made the change in.
+
+### Verification, and that it detects what it claims
+
+`internal/api/user` — 31 unit tests, including the password-work capacity mapping
+(503, the literal message shared with login/registration/password reset, a bounded
+`Retry-After`, and *not* 429/400/401/500), a cancelled context staying a 500, the
+same request succeeding once capacity returns, and — through gomock strictness —
+that a wrong current password costs exactly one derivation and never reaches
+`Hash`, and that the create branch never reaches `Verify`.
+
+`internal/integration` — 38 tests against real PostgreSQL: the profile key set
+pinned exactly, no sensitive field in the marshalled bytes, no identities as `[]`
+rather than null, both registration length boundaries accepted and one outside each
+rejected, `users_set_updated_at` observed to fire, a supplied `user_id` changing
+nothing, a created credential signing in through the **real** `POST /auth/login`,
+a changed credential stopping the old password working through it, other sessions
+revoked and the caller's preserved, and both concurrency cases.
+
+**Two concurrency tests were proven to detect the defects they name.** Each guard
+was removed in turn and the suite re-run:
+
+| Mutation | Result |
+|---|---|
+| `CreatePasswordCredential` → `INSERT … ON CONFLICT DO UPDATE` | **fails** — 4 successes instead of 1; the silent overwrite |
+| conditional `UPDATE` → predicate always true | **fails** — 0 successes instead of 1; the lost update |
+
+**The create-race test uses four participants, not the sixty-four the
+registration-creation race uses, and the difference is reasoned rather than
+copied.** That race guards a window between a locking `SELECT` returning no rows
+and the `INSERT` — microseconds. This one guards a window that is **one full
+Argon2id derivation** wide, which is hundreds of milliseconds. Sixty-four
+participants cost sixty-four derivations against a concurrency-4 test limiter and
+timed the test client out, turning the status code under test into a transport
+error. Four contend reliably in a window that wide. `doUserRequest` now passes an
+explicit `fiber.TestConfig.Timeout` for the same reason.
+
+**The lost-update guard is tested against the repository, not through HTTP.** Its
+window lives *inside* a request — between the hash read and the `UPDATE` — and
+cannot be opened from outside the service: any write made before the request
+begins is the hash the request will read, and so is the one it will match. The
+first version of that test seeded an intervening hash from outside and passed
+against broken code for exactly that reason. Calling
+`SetPasswordAndRevokeOtherSessions` twice with the same stale hash is the honest
+version, and it also asserts the rollback: the refused call writes nothing and
+revokes nothing.
+
+Commands run, and their results:
+
+```sh
+go build ./...                                    # exit 0
+go vet ./...                                      # exit 0
+gofmt -l internal/api/user internal/integration    # clean
+sqlc generate                                     # exit 0
+swag init -g cmd/api/main.go -parseInternal       # exit 0
+go test ./... -count=1                            # exit 0, no failures
+go test -race ./... -count=1                      # exit 0, no DATA RACE
+go test ./internal/integration/ -run 'Concurrent|ConditionalUpdate' -count=8
+                                                  # no flake
+```
+
+Swagger is **purely additive**: `docs/docs.go`, `docs/swagger.json` and
+`docs/swagger.yaml` are 837 insertions and 0 deletions between them.
+
+### No migration, and the index that was deferred
+
+**None was created or applied.** Everything works against the current schema.
+
+`auth_identities.user_id` still carries **no index** — it is the only FK column in
+the user/identity schema without one, and `ListAuthIdentitiesForUser` therefore
+scans that table on every profile read. It is a small table and the decision to
+defer it was taken deliberately; it is recorded here so it is not rediscovered as
+a surprise. `password_credentials.user_id` is the primary key and
+`sessions` has `sessions_user_active_idx ON (user_id, last_activity_at) WHERE
+revoked_at IS NULL`, so the revocation statement is served directly by an index
+and needs nothing added.
+
+### Not done here
+
+- **No rate limiting.** Both password routes perform at least one Argon2id
+  derivation and both will eventually want a per-user budget, because
+  `PasswordWorkLimiter` bounds how many derivations run *at once* and a caller
+  holding every slot and re-acquiring on release never trips it. When that lands it
+  takes its own namespace, separate from every other flow's, and has to decide
+  whether a *failed* change is charged differently from a successful one. See the
+  note in `internal/api/user/constants.go`.
+- **No `GET /users/me/password`.** The only thing it could report is
+  `has_password_credential`, which the profile already carries.
+- **Email change, email verification, account deletion, avatars, provider
+  unlinking, a `/users/:id` surface.** All out of scope.
+- **No refresh of the identity snapshots.** They are historical metadata from link
+  time. Nothing in this application refetches them from a provider, and adding
+  that would be a new feature rather than a response-contract change.
+- **The password-length tags remain three different declarations** —
+  `required,min=8` in registration and password reset, `required,min=8,max=128` in
+  login. The new endpoint matches the stricter one so a password login accepts
+  what it accepts; aligning the others is separate work and was not done here.
+- **`auth_identities.user_id` index**, as above.
+- **Nothing was committed.**
+
 ### 2026-10-15 — Liveness endpoint renamed `/health` → `/livez`
 
 The route is now **`GET /livez`**. The response contract is unchanged — `200` and

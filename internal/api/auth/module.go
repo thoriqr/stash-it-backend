@@ -75,19 +75,17 @@ func RegisterModule(
 	googleTokenVerifier login.GoogleTokenVerifier,
 	pinRateLimiter RateLimiter,
 	pinEmailBudget PINEmailBudget,
-	passwordWorkLimiter *security.PasswordWorkLimiter,
+	passwordHasher *security.PasswordHasher,
 ) {
 	authRouter := app.Group("/auth")
 
 	// Shared security dependencies
 	//
-	// One limiter and one hasher, shared by every feature below. The limiter has
-	// to be shared rather than built per feature: the bound it enforces is on
-	// derivations happening at once across the whole process, and two limiters
-	// would each allow their own number, so the total would be the sum. Building
-	// it here is what makes "one derivation at a time" mean one.
-	passwordHasher := security.NewPasswordHasher(passwordWorkLimiter)
-
+	// passwordHasher arrives rather than being built here. The limiter it wraps is
+	// process-wide and now has a second consumer outside this module — the user
+	// profile's password endpoint — so constructing it once in cmd/api/main.go is
+	// what keeps "one derivation at a time" meaning one. This package and
+	// internal/api/user are siblings that share the hasher; neither builds one.
 	verificationCodeHasher := security.NewVerificationCodeHasher(
 		[]byte(cfg.VerificationCodeSecret),
 	)

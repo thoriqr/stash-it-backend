@@ -286,3 +286,17 @@ sql:
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for the user profile
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/user/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "userdbtest"
+        out: "internal/testutil/db/user/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"

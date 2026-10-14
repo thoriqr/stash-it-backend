@@ -2184,6 +2184,179 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/users/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the profile of the authenticated user, together with the authentication providers linked to it and whether the account holds a password credential.\nThe user carries id, email, display_name, has_password_credential, created_at and identities. Nothing else about the account is reported: no password hash, no provider subject, no session identifier.\nEach identity carries provider, linked_at, email_snapshot and display_name_snapshot. provider_subject is never reported.\nThe snapshots are what the provider asserted about the account at the moment the link was made, kept as history. They are not copies of the account's own email and display_name, they are not refreshed, and they may legitimately disagree with both — comparing them is the client's call. Nothing is fetched from the provider to update them.\nBoth snapshots preserve the stored nullability. A provider that asserted no value reports JSON null, which is different from a provider that asserted an empty value and reports \"\". Neither is ever filled in from the account's current email or display name.\nprovider is the value stored at link time and is not a value this API maintains a list of, so a client must render a provider it has not seen before rather than treating it as an error. The array is ordered oldest link first and is always present, as an empty array when nothing is linked.\nhas_password_credential decides which form the password settings screen should offer. It is read from the database on every request. It is a rendering hint and never a decision: PUT /users/me/password determines the actual case from the same database and applies the rule that follows from it.\nOnly the authenticated user's own profile is returned. There is no route that accepts a user id, so one user's profile cannot be read by naming another's.\nPossible error codes:\n- USER_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Get the current user's profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.GetUserAPIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "The account this token names no longer exists",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Renames the authenticated user. display_name is the only field this endpoint accepts; a body carrying any other field changes nothing.\nThe name must be between 2 and 100 characters, which are the same bounds registration applies to the same column. It is not trimmed and not case-folded, so a value submitted with surrounding whitespace is stored with it — deliberately matching how registration stores a display name.\nOnly the authenticated user's row is written. No other user is affected and no unique rule applies to display names, so this endpoint never answers with a conflict.\nThe response is the complete profile, in the same shape GET /users/me returns, and is the row this request wrote rather than a re-read. A client therefore never has to merge two representations of the profile it is showing.\nPossible error codes:\n- VALIDATION_ERROR\n- BAD_REQUEST\n- USER_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Update the current user's display name",
+                "parameters": [
+                    {
+                        "description": "Profile update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.UpdateUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.UpdateUserAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed body, or display_name absent, shorter than 2 or longer than 100 characters",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "The account this token names no longer exists",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the authenticated user's password. Which of the two things it does is decided by the database, not by the request: an account holding no credential stores a first password, and one that already holds one has its password replaced. has_password_credential from GET /users/me tells a client which form to render, and is never consulted to decide what happens here.\nSend new_password alone when the account holds no credential, and both new_password and current_password when it does. Sending current_password for an account that has no credential is refused with UNEXPECTED_CURRENT_PASSWORD rather than ignored, because it would otherwise report success for a password that was never checked.\nAn existing credential is only replaced once the submitted current_password has been verified against it. A wrong password answers 401 CURRENT_PASSWORD_INVALID and costs one Argon2id derivation: the new password is not derived at all when the current one fails.\nCreating a first password revokes nothing. Changing an existing one revokes every other active session of the account and preserves the session making the request. **That revocation does not take effect immediately for a session already holding an access token.** Access tokens in this application are stateless and are never checked against the session row, so a token issued before this request keeps working until its own expiry — up to about 15 minutes. Signing a device out here therefore means its refresh no longer works, not that its existing token stops working at once.\nTwo concurrent requests that both create a password produce exactly one success; the other is refused with 409 PASSWORD_CREDENTIAL_ALREADY_EXISTS and its password is not stored over the winner's. Two concurrent requests that both change a password produce exactly one success; the other is refused with 409 PASSWORD_ALREADY_CHANGED rather than silently overwriting a password it never verified.\nIf no Argon2id capacity is available the answer is 503 PASSWORD_WORK_UNAVAILABLE with a Retry-After, and nothing at all is written: no credential is stored and no session is revoked.\nPossible error codes:\n- VALIDATION_ERROR\n- BAD_REQUEST\n- CURRENT_PASSWORD_REQUIRED\n- UNEXPECTED_CURRENT_PASSWORD\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- CURRENT_PASSWORD_INVALID\n- PASSWORD_CREDENTIAL_NOT_FOUND\n- PASSWORD_CREDENTIAL_ALREADY_EXISTS\n- PASSWORD_ALREADY_CHANGED\n- PASSWORD_WORK_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Create or change the current user's password",
+                "parameters": [
+                    {
+                        "description": "Password to set",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.SetPasswordAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed body, new_password absent, shorter than 8 or longer than 128 characters, or current_password sent for an account with no password",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token, or the submitted current_password does not match",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "A concurrent request created or changed this password first",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "No password capacity is available; nothing was written",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -3711,6 +3884,136 @@ const docTemplate = `{
             "properties": {
                 "error": {
                     "$ref": "#/definitions/swagger.ValidationError"
+                }
+            }
+        },
+        "user.GetUserAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/user.UserData"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "user retrieved successfully"
+                }
+            }
+        },
+        "user.SetPasswordAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "password created successfully"
+                }
+            }
+        },
+        "user.SetPasswordRequest": {
+            "type": "object",
+            "required": [
+                "new_password"
+            ],
+            "properties": {
+                "current_password": {
+                    "description": "CurrentPassword is required only when the account already holds a\ncredential. Supplying it for an account that holds none is refused with\nUNEXPECTED_CURRENT_PASSWORD rather than ignored, because a caller told its\npassword was set while the password it sent was never checked would have no\nway to learn that.",
+                    "type": "string",
+                    "example": "current-password-123"
+                },
+                "new_password": {
+                    "description": "NewPassword is the password to store. It is never persisted as submitted.",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8,
+                    "example": "new-password-456"
+                }
+            }
+        },
+        "user.UpdateUserAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/user.UserData"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "user updated successfully"
+                }
+            }
+        },
+        "user.UpdateUserRequest": {
+            "type": "object",
+            "required": [
+                "display_name"
+            ],
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 2,
+                    "example": "Jane Doe"
+                }
+            }
+        },
+        "user.UserData": {
+            "type": "object",
+            "properties": {
+                "user": {
+                    "$ref": "#/definitions/user.UserResponse"
+                }
+            }
+        },
+        "user.UserIdentityResponse": {
+            "type": "object",
+            "properties": {
+                "display_name_snapshot": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "email_snapshot": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "linked_at": {
+                    "type": "string",
+                    "example": "2026-10-01T10:30:00Z"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "google"
+                }
+            }
+        },
+        "user.UserResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-01T10:30:00Z"
+                },
+                "display_name": {
+                    "type": "string",
+                    "example": "Jane Doe"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "has_password_credential": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "identities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/user.UserIdentityResponse"
+                    }
                 }
             }
         }
