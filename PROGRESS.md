@@ -7,6 +7,78 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-15 — Session and refresh-token cleanup
+
+Implemented. Reference: **`documentation/auth-sessions.md`**, section "Session
+cleanup" — read it before changing the predicate, the batching, or the guard.
+
+`POST /internal/maintenance/sessions/cleanup` removes sessions that are revoked,
+past `absolute_expires_at`, or past the idle window, and lets the existing
+`ON DELETE CASCADE` take each one's `refresh_tokens` chain with it.
+
+**The predicate is the refresh path's own three conditions**, read from the row
+rather than decided a second time, so cleanup cannot remove a session refresh
+would still accept. `SessionIdleLifetime` is the only source of the idle
+duration — the repository takes it as a parameter and binds it as an interval,
+and no query file contains a literal `30 days`. Cleanup evaluates all three
+against `NOW()`; the runtime refresh path still compares against Go's
+`time.Now()`, and that difference is deliberate and recorded.
+
+**Only `sessions` rows are deleted.** No statement anywhere deletes an individual
+refresh token while its session survives: `replaced_by` is `ON DELETE SET NULL`,
+so removing one token out of a chain would leave its predecessor looking
+unrotated and silently disable reuse detection for that chain.
+
+**Migration `000028_add_refresh_tokens_replaced_by_index` adds
+`refresh_tokens (replaced_by)`, and it was applied by hand before this change.**
+`internal/database/baseline/schema.sql` now carries the same definition, so
+throwaway test databases match. The index is not for the cleanup predicate: it is
+for the cascade. `replaced_by`'s `SET NULL` action is a sequential scan of
+`refresh_tokens` per deleted token row without it. Measured on a disposable
+PostgreSQL 18 container against this project's baseline schema — same statement,
+warm cache, all buffers shared hits, deleting 100 sessions / 500 token rows from
+a 250,000-row table: **8,205 ms as-is, 4.5 ms with the index.** The same cascade
+is reachable today via `sessions.user_id → users(id) ON DELETE CASCADE`, so the
+hazard was latent rather than introduced.
+
+**No index was added to `sessions`.** The three conditions are an `OR`, which no
+single-column index can serve: with indexes on both `last_activity_at` and
+`absolute_expires_at` present, the planner used neither and walked
+`sessions_pkey`. At 550,000 sessions with 6% eligible, finding 500 candidates took
+2.8 ms. `documentation/auth-sessions.md` records what production evidence would
+justify revisiting this, and notes the accepted limitation that the statement may
+scan many rows.
+
+**Batching.** `SessionCleanupBatchSize = 500` and `SessionCleanupMaxBatches =
+100`. Each batch is its own statement and its own transaction, so a later failure
+leaves earlier batches committed — and the failure log reports that committed
+count rather than zero. `backlog_capped` means "stopped because it hit the cap",
+not a backlog size; no query is run to count what is left. Both constants are
+estimates. **The schedule is external and nothing in this process sets it**; the
+intended cadence is once per day.
+
+**The guard is a private function in `session/routes.go`**, not a new middleware —
+it has one caller and none of the concepts `internal/middleware` models apply to a
+route holding no user credential. `SESSION_CLEANUP_SECRET` is **optional**;
+`config.Load` still requires the five secrets nothing works without. Absent,
+empty, wrong-case, wrong-length and unconfigured secrets all answer the same
+`401 CLEANUP_SECRET_INVALID` with the same message, the comparison is
+`subtle.ConstantTimeCompare`, the underlying error is `nil` so the shared error
+handler cannot log the value, and there is deliberately **no rate limiter** — the
+budgets fail closed on Redis, which is wrong for an operator wanting to run
+cleanup while something else is broken. The startup line records
+`session_cleanup_enabled` as a boolean.
+
+`.env.development` gained a local `SESSION_CLEANUP_SECRET` placeholder. The file
+is gitignored and untracked, the value is deliberately fake, and it is not
+reproduced in any tracked file — `git grep` for it returns nothing.
+
+One behavioural change worth knowing: a revoked session that has already been
+reclaimed answers `REFRESH_TOKEN_INVALID` rather than `SESSION_REVOKED`, because
+its token row is gone. Both are `401`.
+
+**Nothing was committed, and no migration was executed by this change.**
+
 ### 2026-10-14 — Shared PIN email budgets for registration and password reset
 
 Implemented. Reference: **`documentation/pin-email-budgets.md`** — read it before

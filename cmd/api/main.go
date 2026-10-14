@@ -321,6 +321,12 @@ func main() {
 		zap.String("client_ip_source", string(cfg.ClientIPSource)),
 		zap.Strings("trusted_proxies", proxySettings.Proxies),
 		zap.String("proxy_header", proxySettings.ProxyHeader),
+		// Whether the maintenance route can be called at all, never the secret
+		// itself. An absent secret is an ordinary deployment: the route stays
+		// registered and refuses every request, so the useful thing to record is
+		// whether a scheduler is expected to be able to reach it. The value is
+		// what would be a live credential if it were logged.
+		zap.Bool("session_cleanup_enabled", cfg.SessionCleanupSecret != ""),
 		// Only the parsed connection endpoint, never cfg.RedisURL itself. A Redis
 		// URL may carry a password in its userinfo section, and logging it would
 		// write a live credential into the log stream. The address and the database

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
@@ -131,6 +132,7 @@ func TestSession_ListSessions_ReturnsOnlyCallersActiveSessions(t *testing.T) {
 	service := session.NewService(
 		session.NewRepository(sessiondb.New(testPool), testPool),
 		security.NewAccessTokenGenerator([]byte("list-test-secret")),
+		zap.NewNop(),
 	)
 
 	t.Run("returns only the caller's unrevoked sessions", func(t *testing.T) {
@@ -308,6 +310,7 @@ func TestSession_ListSessions_OrdersTiedSessionsDeterministically(t *testing.T) 
 	service := session.NewService(
 		session.NewRepository(sessiondb.New(testPool), testPool),
 		security.NewAccessTokenGenerator([]byte("pagination-test-secret")),
+		zap.NewNop(),
 	)
 
 	expectedTied := slices.Clone(tiedIDs)

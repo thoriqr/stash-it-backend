@@ -142,3 +142,63 @@ SELECT COUNT(*)
 FROM sessions
 WHERE user_id = sqlc.arg(user_id)
   AND revoked_at IS NULL;
+
+-- name: DeleteCleanupEligibleSessions :execrows
+-- Removes a bounded batch of sessions that can no longer be used, letting the
+-- refresh_tokens_session_id_fkey cascade remove each one's token chain with it.
+--
+-- The three conditions are the refresh path's own, read from the row rather than
+-- decided twice. GetRefreshTokenWithSessionForUpdate takes a revoked session, a
+-- session past absolute_expires_at, and a session past the idle window, so a row
+-- matching here is a row refresh already refuses. Cleanup therefore cannot
+-- shorten any session that is still usable.
+--
+-- The comparison is deliberately exact about which side is inclusive. The refresh
+-- path asks time.Now().After(absolute_expires_at), which is absolute_expires_at
+-- <= now, and asks whether the idle gap exceeds the window, which is
+-- last_activity_at < now - window. Using <= on the idle side instead would delete
+-- a session sitting exactly on the boundary that refresh would still accept.
+--
+-- idle_window is SessionIdleLifetime, supplied by the caller. The duration is
+-- never written here: this file must not become a second place the idle timeout
+-- is defined, or the two could disagree about when a session ends.
+--
+-- NOW() rather than a bound cutoff, so one statement evaluates every condition
+-- against a single database timestamp instead of mixing the database's clock with
+-- the API host's inside one comparison.
+--
+-- Only sessions are deleted. No statement anywhere removes an individual refresh
+-- token while its session survives, because replaced_by is ON DELETE SET NULL:
+-- deleting a successor would NULL its predecessor's replaced_by, which is
+-- indistinguishable from a token that was never rotated and would silently
+-- disable reuse detection for that chain. Removing the parent removes the whole
+-- chain together and leaves no predecessor pointing at nothing.
+--
+-- ORDER BY id makes a bounded run consume the oldest eligible sessions rather
+-- than an arbitrary subset. sessions.id is uuidv7() with no overriding trigger,
+-- so it is monotonic in creation order, and the oldest sessions are also the
+-- most likely to be the expired ones.
+--
+-- FOR UPDATE SKIP LOCKED is what lets two invocations overlap. It is not needed
+-- for correctness — a row another transaction deleted is simply dropped from the
+-- result — but without it the second run queues behind the first on the same
+-- rows instead of taking its own batch alongside it.
+--
+-- The LIMIT is what keeps one statement bounded. PostgreSQL may still scan many
+-- rows to find eligible candidates: the three conditions are an OR, and an OR
+-- cannot be served from any single-column index, so the planner walks
+-- sessions_pkey applying the filter. That scan is the accepted cost of this
+-- statement and is why no index on sessions is added for it.
+WITH eligible AS (
+    SELECT id
+    FROM sessions
+    WHERE revoked_at IS NOT NULL
+       OR absolute_expires_at <= NOW()
+       OR last_activity_at < NOW() - sqlc.arg(idle_window)::interval
+    ORDER BY id
+    LIMIT sqlc.arg(batch_limit)
+    FOR UPDATE SKIP LOCKED
+)
+DELETE FROM sessions
+USING eligible
+WHERE sessions.id = eligible.id;

@@ -59,6 +59,18 @@ type Repository interface {
 		sessionID uuid.UUID,
 		userID uuid.UUID,
 	) error
+
+	// DeleteCleanupEligibleSessions removes one bounded batch of sessions that
+	// can no longer be used, and reports how many rows it removed.
+	//
+	// idleWindow is SessionIdleLifetime, supplied by the caller so the duration
+	// exists in exactly one place. batchLimit is the ceiling on the rows this one
+	// statement may delete.
+	DeleteCleanupEligibleSessions(
+		ctx context.Context,
+		idleWindow time.Duration,
+		batchLimit int32,
+	) (int64, error)
 }
 
 type repository struct {
@@ -335,4 +347,40 @@ func (r *repository) RevokeSessionForUser(
 	}
 
 	return nil
+}
+
+// DeleteCleanupEligibleSessions deletes one bounded batch of unusable sessions.
+//
+// The idle window arrives as a duration and is converted to the interval the
+// statement subtracts from NOW(). The duration is never turned into a cutoff
+// timestamp here: doing so would compare a host clock against a column the
+// database wrote, inside the one statement that is meant to read a single
+// consistent time.
+//
+// There is no transaction. A single statement is its own, which is exactly what
+// the caller wants: each batch commits on its own so an earlier batch survives a
+// later one failing. Wrapping them in one transaction would turn a partial
+// cleanup into no cleanup at all, and would hold every deleted row's locks until
+// the last batch finished.
+func (r *repository) DeleteCleanupEligibleSessions(
+	ctx context.Context,
+	idleWindow time.Duration,
+	batchLimit int32,
+) (int64, error) {
+	deleted, err := r.queries.DeleteCleanupEligibleSessions(
+		ctx,
+		sessiondb.DeleteCleanupEligibleSessionsParams{
+			IdleWindow: pgtype.Interval{
+				Microseconds: idleWindow.Microseconds(),
+				Valid:        true,
+			},
+			BatchLimit: batchLimit,
+		},
+	)
+
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+
+	return deleted, nil
 }

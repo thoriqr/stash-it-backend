@@ -240,3 +240,39 @@ func (h *Handler) RevokeSession(c fiber.Ctx) error {
 		"session revoked successfully",
 	)
 }
+
+// CleanupSessions godoc
+// @Summary Run session cleanup
+// @Description Delete sessions that can no longer be used.
+// @Description Removes sessions that are revoked, past their absolute expiry, or
+// @Description past the idle window, together with the refresh tokens that belong
+// @Description to them. The endpoint is intended to be called by an external
+// @Description scheduler, which is what decides how often it runs; nothing in this
+// @Description process schedules it.
+// @Description Every execution is logged, including one that deletes nothing.
+// @Description Possible error codes:
+// @Description - CLEANUP_SECRET_INVALID
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Internal
+// @Produce json
+// @Param X-Cleanup-Secret header string true "Cleanup secret"
+// @Success 200 {object} CleanupSessionsAPIResponse
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or missing cleanup secret"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /internal/maintenance/sessions/cleanup [post]
+func (h *Handler) CleanupSessions(c fiber.Ctx) error {
+	result, err := h.service.CleanupSessions(c.Context())
+	if err != nil {
+		return err
+	}
+
+	response := CleanupSessionsResponse{
+		DeletedSessions: result.DeletedSessions,
+	}
+
+	return httpx.OK(
+		c,
+		"session cleanup completed",
+		&response,
+	)
+}

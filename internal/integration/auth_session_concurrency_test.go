@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
@@ -83,6 +84,7 @@ func seedSessionWithToken(
 	service := session.NewService(
 		session.NewRepository(sessiondb.New(testPool), testPool),
 		security.NewAccessTokenGenerator([]byte("concurrency-test-secret")),
+		zap.NewNop(),
 	)
 
 	return service, sessionRecord.ID, token.ID, rawToken, userID

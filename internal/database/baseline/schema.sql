@@ -227,6 +227,9 @@ CREATE UNIQUE INDEX refresh_tokens_token_hash_idx
 CREATE INDEX refresh_tokens_session_idx
     ON refresh_tokens (session_id);
 
+CREATE INDEX refresh_tokens_replaced_by_idx
+    ON refresh_tokens (replaced_by);
+
 CREATE TABLE account_link_confirmations (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
 

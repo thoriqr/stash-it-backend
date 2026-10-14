@@ -61,6 +61,48 @@ const (
 	RefreshIPRateLimitWindow = 10 * time.Minute
 )
 
+// cleanupSecretHeader carries the shared secret the internal maintenance routes
+// are guarded by.
+//
+// It follows the existing X- header family in this application
+// (X-Installation-ID, X-Platform, X-Device-Name). This one is not client
+// metadata, so the name says what the header is for rather than describing the
+// client that sent it.
+const cleanupSecretHeader = "X-Cleanup-Secret"
+
+// Session cleanup bounds.
+//
+// The cleanup runs one bounded SQL statement per batch and repeats it until a
+// batch comes back short or the batch cap is reached, so a single execution can
+// drain a backlog far larger than one statement is allowed to touch. Both
+// numbers are constants rather than configuration: there is no deployment to
+// tune them against yet, and a knob with no basis behind it invites a setting
+// nobody can justify. They are policy, not a deployment fact, which is the
+// distinction this repository already draws for WORKER_CONCURRENCY versus the
+// PIN email budgets.
+const (
+	// SessionCleanupBatchSize is how many sessions one statement may delete.
+	//
+	// It bounds two things at once: the row locks a single statement holds, and
+	// the number of refresh-token rows its cascade removes. Each deleted session
+	// takes its whole token chain with it through ON DELETE CASCADE, so a
+	// statement that is bounded in sessions is bounded in cascade work too.
+	//
+	// 500 is an engineering estimate, not a measured optimum. It sits far inside
+	// a request budget and produces a lock footprint small enough that a run
+	// never holds a meaningful share of the table.
+	SessionCleanupBatchSize = 500
+
+	// SessionCleanupMaxBatches is how many batches one execution may run, which
+	// is what bounds how long a single request can take.
+	//
+	// Without it, the loop's length would be set by how much happened to be
+	// eligible rather than by anything the application chose, which is the same
+	// unbounded-statement problem the batch size exists to avoid, spread across
+	// several statements.
+	SessionCleanupMaxBatches = 100
+)
+
 // refreshIPRateLimitNamespace groups the refresh counters in Redis.
 //
 // It is its own namespace, never login-ip and never google-auth-ip, even though

@@ -30,6 +30,27 @@ const testVerificationCodeSecret = "integration-test-verification-secret"
 // app. It is exported so tests can mint access tokens that the app accepts.
 const TestAccessTokenSecret = "integration-test-access-token-secret"
 
+// TestSessionCleanupSecret is the maintenance secret the integration test app is
+// built with. It is exported so tests can present the header value the app
+// accepts, and so a test that needs the endpoint closed can build an app
+// without it.
+const TestSessionCleanupSecret = "integration-test-session-cleanup-secret"
+
+// testConfig is the Config every test app starts from unless it is deliberately
+// exercising a different one.
+//
+// It carries the maintenance secret so a test can drive the cleanup route the
+// way a scheduler would. The value is a placeholder that exists only in this
+// file, which is why it is safer than anything that would have to be kept
+// somewhere real: it cannot be mistaken for a deployment credential because it
+// is not one.
+func testConfig() config.Config {
+	return config.Config{
+		ClientIPSource:      config.ClientIPSourcePeer,
+		SessionCleanupSecret: TestSessionCleanupSecret,
+	}
+}
+
 type fakeGoogleTokenVerifier struct {
 	identity login.GoogleIdentity
 	err      error
@@ -137,6 +158,31 @@ func NewApp(pool *pgxpool.Pool) (*fiber.App, *FakeEmailSender) {
 	return NewAppWithLimiter(pool, NewPermissivePinRateLimiter())
 }
 
+// NewAppWithoutSessionCleanupSecret builds the app with no maintenance secret
+// configured, which is the state of a deployment that has not set one up.
+//
+// It exists because "the route refuses every request" has to be provable from
+// the same app that otherwise works. Building that state any other way — by
+// sending a wrong secret to a configured app — would test a different branch
+// and would leave the unconfigured one unproven, which is the branch that
+// decides whether an unconfigured deployment is quietly exposed or quietly
+// closed.
+func NewAppWithoutSessionCleanupSecret(
+	pool *pgxpool.Pool,
+) (*fiber.App, *FakeEmailSender) {
+	app, sender := newApp(
+		pool,
+		&FakeEnricher{},
+		nil,
+		NewPermissivePinRateLimiter(),
+		NewPermissivePINEmailBudget(),
+		NewPasswordWorkLimiter(),
+		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+	)
+
+	return app, sender
+}
+
 // NewAppWithLimiter builds the app with a caller-supplied PIN rate limiter.
 //
 // Rate limiting needs no Redis container for the suite as a whole, and a test that
@@ -155,7 +201,7 @@ func NewAppWithLimiter(
 		pinRateLimiter,
 		NewPermissivePINEmailBudget(),
 		NewPasswordWorkLimiter(),
-		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+		testConfig(),
 	)
 }
 
@@ -177,7 +223,7 @@ func NewAppWithLimiters(
 		pinRateLimiter,
 		NewPermissivePINEmailBudget(),
 		passwordWorkLimiter,
-		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+		testConfig(),
 	)
 }
 
@@ -223,9 +269,10 @@ func NewAppWithTrustedProxyAndBudget(
 		pinEmailBudget,
 		NewPasswordWorkLimiter(),
 		config.Config{
-			ClientIPSource:     config.ClientIPSourceProxy,
-			TrustedProxies:     []string{"0.0.0.0"},
-			TrustedProxyHeader: "X-Forwarded-For",
+			ClientIPSource:      config.ClientIPSourceProxy,
+			TrustedProxies:      []string{"0.0.0.0"},
+			TrustedProxyHeader:  "X-Forwarded-For",
+			SessionCleanupSecret: TestSessionCleanupSecret,
 		},
 	)
 }
@@ -314,7 +361,7 @@ func NewAppWithPINEmailBudget(
 		pinRateLimiter,
 		pinEmailBudget,
 		NewPasswordWorkLimiter(),
-		config.Config{ClientIPSource: config.ClientIPSourcePeer},
+		testConfig(),
 	)
 }
 

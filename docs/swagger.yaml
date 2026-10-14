@@ -950,6 +950,20 @@ definitions:
         example: https://example.org/notes/camera-buying-guide
         type: string
     type: object
+  session.CleanupSessionsAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/session.CleanupSessionsResponse'
+      message:
+        example: session cleanup completed
+        type: string
+    type: object
+  session.CleanupSessionsResponse:
+    properties:
+      deleted_sessions:
+        example: 42
+        type: integer
+    type: object
   session.ListSessionsAPIResponse:
     properties:
       data:
@@ -2583,6 +2597,43 @@ paths:
       summary: List a collection's saved items
       tags:
       - Collection
+  /internal/maintenance/sessions/cleanup:
+    post:
+      description: |-
+        Delete sessions that can no longer be used.
+        Removes sessions that are revoked, past their absolute expiry, or
+        past the idle window, together with the refresh tokens that belong
+        to them. The endpoint is intended to be called by an external
+        scheduler, which is what decides how often it runs; nothing in this
+        process schedules it.
+        Every execution is logged, including one that deletes nothing.
+        Possible error codes:
+        - CLEANUP_SECRET_INVALID
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Cleanup secret
+        in: header
+        name: X-Cleanup-Secret
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.CleanupSessionsAPIResponse'
+        "401":
+          description: Invalid or missing cleanup secret
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Run session cleanup
+      tags:
+      - Internal
   /saved-items:
     post:
       consumes:

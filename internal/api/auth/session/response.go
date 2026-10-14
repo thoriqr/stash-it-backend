@@ -58,3 +58,19 @@ type RevokeSessionAPIResponse struct {
     Data    *struct{} `json:"data"`
     Message string   `json:"message" example:"session revoked successfully"`
 }
+
+// CleanupSessionsResponse reports only what the caller needs to know: how many
+// sessions this execution removed.
+//
+// Batches, batch size and whether the cap was reached are deliberately absent.
+// They are execution detail for an operator reading a log, and a scheduler that
+// wanted to reason about them from the response would be reasoning about how
+// this process happens to batch its work rather than about whether it ran.
+type CleanupSessionsResponse struct {
+	DeletedSessions int64 `json:"deleted_sessions" example:"42"`
+}
+
+type CleanupSessionsAPIResponse struct {
+	Data    *CleanupSessionsResponse `json:"data"`
+	Message string                   `json:"message" example:"session cleanup completed"`
+}

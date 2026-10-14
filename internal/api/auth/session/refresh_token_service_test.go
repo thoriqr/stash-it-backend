@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
@@ -24,7 +25,7 @@ func TestService_RefreshToken(t *testing.T) {
 			[]byte("test-secret"),
 		)
 
-		svc := session.NewService(repo, accessTokenGenerator)
+		svc := session.NewService(repo, accessTokenGenerator, zap.NewNop())
 
 		userID := uuid.New()
 		sessionID := uuid.New()
@@ -111,7 +112,7 @@ func TestService_RefreshToken(t *testing.T) {
 			[]byte("test-secret"),
 		)
 
-		svc := session.NewService(repo, accessTokenGenerator)
+		svc := session.NewService(repo, accessTokenGenerator, zap.NewNop())
 
 		refreshToken := "old-refresh-token"
 		expectedErr := errors.New("repository error")

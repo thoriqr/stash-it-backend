@@ -120,3 +120,40 @@ WHERE id = sqlc.arg(id);
 SELECT COUNT(*)
 FROM sessions
 WHERE user_id = sqlc.arg(user_id);
+
+-- name: SeedTestSessionsBulk :exec
+-- Creates many sessions for one user at once, which is what makes it practical to
+-- exercise a batch boundary: a cleanup batch is five hundred rows, so proving the
+-- loop runs more than one of them needs at least that many rows to delete.
+--
+-- last_activity_at is set explicitly because the default is NOW() and every row
+-- inserted together would otherwise share one timestamp. idle_ago is an interval
+-- so a test can say "this one is idle-expired" without restating the window the
+-- production code compares against.
+--
+-- absolute_in stays positive and revoked_at stays NULL: this exists to produce
+-- rows that are eligible on one condition and otherwise entirely ordinary, so the
+-- bulk path cannot quietly succeed by deleting sessions that were dead for some
+-- other reason.
+INSERT INTO sessions (
+    user_id,
+    platform,
+    absolute_expires_at,
+    last_activity_at
+)
+SELECT
+    sqlc.arg(user_id)                              AS user_id,
+    'web'                                          AS platform,
+    NOW() + sqlc.arg(absolute_in)::interval        AS absolute_expires_at,
+    NOW() - sqlc.arg(idle_ago)::interval           AS last_activity_at
+FROM generate_series(1, sqlc.arg(session_count)::bigint) AS series(n);
+
+-- name: CountAllRefreshTokens :one
+-- Every refresh token in the table, across all users.
+--
+-- Scoped per user this would miss exactly the thing a cascade test is checking:
+-- whether the tokens that went with a deleted session really went with it, rather
+-- than merely whether the session row did. Counting the whole table also catches a
+-- cascade that reached further than the session it was supposed to.
+SELECT COUNT(*)
+FROM refresh_tokens;

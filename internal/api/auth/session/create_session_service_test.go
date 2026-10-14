@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessiondb "github.com/thoriqr/stash-it-backend/internal/api/auth/session/generated"
@@ -21,7 +22,7 @@ func TestService_CreateSession(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := sessionmocks.NewMockRepository(ctrl)
 
-		svc := session.NewService(repo, nil)
+		svc := session.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		sessionID := uuid.New()
@@ -87,7 +88,7 @@ func TestService_CreateSession(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := sessionmocks.NewMockRepository(ctrl)
 
-		svc := session.NewService(repo, nil)
+		svc := session.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		metadata := session.SessionMetadata{}

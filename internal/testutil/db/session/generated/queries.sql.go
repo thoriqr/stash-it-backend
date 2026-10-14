@@ -12,6 +12,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAllRefreshTokens = `-- name: CountAllRefreshTokens :one
+SELECT COUNT(*)
+FROM refresh_tokens
+`
+
+// Every refresh token in the table, across all users.
+//
+// Scoped per user this would miss exactly the thing a cascade test is checking:
+// whether the tokens that went with a deleted session really went with it, rather
+// than merely whether the session row did. Counting the whole table also catches a
+// cascade that reached further than the session it was supposed to.
+func (q *Queries) CountAllRefreshTokens(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAllRefreshTokens)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countAllSessionsForUser = `-- name: CountAllSessionsForUser :one
 SELECT COUNT(*)
 FROM sessions
@@ -258,6 +276,51 @@ func (q *Queries) GetSessionState(ctx context.Context, id uuid.UUID) (Session, e
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const seedTestSessionsBulk = `-- name: SeedTestSessionsBulk :exec
+INSERT INTO sessions (
+    user_id,
+    platform,
+    absolute_expires_at,
+    last_activity_at
+)
+SELECT
+    $1                              AS user_id,
+    'web'                                          AS platform,
+    NOW() + $2::interval        AS absolute_expires_at,
+    NOW() - $3::interval           AS last_activity_at
+FROM generate_series(1, $4::bigint) AS series(n)
+`
+
+type SeedTestSessionsBulkParams struct {
+	UserID       uuid.UUID
+	AbsoluteIn   pgtype.Interval
+	IdleAgo      pgtype.Interval
+	SessionCount int64
+}
+
+// Creates many sessions for one user at once, which is what makes it practical to
+// exercise a batch boundary: a cleanup batch is five hundred rows, so proving the
+// loop runs more than one of them needs at least that many rows to delete.
+//
+// last_activity_at is set explicitly because the default is NOW() and every row
+// inserted together would otherwise share one timestamp. idle_ago is an interval
+// so a test can say "this one is idle-expired" without restating the window the
+// production code compares against.
+//
+// absolute_in stays positive and revoked_at stays NULL: this exists to produce
+// rows that are eligible on one condition and otherwise entirely ordinary, so the
+// bulk path cannot quietly succeed by deleting sessions that were dead for some
+// other reason.
+func (q *Queries) SeedTestSessionsBulk(ctx context.Context, arg SeedTestSessionsBulkParams) error {
+	_, err := q.db.Exec(ctx, seedTestSessionsBulk,
+		arg.UserID,
+		arg.AbsoluteIn,
+		arg.IdleAgo,
+		arg.SessionCount,
+	)
+	return err
 }
 
 const truncateSessionData = `-- name: TruncateSessionData :exec

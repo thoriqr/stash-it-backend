@@ -1748,6 +1748,47 @@
                 }
             }
         },
+        "/internal/maintenance/sessions/cleanup": {
+            "post": {
+                "description": "Delete sessions that can no longer be used.\nRemoves sessions that are revoked, past their absolute expiry, or\npast the idle window, together with the refresh tokens that belong\nto them. The endpoint is intended to be called by an external\nscheduler, which is what decides how often it runs; nothing in this\nprocess schedules it.\nEvery execution is logged, including one that deletes nothing.\nPossible error codes:\n- CLEANUP_SECRET_INVALID\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "Run session cleanup",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cleanup secret",
+                        "name": "X-Cleanup-Secret",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.CleanupSessionsAPIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or missing cleanup secret",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/saved-items": {
             "post": {
                 "security": [
@@ -3423,6 +3464,27 @@
                 "url": {
                     "type": "string",
                     "example": "https://example.org/notes/camera-buying-guide"
+                }
+            }
+        },
+        "session.CleanupSessionsAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/session.CleanupSessionsResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "session cleanup completed"
+                }
+            }
+        },
+        "session.CleanupSessionsResponse": {
+            "type": "object",
+            "properties": {
+                "deleted_sessions": {
+                    "type": "integer",
+                    "example": 42
                 }
             }
         },

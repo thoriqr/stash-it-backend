@@ -57,6 +57,24 @@ type Config struct {
 	// this repository. It changes when the plan does, and it must not change by
 	// requiring a release.
 	PINEmailBudget PINEmailBudget
+
+	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
+	// external scheduler calls and which no user credential reaches.
+	//
+	// It is optional where the other secrets here are required, and the difference
+	// is deliberate rather than an oversight. Those five are required because
+	// nothing in the application works without them. This one guards a maintenance
+	// operation that simply does not run: an unset value leaves the API serving
+	// every other route exactly as before while the cleanup route refuses every
+	// request, so a deployment that has not finished configuring a scheduler is
+	// not stopped from starting.
+	//
+	// It is the same nil-able capability the saved item enqueuer models: "this
+	// process does not do that for nothing" is an ordinary state, not a
+	// misconfiguration. The route still exists when it is unset and answers 401,
+	// because a route that cannot be distinguished from a wrong secret is a route
+	// that tells an unauthenticated caller whether the feature is enabled.
+	SessionCleanupSecret string
 }
 
 func Load() (Config, error) {
@@ -102,6 +120,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("REDIS_URL is required")
 	}
 
+	// Optional by design, and deliberately not checked. An absent value is an
+	// ordinary deployment that has not configured a scheduler yet, and the
+	// cleanup route refuses every request while it is absent. Requiring it would
+	// stop this application from starting over a maintenance operation it can
+	// perfectly well live without, and giving it a default would ship a secret
+	// that looks configured and is not.
+	sessionCleanupSecret := os.Getenv("SESSION_CLEANUP_SECRET")
+
 	clientIPSource, trustedProxies, trustedProxyHeader, err := loadClientIP()
 	if err != nil {
 		return Config{}, err
@@ -132,5 +158,7 @@ func Load() (Config, error) {
 		PasswordWorkWait:        passwordWorkWait,
 
 		PINEmailBudget: pinEmailBudget,
+
+		SessionCleanupSecret: sessionCleanupSecret,
 	}, nil
 }

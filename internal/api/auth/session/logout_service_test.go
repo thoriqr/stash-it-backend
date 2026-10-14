@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/session"
 	sessionmocks "github.com/thoriqr/stash-it-backend/internal/api/auth/session/mocks"
@@ -18,7 +19,7 @@ func TestService_Logout(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := sessionmocks.NewMockRepository(ctrl)
 
-		svc := session.NewService(repo, nil)
+		svc := session.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		sessionID := uuid.New()
@@ -41,7 +42,7 @@ func TestService_Logout(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := sessionmocks.NewMockRepository(ctrl)
 
-		svc := session.NewService(repo, nil)
+		svc := session.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		foreignSessionID := uuid.New()
@@ -59,7 +60,7 @@ func TestService_Logout(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := sessionmocks.NewMockRepository(ctrl)
 
-		svc := session.NewService(repo, nil)
+		svc := session.NewService(repo, nil, zap.NewNop())
 
 		userID := uuid.New()
 		sessionID := uuid.New()

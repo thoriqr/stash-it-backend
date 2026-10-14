@@ -111,6 +111,7 @@ func RegisterModule(
 	sessionService := session.NewService(
 		sessionRepository,
 		accessTokenGenerator,
+		log,
 	)
 
 	sessionHandler := session.NewHandler(
@@ -122,6 +123,21 @@ func RegisterModule(
 		sessionHandler,
 		accessTokenVerifier,
 		pinRateLimiter,
+	)
+
+	// Mounted on its own prefix rather than on the /auth group, because nothing
+	// reaching this route is a user credential. An external scheduler calls it
+	// with a shared secret in a header, which is a different kind of
+	// authentication from the Bearer token every /auth route is guarded by, and
+	// sharing a prefix would blur that distinction.
+	//
+	// cleanupSecret is passed through rather than read from the environment here,
+	// so the composition root stays the only place configuration is resolved and
+	// a test can build an app that either has a secret or does not.
+	session.MaintenanceRoutes(
+		app.Group("/internal/maintenance"),
+		sessionHandler,
+		cfg.SessionCleanupSecret,
 	)
 
 	// Registration

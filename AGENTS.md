@@ -111,6 +111,10 @@ detection, revocation or session expiry.
 - Refresh tokens are opaque and stored **hashed only**, rotated through a
   `replaced_by` link. **Reusing an already-replaced token must revoke the entire
   session** — never weaken or bypass this.
+- **Refresh-token retention must preserve reuse detection.** Never delete individual refresh-token rows
+  for cleanup or retention. Delete the parent session and rely on the existing `ON DELETE CASCADE`
+  to remove its entire refresh-token chain. Deleting an individual successor can trigger `ON DELETE SET NULL`
+  on its predecessor's `replaced_by`, erasing the signal that the predecessor was already replaced.
 - Sessions have both idle and absolute expiry; lifetimes are constants in
   `session/constants.go`.
 - Passwords are hashed with **Argon2id**, not bcrypt, in
@@ -313,7 +317,7 @@ shapes.** Do not unify them into one DTO.
 - `collections.user_id` owns a collection and `saved_items.user_id` owns a Saved
   Item. Migration 000025 enforces that a Saved Item may only reference a collection
   its own owner owns, through a composite foreign key over `(collection_id,
-  user_id)`. Do not weaken or work around it, and do not write code that assumes
+user_id)`. Do not weaken or work around it, and do not write code that assumes
   `collection_id` alone establishes ownership.
 - Scope reads and writes by `id AND user_id` wherever there is a user in scope. A
   `NOT NULL` foreign key on `collection_id` is not an ownership check.
