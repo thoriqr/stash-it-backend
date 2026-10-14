@@ -7,6 +7,42 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-15 — Liveness endpoint renamed `/health` → `/livez`
+
+The route is now **`GET /livez`**. The response contract is unchanged — `200` and
+`{"status":"ok"}` — and `GET /health` no longer answers. There is no alias: two
+live endpoints with the same meaning invite wiring the platform to the one whose
+name you recognise.
+
+The rename is the point. `/health` reads as a statement about the application;
+`/livez` says what it actually reports, which is only that the process is running
+and able to serve HTTP. A `200` from it is fully compatible with an unreachable
+database or Redis.
+
+**The handler stays dependency-free, and that is the decision worth recording
+rather than the rename.** This application's limiters fail closed by choice, so an
+unreachable Redis already stops PIN issuance, manual login, Google
+authentication and token refresh (see "Outstanding deployment work" item 3). If
+`/livez` also checked Redis or PostgreSQL, that same outage would fail the probe,
+and a platform restarting or draining instances on a failing health check would
+turn a service that is degraded but serving into one that is entirely
+unavailable — at exactly the moment it is already impaired. Restarting a process
+does not restore an external dependency. So a readiness probe, when a hosting
+platform is chosen, has to be **a separate endpoint**, not this one with a
+database check added.
+
+Startup already answers the readiness question earlier and more strictly:
+`database.NewPool` pings PostgreSQL and both limiter `Check` calls verify Redis,
+`main` returns rather than serving if any of them fails, and the listener does not
+open until every module is registered. An instance that answers `/livez` at all
+has therefore already passed every startup check.
+
+The endpoint is still unauthenticated — a platform calls it holding no
+credential — and is still absent from Swagger. `cmd/worker` has no HTTP surface
+and so has no liveness probe; that stays outstanding until a platform is chosen,
+since giving the worker a listener would change a binary the architecture
+documents as having none.
+
 ### 2026-10-15 — Session and refresh-token cleanup
 
 Implemented. Reference: **`documentation/auth-sessions.md`**, section "Session
