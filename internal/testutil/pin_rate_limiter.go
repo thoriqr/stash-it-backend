@@ -477,6 +477,20 @@ const (
 	// worker. One user saturating one must still be able to use the other.
 	SavedItemEnrichUserNamespace = "saved-item-enrich-user"
 
+	// UserPasswordUserNamespace is the per-user budget on
+	// PUT /users/me/password, spent after Auth and before the handler.
+	//
+	// It is the only budget the user profile feature carries. The two profile
+	// routes are deliberately unlimited, and a test that needs to say so has to
+	// name what the password route does spend.
+	//
+	// Keyed on the account rather than a client address for the same reason the
+	// saved-item budgets are: the caller is already authenticated, and the work
+	// being bounded is Argon2id derivations against a pool shared with the whole
+	// deployment. An address budget would not survive a caller changing address
+	// and would charge a household behind one NAT for one person's password work.
+	UserPasswordUserNamespace = "user-password-user"
+
 	// RefreshIPNamespace is the per-client-address budget on POST /auth/refresh,
 	// spent before body binding and before the handler.
 	//

@@ -289,6 +289,7 @@ func main() {
 		pool,
 		cfg,
 		passwordHasher,
+		pinRateLimiter,
 	)
 
 	// The enqueuer is injected rather than built inside saved_item so that the save

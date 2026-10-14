@@ -6,6 +6,7 @@ import (
 
 	userdb "github.com/thoriqr/stash-it-backend/internal/api/user/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -28,11 +29,17 @@ import (
 // that sharing necessary rather than merely tidy: auth.RegisterModule owns no
 // process-wide resource it could lend, and reaching inside it for one would make
 // the profile endpoints depend on a module they have nothing else to do with.
+//
+// userRateLimiter is the process's existing limiter, passed for the same reason
+// rather than built here. It is the same Redis connection and the same script
+// behind every other budget in the application, so this feature spends one pool
+// and closes one client.
 func RegisterModule(
 	app *fiber.App,
 	pool *pgxpool.Pool,
 	cfg config.Config,
 	passwordHasher *security.PasswordHasher,
+	userRateLimiter middleware.RateLimiter,
 ) {
 	userQueries := userdb.New(pool)
 
@@ -58,5 +65,6 @@ func RegisterModule(
 		app.Group("/users"),
 		userHandler,
 		accessTokenVerifier,
+		userRateLimiter,
 	)
 }

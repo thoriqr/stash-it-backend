@@ -77,6 +77,7 @@ func NewHandler(service Service) *Handler {
 // @Description Both snapshots preserve the stored nullability. A provider that asserted no value reports JSON null, which is different from a provider that asserted an empty value and reports "". Neither is ever filled in from the account's current email or display name.
 // @Description provider is the value stored at link time and is not a value this API maintains a list of, so a client must render a provider it has not seen before rather than treating it as an error. The array is ordered oldest link first and is always present, as an empty array when nothing is linked.
 // @Description has_password_credential decides which form the password settings screen should offer. It is read from the database on every request. It is a rendering hint and never a decision: PUT /users/me/password determines the actual case from the same database and applies the rule that follows from it.
+// @Description This route carries no rate limit. Reading a profile spends two indexed reads and holds nothing beyond the request, so a budget here would buy no protection and would — because the limiter fails closed — make the application unable to render a profile during a Redis outage.
 // @Description Only the authenticated user's own profile is returned. There is no route that accepts a user id, so one user's profile cannot be read by naming another's.
 // @Description Possible error codes:
 // @Description - USER_NOT_FOUND
@@ -114,6 +115,7 @@ func (h *Handler) GetUser(c fiber.Ctx) error {
 // @Description The name must be between 2 and 100 characters, which are the same bounds registration applies to the same column. It is not trimmed and not case-folded, so a value submitted with surrounding whitespace is stored with it — deliberately matching how registration stores a display name.
 // @Description Only the authenticated user's row is written. No other user is affected and no unique rule applies to display names, so this endpoint never answers with a conflict.
 // @Description The response is the complete profile, in the same shape GET /users/me returns, and is the row this request wrote rather than a re-read. A client therefore never has to merge two representations of the profile it is showing.
+// @Description Updating the display name carries no rate limit either, even though it writes. A rename spends one indexed UPDATE, arranges nothing downstream, and holds nothing beyond the request; DELETE /saved-items/:id and DELETE /collections/:id are unlimited for the same reason.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - BAD_REQUEST
@@ -163,6 +165,7 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // @Description Creating a first password revokes nothing. Changing an existing one revokes every other active session of the account and preserves the session making the request. **That revocation does not take effect immediately for a session already holding an access token.** Access tokens in this application are stateless and are never checked against the session row, so a token issued before this request keeps working until its own expiry — up to about 15 minutes. Signing a device out here therefore means its refresh no longer works, not that its existing token stops working at once.
 // @Description Two concurrent requests that both create a password produce exactly one success; the other is refused with 409 PASSWORD_CREDENTIAL_ALREADY_EXISTS and its password is not stored over the winner's. Two concurrent requests that both change a password produce exactly one success; the other is refused with 409 PASSWORD_ALREADY_CHANGED rather than silently overwriting a password it never verified.
 // @Description If no Argon2id capacity is available the answer is 503 PASSWORD_WORK_UNAVAILABLE with a Retry-After, and nothing at all is written: no credential is stored and no session is revoked.
+// @Description The route is rate limited per authenticated user: 5 requests per 15 minutes. A request over budget is refused with 429 USER_RATE_LIMIT_EXCEEDED and a Retry-After, and never reaches the derivations it guards, so a refused request stores nothing and revokes nothing. The charge is not refunded on success or on failure — a failed attempt costs the budget, because verifying a submitted current_password is exactly what the budget bounds. The budget fails closed: if the counter cannot be evaluated the route answers 503 USER_RATE_LIMIT_UNAVAILABLE and writes nothing, while GET /users/me and PATCH /users/me are unaffected.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - BAD_REQUEST
@@ -175,6 +178,8 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // @Description - PASSWORD_CREDENTIAL_NOT_FOUND
 // @Description - PASSWORD_CREDENTIAL_ALREADY_EXISTS
 // @Description - PASSWORD_ALREADY_CHANGED
+// @Description - USER_RATE_LIMIT_EXCEEDED
+// @Description - USER_RATE_LIMIT_UNAVAILABLE
 // @Description - PASSWORD_WORK_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags User
@@ -186,7 +191,8 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // @Failure 400 {object} swagger.APIErrorResponse "Malformed body, new_password absent, shorter than 8 or longer than 128 characters, or current_password sent for an account with no password"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token, or the submitted current_password does not match"
 // @Failure 409 {object} swagger.APIErrorResponse "A concurrent request created or changed this password first"
-// @Failure 503 {object} swagger.APIErrorResponse "No password capacity is available; nothing was written"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many password requests from this account"
+// @Failure 503 {object} swagger.APIErrorResponse "No password capacity is available, or the request could not be rate limited; nothing was written"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /users/me/password [put]
 func (h *Handler) SetPassword(c fiber.Ctx) error {

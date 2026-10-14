@@ -239,15 +239,64 @@ a surprise. `password_credentials.user_id` is the primary key and
 revoked_at IS NULL`, so the revocation statement is served directly by an index
 and needs nothing added.
 
+### Rate limiting — implemented
+
+`PUT /users/me/password` carries a per-user budget. The two profile routes
+deliberately carry none.
+
+| Route                     | Namespace           | Policy      |
+| ------------------------- | ------------------- | ----------- |
+| `GET /users/me`           | **none**            | —           |
+| `PATCH /users/me`         | **none**            | —           |
+| `PUT /users/me/password`  | `user-password-user` | 5 / 15 min |
+
+Mounted with `middleware.UserRateLimit` between `Auth` and the handler, the same
+place and shape as `search-user` and the two saved-item budgets. The subject is
+`claims.Subject`, because the caller is already authenticated and the work being
+bounded is Argon2id work against a pool shared with the whole deployment. It is
+deliberately **not** per-address, unlike `finalize-ip` and
+`password-reset-finalize-ip`, which are per-address because those routes are
+reachable without a credential at all.
+
+**Why 5/15 and not the 10/15 both single-derivation finalize routes use.** The
+principle recorded at `password_reset/constants.go` is that those two match "because
+both routes perform one derivation per request and cost the same to serve" — and
+that is conditional on the cost matching. **Changing a password performs two
+derivations** (verify the current one, hash the replacement) where creating a first
+one performs one, so the count is halved rather than the inconsistency introduced.
+The 15-minute window is copied for the reason `registration/constants.go` gives: a
+single request here is among the most expensive in the application, so the budget
+stays generous per unit of work.
+
+**No `Release` and no failure-only counter.** `login-email` charges optimistically
+and refunds on success so a mistyped password costs nothing. The situations are
+inverted here: at login a success is the common case and a failure the exception,
+whereas a *failed* password change is exactly what this budget exists to bound,
+because the change branch verifies a real secret.
+
+**The two profile routes are unlimited, and that is the availability argument
+rather than the cost one.** They spend one indexed read, one primary-key probe and
+one `auth_identities` read, and hold nothing beyond the request. `UserRateLimit`
+**fails closed**, so budgeting them would mean that during a Redis outage the
+application could not render a profile or rename itself — bought for no protected
+resource. The repository already accepts that failure mode where it matters, on
+`POST /auth/refresh`, and takes it out on a read is a different trade. A rename
+writing is not itself a reason either: `DELETE /saved-items/:id` and
+`DELETE /collections/:id` both write and are both unlimited, and the distinction
+`saved_item/routes.go` draws is that a save is budgeted because it *arranges*
+unbounded downstream work.
+
+**The namespace is its own, and spends no other flow's budget.** A user who has
+spent their password allowance must still be able to sign in and to open a password
+reset — which is the recovery path when this budget refuses them. Both are asserted
+against the real counter in `internal/integration/user_password_rate_limit_test.go`.
+
+**All thresholds are initial engineering estimates, not production-validated
+values.** No deployment has been selected and no traffic observed, which is the
+standing caveat on every budget in this repository.
+
 ### Not done here
 
-- **No rate limiting.** Both password routes perform at least one Argon2id
-  derivation and both will eventually want a per-user budget, because
-  `PasswordWorkLimiter` bounds how many derivations run *at once* and a caller
-  holding every slot and re-acquiring on release never trips it. When that lands it
-  takes its own namespace, separate from every other flow's, and has to decide
-  whether a *failed* change is charged differently from a successful one. See the
-  note in `internal/api/user/constants.go`.
 - **No `GET /users/me/password`.** The only thing it could report is
   `has_password_credential`, which the profile already carries.
 - **Email change, email verification, account deletion, avatars, provider

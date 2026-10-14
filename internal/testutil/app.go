@@ -451,6 +451,7 @@ func newApp(
 		pool,
 		cfg,
 		passwordHasher,
+		pinRateLimiter,
 	)
 
 	saveditem.RegisterModule(
