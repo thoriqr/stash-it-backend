@@ -15,7 +15,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
-	collectiondb "github.com/thoriqr/stash-it-backend/internal/api/collection/generated"
 	collectionmocks "github.com/thoriqr/stash-it-backend/internal/api/collection/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/pagination"
@@ -31,13 +30,25 @@ func newListService(
 	return collection.NewService(repo), repo
 }
 
+// listCollectionRow builds a listing projection row.
+//
+// It returns collection.ListedCollection rather than the generated collections table
+// model because that is what the repository now maps each statement's own row type
+// onto, and a test that still built the table model would be asserting against a
+// shape this listing no longer uses.
+//
+// The saved item count fields are left at their zero values here on purpose: this
+// helper feeds cursor and sort tests, which are about positions, and the count is
+// carried straight from the statement to the response without the service touching
+// it. The count contract is asserted where it is decided, in the mapper test and in
+// the integration tests against real rows.
 func listCollectionRow(
 	id uuid.UUID,
 	name string,
 	createdAt time.Time,
 	systemKey *string,
-) collectiondb.Collection {
-	row := collectiondb.Collection{
+) collection.ListedCollection {
+	row := collection.ListedCollection{
 		ID:        id,
 		Name:      name,
 		Type:      "user",
@@ -278,7 +289,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{first, last},
+				Collections: []collection.ListedCollection{first, last},
 				HasMore:     true,
 			}, nil)
 
@@ -320,7 +331,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{unsorted},
+				Collections: []collection.ListedCollection{unsorted},
 				HasMore:     true,
 			}, nil)
 
@@ -353,7 +364,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{row},
+				Collections: []collection.ListedCollection{row},
 				HasMore:     true,
 			}, nil)
 
@@ -386,7 +397,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 			repo.EXPECT().
 				ListCollections(gomock.Any(), gomock.Any()).
 				Return(collection.ListCollectionsResult{
-					Collections: []collectiondb.Collection{row},
+					Collections: []collection.ListedCollection{row},
 					HasMore:     true,
 				}, nil)
 
@@ -419,7 +430,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{row},
+				Collections: []collection.ListedCollection{row},
 				HasMore:     true,
 			}, nil)
 
@@ -446,7 +457,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{
+				Collections: []collection.ListedCollection{
 					listCollectionRow(uuid.New(), "Only", createdAt, nil),
 				},
 				HasMore: false,
@@ -471,7 +482,7 @@ func TestService_ListCollections_NextCursor(t *testing.T) {
 		repo.EXPECT().
 			ListCollections(gomock.Any(), gomock.Any()).
 			Return(collection.ListCollectionsResult{
-				Collections: []collectiondb.Collection{},
+				Collections: []collection.ListedCollection{},
 				HasMore:     false,
 			}, nil)
 

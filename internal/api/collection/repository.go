@@ -391,15 +391,20 @@ func (r *repository) DeleteCollection(
 
 // ListCollections returns one page of the user's collections.
 //
-// Six statements rather than one, and the count is the design rather than an
+// Nine statements rather than one, and the count is the design rather than an
 // accident. The listing has three independent dimensions: which sort, and whether
-// the page starts at the pinned row or resumes from a position. Each combination
+// the page starts at the pinned row or resumes from a position, and each combination
 // needs its own typed parameter set, because sqlc derives parameter types from the
-// statement and a runtime-selected ORDER BY would either collapse them into
-// untyped values or force a query-building abstraction this feature has no use for.
-// The collection feature already prefers explicit statements for the same reason:
+// statement and a runtime-selected ORDER BY would either collapse them into untyped
+// values or force a query-building abstraction this feature has no use for. The
+// collection feature already prefers explicit statements for the same reason:
 // CreateUserCollection and GetUserCollectionByNameForUser are separate rather than
 // one statement with a branch.
+//
+// Each statement carries the bounded saved item count in the same SELECT list, so
+// naming what a collection holds costs no second statement and no round trip. The
+// bound is the same for all nine, passed in as countCap rather than written into
+// each statement, so CollectionSavedItemsCountCap is the only place it is stated.
 //
 // No transaction is needed. A listing reads, so there is nothing to keep consistent,
 // and each page is a single statement with its own snapshot.
@@ -444,7 +449,7 @@ func (r *repository) ListCollections(
 func (r *repository) listCollectionsRows(
 	ctx context.Context,
 	params ListCollectionsParams,
-) ([]collectiondb.Collection, error) {
+) ([]ListedCollection, error) {
 	// One row beyond the limit, so the caller can tell whether more exist.
 	pageLimit := int32(params.Limit + 1)
 
@@ -464,39 +469,45 @@ func (r *repository) listFirstPage(
 	ctx context.Context,
 	params ListCollectionsParams,
 	pageLimit int32,
-) ([]collectiondb.Collection, error) {
+) ([]ListedCollection, error) {
 	var (
-		rows []collectiondb.Collection
+		rows []ListedCollection
 		err  error
 	)
 
 	switch params.Sort {
 	case CollectionSortOldest:
-		rows, err = r.queries.ListCollectionsOldestFirst(
+		generated, queryErr := r.queries.ListCollectionsOldestFirst(
 			ctx,
 			collectiondb.ListCollectionsOldestFirstParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsOldestFirst(generated), queryErr
 
 	case CollectionSortName:
-		rows, err = r.queries.ListCollectionsByNameFirst(
+		generated, queryErr := r.queries.ListCollectionsByNameFirst(
 			ctx,
 			collectiondb.ListCollectionsByNameFirstParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsByNameFirst(generated), queryErr
 
 	default:
-		rows, err = r.queries.ListCollectionsNewestFirst(
+		generated, queryErr := r.queries.ListCollectionsNewestFirst(
 			ctx,
 			collectiondb.ListCollectionsNewestFirstParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsNewestFirst(generated), queryErr
 	}
 
 	if err != nil {
@@ -510,39 +521,45 @@ func (r *repository) listAfterUnsorted(
 	ctx context.Context,
 	params ListCollectionsParams,
 	pageLimit int32,
-) ([]collectiondb.Collection, error) {
+) ([]ListedCollection, error) {
 	var (
-		rows []collectiondb.Collection
+		rows []ListedCollection
 		err  error
 	)
 
 	switch params.Sort {
 	case CollectionSortOldest:
-		rows, err = r.queries.ListCollectionsOldestAfterUnsorted(
+		generated, queryErr := r.queries.ListCollectionsOldestAfterUnsorted(
 			ctx,
 			collectiondb.ListCollectionsOldestAfterUnsortedParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsOldestAfterUnsorted(generated), queryErr
 
 	case CollectionSortName:
-		rows, err = r.queries.ListCollectionsByNameAfterUnsorted(
+		generated, queryErr := r.queries.ListCollectionsByNameAfterUnsorted(
 			ctx,
 			collectiondb.ListCollectionsByNameAfterUnsortedParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsByNameAfterUnsorted(generated), queryErr
 
 	default:
-		rows, err = r.queries.ListCollectionsNewestAfterUnsorted(
+		generated, queryErr := r.queries.ListCollectionsNewestAfterUnsorted(
 			ctx,
 			collectiondb.ListCollectionsNewestAfterUnsortedParams{
+				CountCap:  CollectionSavedItemsCountCap,
 				UserID:    params.UserID,
 				PageLimit: pageLimit,
 			},
 		)
+		rows, err = mapListedCollectionsNewestAfterUnsorted(generated), queryErr
 	}
 
 	if err != nil {
@@ -556,7 +573,7 @@ func (r *repository) listAfterPosition(
 	ctx context.Context,
 	params ListCollectionsParams,
 	pageLimit int32,
-) ([]collectiondb.Collection, error) {
+) ([]ListedCollection, error) {
 	// Both halves of the position were validated and, for the time-based sorts,
 	// parsed by the service before this was called. The repository passes them on
 	// without reinterpreting them: CursorValue is already the type sqlc generated for
@@ -567,9 +584,10 @@ func (r *repository) listAfterPosition(
 
 	switch params.Sort {
 	case CollectionSortOldest:
-		rows, err := r.queries.ListCollectionsOldestAfterRow(
+		generated, err := r.queries.ListCollectionsOldestAfterRow(
 			ctx,
 			collectiondb.ListCollectionsOldestAfterRowParams{
+				CountCap:    CollectionSavedItemsCountCap,
 				UserID:      params.UserID,
 				CursorValue: params.Cursor.Timestamp,
 				CursorID:    cursorID,
@@ -580,12 +598,13 @@ func (r *repository) listAfterPosition(
 			return nil, internalError(err)
 		}
 
-		return rows, nil
+		return mapListedCollectionsOldestAfterRow(generated), nil
 
 	case CollectionSortName:
-		rows, err := r.queries.ListCollectionsByNameAfterRow(
+		generated, err := r.queries.ListCollectionsByNameAfterRow(
 			ctx,
 			collectiondb.ListCollectionsByNameAfterRowParams{
+				CountCap:    CollectionSavedItemsCountCap,
 				UserID:      params.UserID,
 				CursorValue: *params.Cursor.Value,
 				CursorID:    cursorID,
@@ -596,12 +615,13 @@ func (r *repository) listAfterPosition(
 			return nil, internalError(err)
 		}
 
-		return rows, nil
+		return mapListedCollectionsByNameAfterRow(generated), nil
 
 	default:
-		rows, err := r.queries.ListCollectionsNewestAfterRow(
+		generated, err := r.queries.ListCollectionsNewestAfterRow(
 			ctx,
 			collectiondb.ListCollectionsNewestAfterRowParams{
+				CountCap:    CollectionSavedItemsCountCap,
 				UserID:      params.UserID,
 				CursorValue: params.Cursor.Timestamp,
 				CursorID:    cursorID,
@@ -612,7 +632,7 @@ func (r *repository) listAfterPosition(
 			return nil, internalError(err)
 		}
 
-		return rows, nil
+		return mapListedCollectionsNewestAfterRow(generated), nil
 	}
 }
 
@@ -726,6 +746,247 @@ func (r *repository) listSavedItemRows(
 	}
 
 	return newListedSavedItemsAfterCursor(rows), nil
+}
+
+// The nine functions below map one statement's generated row type onto
+// ListedCollection.
+//
+// They restate rather than merge, and that is the point. sqlc emits a distinct row
+// type per statement, so a single generic mapping would need nine type parameters
+// and a type switch, which is a second description of which statement produced
+// which row. Naming them separately makes a column added to one statement visibly
+// missing from the other eight, which is the failure worth catching.
+//
+// Each is made with a length rather than left nil, so an empty page serializes as
+// [] rather than null, which is the shape a caller decoding this list expects.
+func mapListedCollectionsNewestFirst(
+	rows []collectiondb.ListCollectionsNewestFirstRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsNewestAfterUnsorted(
+	rows []collectiondb.ListCollectionsNewestAfterUnsortedRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsNewestAfterRow(
+	rows []collectiondb.ListCollectionsNewestAfterRowRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsOldestFirst(
+	rows []collectiondb.ListCollectionsOldestFirstRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsOldestAfterUnsorted(
+	rows []collectiondb.ListCollectionsOldestAfterUnsortedRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsOldestAfterRow(
+	rows []collectiondb.ListCollectionsOldestAfterRowRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsByNameFirst(
+	rows []collectiondb.ListCollectionsByNameFirstRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsByNameAfterUnsorted(
+	rows []collectiondb.ListCollectionsByNameAfterUnsortedRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+func mapListedCollectionsByNameAfterRow(
+	rows []collectiondb.ListCollectionsByNameAfterRowRow,
+) []ListedCollection {
+	collections := make([]ListedCollection, 0, len(rows))
+
+	for _, row := range rows {
+		collections = append(collections, newListedCollection(
+			row.ID,
+			row.UserID,
+			row.Name,
+			row.Type,
+			row.SystemKey,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.SavedItemsCount,
+			row.SavedItemsCountOverflow,
+		))
+	}
+
+	return collections
+}
+
+// newListedCollection builds the listing projection from one statement's row.
+//
+// It takes the projected values positionally rather than taking a row type, because
+// there is no single row type to take: sqlc emits one per statement. Every field is
+// copied straight across and none is derived. In particular system_key is passed on
+// as the pgtype.Text the column holds, because whether a key is present is a fact
+// about the row and not something this mapping decides, and the count pair is
+// reported exactly as the statement bounded it.
+func newListedCollection(
+	id uuid.UUID,
+	userID uuid.UUID,
+	name string,
+	collectionType string,
+	systemKey pgtype.Text,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	savedItemsCount int64,
+	savedItemsCountOverflow bool,
+) ListedCollection {
+	return ListedCollection{
+		ID:                      id,
+		UserID:                  userID,
+		Name:                    name,
+		Type:                    collectionType,
+		SystemKey:               systemKey,
+		CreatedAt:               createdAt,
+		UpdatedAt:               updatedAt,
+		SavedItemsCount:         savedItemsCount,
+		SavedItemsCountOverflow: savedItemsCountOverflow,
+	}
 }
 
 // newListedSavedItems maps the first-page rows onto the listing projection.

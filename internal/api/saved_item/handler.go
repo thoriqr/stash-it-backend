@@ -80,6 +80,81 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	)
 }
 
+// List godoc
+// @Summary List recent saved items
+// @Description Get the current user's recent saved items, newest first, one page at a time. This is the recent history: every saved item the user owns, across every collection they own.
+// @Description An item appears here wherever it has been filed. It stays in the history after it is moved into a collection of the user's own or created for it automatically, and each item reports which collection that is. Unsorted is not this listing's subject: it is one collection among the ones an item can be in, and it keeps its own place in GET /collections.
+// @Description Nothing is filtered out. An item whose enrichment has not run, one whose page could not be read, and one that has been filed into a collection are all ordinary states and all listed. There is no filter on enrichment_status and no branch on whether automatic organization ran; each item reports its own enrichment_status, so a client can tell pending, completed and failed apart without any of them being withheld.
+// @Description The response body is {"data": {...}, "message": "...", "meta": {...}}. data holds the page: {"saved_items": [...]}. Each item carries its full representation: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at, plus a collection object of {"id": "...", "name": "..."}.
+// @Description The collection object is inside each item because this listing spans collections. There is no single collection for the response to name, so each row names the one it is in, and the listing reads it in the same statement as the item so a client never needs a second request per row to learn where something lives. collection_id always equals collection.id. Only id and name are reported: type and system_key belong to GET /collections.
+// @Description title, description, image_url, domain, platform and last_enriched_at are nullable and are reported as null on a key that is always present. enrichment_status is pending, completed or failed and describes whether the enrichment process ran rather than whether every field is populated, so an item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once.
+// @Description saved_items is an empty array rather than null when the user has saved nothing.
+// @Description This listing never starts enrichment, never organizes anything, and never writes. Enrichment is scheduled by saving a URL and by POST /saved-items/{id}/enrich; reading the history is not a reason to fetch anything.
+// @Description Ordering is fixed at created_at DESC, id DESC. There is no sort parameter: a history is read newest first or not at all. The id breaks ties, because created_at is constant within a transaction and rows inserted together genuinely share a timestamp.
+// @Description limit defaults to 20 and is capped at 50. A limit of 51 or more, or one below 1, is rejected as VALIDATION_ERROR; a non-numeric limit is BAD_REQUEST. limit=0 is treated as absent and falls back to the default.
+// @Description Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the newest item. A cursor records a position rather than an item, so it keeps working even if the item it came from has since been deleted, and a cursor past the end returns an empty page rather than an error.
+// @Description meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, has no position, or holds a value that is not a timestamp is rejected as INVALID_CURSOR before any listing query runs. There is deliberately no total count: a cursor-paginated response does not know how many items exist overall, and this response reports no meta.pagination.
+// @Description Only the authenticated user's saved items are ever returned. No other user's item is reachable from this endpoint.
+// @Description This route is not rate limited, for the same reason GET /saved-items/{id} and DELETE /saved-items/{id} are not: it performs one indexed read, holds nothing beyond the request, and spends no shared resource. The two saved item routes that do cost something are limited, because a save arranges unbounded downstream work and an on-demand enrichment performs an outbound fetch.
+// @Description Possible error codes:
+// @Description - BAD_REQUEST (unparsable limit or cursor length)
+// @Description - INVALID_CURSOR
+// @Description - VALIDATION_ERROR (limit outside 1..50)
+// @Description - INVALID_AUTHORIZATION_HEADER
+// @Description - INVALID_ACCESS_TOKEN
+// @Description - ACCESS_TOKEN_EXPIRED
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags SavedItem
+// @Produce json
+// @Security BearerAuth
+// @Param limit query int false "Number of saved items per page. Defaults to 20, capped at 50." minimum(1) maximum(50) default(20) example(20)
+// @Param cursor query string false "Opaque cursor from meta.cursor.next_cursor of the previous page. Omit to start at the newest item." maxLength(512) example(eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9)
+// @Success 200 {object} ListSavedItemsAPIResponse "A page of recent saved items, with meta.cursor.next_cursor null when there is no next page"
+// @Failure 400 {object} swagger.ValidationErrorResponse "Invalid limit or cursor"
+// @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Router /saved-items [get]
+func (h *Handler) List(c fiber.Ctx) error {
+	claims := c.Locals(middleware.AuthClaimsKey).(security.AccessTokenClaims)
+
+	userID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+
+	var req ListSavedItemsRequest
+
+	if err := httpx.BindQuery(c, &req); err != nil {
+		return err
+	}
+
+	result, err := h.service.List(
+		c.Context(),
+		userID,
+		req.Limit,
+		req.Cursor,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := mapListSavedItemsResponse(result)
+
+	meta := httpx.Meta{
+		Cursor: &httpx.CursorPage{
+			NextCursor: result.NextCursor,
+			HasMore:    result.HasMore,
+		},
+	}
+
+	return httpx.OKWithMeta(
+		c,
+		"saved items retrieved successfully",
+		&response,
+		meta,
+	)
+}
+
 // Get godoc
 // @Summary Get a saved item
 // @Description Get one of the current user's saved items by ID, with the collection it is filed in. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.

@@ -19,7 +19,7 @@ func mapCollectionResponse(collection collectiondb.Collection) CollectionRespons
 }
 
 func mapListedCollectionResponse(
-	collection collectiondb.Collection,
+	collection ListedCollection,
 ) ListedCollectionResponse {
 	response := ListedCollectionResponse{
 		ID:        collection.ID,
@@ -27,6 +27,15 @@ func mapListedCollectionResponse(
 		Type:      collection.Type,
 		CreatedAt: collection.CreatedAt.Time,
 		UpdatedAt: collection.UpdatedAt.Time,
+		// The two count fields are copied exactly as the statement bounded them.
+		// They are not recomputed here and neither is adjusted: the cap is a product
+		// decision stated once in CollectionSavedItemsCountCap and applied by the
+		// SQL, so a mapper that re-applied it would be a second place the bound
+		// lives. They are plain values rather than pointers because COUNT is never
+		// null, so a zero here means a collection holding nothing rather than a
+		// count that could not be read.
+		SavedItemsCount:         collection.SavedItemsCount,
+		SavedItemsCountOverflow: collection.SavedItemsCountOverflow,
 	}
 
 	// Valid is checked before the value, so a user collection's absent key is

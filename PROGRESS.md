@@ -7,6 +7,243 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-18 — Recent saved items and collection counts
+
+Implemented. Two independent changes, both additive, neither altering an existing
+field, ordering or pagination rule.
+
+| Endpoint                            | Change                                                        |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `GET /saved-items`                  | **restored** — the cross-collection recent history, cursor-paginated |
+| `GET /collections`                  | each collection now reports `saved_items_count` and `saved_items_count_overflow` |
+
+`GET /saved-items` was removed in `644e612` and is back. It was **not** restored
+from git: the removed version was offset-paginated on `ORDER BY created_at DESC`
+with eight columns, and all three of those are wrong now. The replacement is
+cursor-paginated, ordered `created_at DESC, id DESC`, and reports the full
+thirteen-field item plus a nested collection.
+
+#### `GET /saved-items` — the Inbox
+
+```json
+{
+  "data": { "saved_items": [ {
+    "id": "…", "url": "…", "domain": "example.com", "platform": null,
+    "title": null, "description": null, "image_url": null,
+    "collection_id": "…", "enrichment_status": "pending",
+    "last_enriched_at": null, "created_at": "…", "updated_at": "…",
+    "collection": { "id": "…", "name": "Wishlist" }
+  } ] },
+  "message": "saved items retrieved successfully",
+  "meta": { "cursor": { "next_cursor": null, "has_more": false } }
+}
+```
+
+- **Every collection the caller owns, one chronological list.** Unsorted, a
+  collection they named and one automatic organization created are all here, and
+  each item reports where it lives. This is what separates it from
+  `GET /collections/:id/saved-items`, which is unchanged.
+- **Nothing is filtered.** `pending`, `completed` and `failed` all appear, and an
+  item filed into a collection stays in the history. The item's own
+  `enrichment_status` is reported, so a client tells the three apart without any
+  of them being withheld.
+- **`collection` is inside each item**, not beside the page. The reasoning that
+  keeps `type` and `system_key` out of the per-collection listing inverts here:
+  that caller arrived knowing the id, and this one cannot. The join is the same
+  one `GetSavedItemByIDForUser` already makes, so naming the collection costs no
+  extra query and no request per row.
+- **Read-only.** No enqueuer is consulted by this path, no transaction is opened
+  and nothing is written. Browsing is not a reason to fetch or to organize.
+- **Cursor-paginated** with the same conventions as the other two listings:
+  default 20, max 50, `limit + 1`, cursor built from the last **returned** row,
+  `ListSavedItemsCursor` validated and its position parsed before any query runs,
+  explicit `next_cursor: null` on the final page, `[]` rather than null when
+  empty. The payload carries **no `Sort` and no `Group`** — one ordering, no
+  pinned row — and there is a test asserting it does not.
+- **`saved_items_user_created_at_idx ON (user_id, created_at DESC)`** is the
+  index behind the ordering. **No migration was created or applied**; the index
+  already existed and a tie-group filter on `id` is bounded by the number of rows
+  sharing a timestamp.
+- **No rate limiter.** This is one indexed read that holds nothing beyond the
+  request, exactly like `GET /saved-items/:id` and `DELETE /saved-items/:id`. The
+  two saved-item routes that do cost something stay limited, because a save
+  arranges unbounded downstream work and an on-demand enrichment fetches in
+  process.
+
+Errors: `400 BAD_REQUEST` / `VALIDATION_ERROR` / `INVALID_CURSOR`, the three 401s,
+`500 INTERNAL_SERVER_ERROR`.
+
+#### `GET /collections` — bounded counts
+
+```json
+{ "id": "…", "name": "Wishlist", "type": "user", "system_key": null,
+  "saved_items_count": 12, "saved_items_count_overflow": false,
+  "created_at": "…", "updated_at": "…" }
+```
+
+- **0–99 exact, `overflow: false`. 100+ reports `99` with `overflow: true`.**
+- Computed in the **same statement** as the page, via a `LEFT JOIN LATERAL`
+  correlated on the collection's own id and owner. Not a second statement, not a
+  pre-aggregated derived table (which would aggregate every `saved_items` row in
+  the database on every page), and not one query per collection. One plan, one
+  round trip, one snapshot — so a collection can never be reported beside a count
+  a separate statement disagreed with.
+- An **empty collection reports `0`, never null**, and is still listed.
+- Ordering, the pinned-Unsorted rank, all three sorts, cursor groups and
+  `has_more` are untouched. Asserted directly rather than assumed.
+- The **bound is a parameter**, so `CollectionSavedItemsCountCap` states it once
+  for all nine statements rather than nine literals that could disagree.
+
+**`LEFT` and `COALESCE` are defensive, not load-bearing, and this was measured.**
+An aggregate with no `GROUP BY` always returns exactly one row, so `COUNT(*)` is
+0 rather than null for an empty collection. Replacing either with its inner or
+raw form was tried and **every test still passed**. What the pair buys is that a
+future change adding a grouping key cannot silently produce a null count or drop
+an empty collection from the listing. The observable contract is what is tested.
+
+#### The count is bounded in the rows it reads, and that is measured
+
+The first version clipped the **answer** only — `LEAST(COUNT(*), cap)` over the
+whole collection — which bounds what is reported and not what is read. The
+aggregate still walked every saved item in the collection and discarded the
+result at the end, so a collection of 50,000 cost 50,000 index entries to produce
+the same "99+". Nothing in the response distinguishes 100 from 50,000, so none of
+that work could change the answer.
+
+Every listing statement now bounds the **rows**:
+
+```sql
+FROM (
+    SELECT 1
+    FROM saved_items si
+    WHERE si.collection_id = c.id
+      AND si.user_id = c.user_id
+    LIMIT sqlc.arg(count_cap)::bigint + 1
+) bounded
+```
+
+The aggregate expressions are untouched; they now count the bounded set.
+
+**Measured** on a disposable PostgreSQL 18 container against this project's
+baseline schema, with one user holding collections of 0, 1, 99, 100, 101 and
+50,000 saved items plus a second user with 50,000 of their own. Same statement,
+same parameters, one page of 20 collections plus the lookahead row,
+`EXPLAIN (ANALYZE, BUFFERS)`, all buffers `shared hit`:
+
+| | Rows examined | Buffers | Execution time |
+|---|---|---|---|
+| unbounded `COUNT(*)` | 7,186 avg × 7 loops | 1,035 hit | **7.211 ms** |
+| bounded to `cap + 1` | 57 avg × 7 loops | 27 hit | **0.125 ms** |
+
+`saved_items_collection_id_idx` is confirmed as the index in both plans
+(`Index Scan using saved_items_collection_id_idx`, `Index Cond: collection_id =
+c.id`), with the new `Limit` node sitting above it. The scan is bounded rather
+than removed: 57 average is the mean across collections of 0, 1, 99, 100, 101 and
+50,000, and no collection can exceed 100.
+
+The two forms were also run side by side and agree row for row on all seven
+collections, including the two that the `+ 1` exists for: **99 → `99`/`false`
+and 100 → `99`/`true`** in both forms.
+
+**What was not improved, stated plainly:** the plan is an index scan *with a
+filter*, not an index-only scan, because `si.user_id` is not in
+`saved_items_collection_id_idx` and the predicate needs the heap tuple. Dropping
+`AND si.user_id = c.user_id` would make it index-only — migration 000025's
+composite foreign key guarantees it cannot change the result — but that removes a
+defence-in-depth predicate and is a separate decision, not part of this change.
+
+The `+ 1` is mutation-tested: dropping it so the limit is exactly `cap` fails
+four cases, because a collection holding exactly 99 would then be reported as
+`99`/`false` and one holding 100 as `99`/`false` too. No new tests were needed;
+the existing cases for 0, 1, 99, 100, 101 and cross-user isolation already
+distinguish every state this expression can produce.
+
+#### Verification, and that it detects what it claims
+
+`internal/api/saved_item` — 24 new tests: limit defaulting, `limit=0` read as
+absent, clamping, user scoping, one call and nothing else, pass-through of
+repository errors; **eleven** unusable cursor shapes each refused as the same
+`400 INVALID_CURSOR` with `Times(0)` on the repository so a bad token provably
+spends no query; a valid cursor handed over as a parsed `pgtype.Timestamptz`;
+the next cursor built from the last returned row; absent on an empty and on a
+final page; the payload's JSON keys asserted to contain neither `s` nor `g`.
+
+`internal/api/collection` — 9 new tests on the response contract: `0`, `1`, `99`
+and `99`+overflow reaching the wire unchanged; both keys present where they carry
+their zero value; an empty listing serializing as `[]`.
+
+`internal/integration` — 12 count cases against real rows (`0`, `1`, `99`,
+`100`, `101`, `297`, Unsorted, an automatic system collection, another user's
+items excluded, the whole collection on every cursor page, all three sorts across
+all three resume points, ordering and pinning unchanged) plus 8 pagination and
+behaviour cases for the new endpoint (three collections in one chronological
+list, an item kept after being filed through the real move endpoint, all three
+enrichment states, another user's items excluded, `[]` when empty, nullable keys
+present and null while `domain` is correctly *not* null, three consecutive reads
+leaving every column byte-identical, deterministic ordering across 12 rows
+sharing one `created_at`, a 45-item walk over three collections with no duplicate
+and no gap, resuming after the anchor is deleted, a cursor past the end, eleven
+rejected cursors, `limit=0`, and `51`/`100`/`-1` refused while `1`/`50` are
+accepted).
+
+**Two new documented-shape guards**, because adding fields to a documented
+response with no guard is exactly how `meta` once disappeared from a schema:
+`TestCollectionAPI_ListCollections_DocumentedShape` walks `docs/swagger.json`
+and a real body side by side and fails if either gains or loses a key, asserting
+both count keys and their types; `TestSavedItemAPI_ListRecent_DocumentedShape`
+does the same for the new endpoint down to the per-item collection object.
+
+**One existing test asserted the opposite of this change and had to be replaced.**
+`TestSavedItems_ListRouteIsGone` pinned `405 Method Not Allowed` on
+`GET /saved-items`, i.e. that the route was *not* registered. That is exactly the
+assertion the new requirement invalidates, so it could not be left passing. It is
+now `TestSavedItems_ListRouteIsDistinctFromTheItemRoute`, which keeps the half
+that still matters: registering a collection-less listing on the same group as
+`GET /saved-items/:id` puts a static path beside a parameterised one, and a router
+resolving them in the wrong order would answer every item request with an empty
+list. The replacement still asserts `GET /saved-items/:id` returns `404` on a
+missing id, which is what holds that apart.
+
+**Mutation-tested.** Each guard was removed in turn and the suite re-run:
+
+| Mutation | Result |
+|---|---|
+| `LEAST(COUNT(*), cap)` → `COUNT(*)` | **fails** in 8 cases — reports 100, 101, 297 instead of 99 |
+| `COUNT(*) > cap` → `FALSE` | **fails** in 4 cases — overflow never set |
+| first-page `ORDER BY` loses `si.id DESC` | **fails** — ties come back unordered |
+| an `enrichment_status` filter added | **fails** in 9 cases |
+| `LEFT JOIN LATERAL` → `INNER JOIN LATERAL` | **passes** — so the comment says so rather than claiming protection it does not give |
+| `LIMIT cap + 1` → `LIMIT cap` | **fails** in 4 cases — 100 items reports `false` overflow |
+
+The last row is why that paragraph reads the way it does.
+
+Commands run, and their results:
+
+```sh
+sqlc generate                                     # exit 0
+swag init -g cmd/api/main.go -parseInternal       # exit 0
+go build ./...                                    # exit 0
+go vet ./...                                      # exit 0
+gofmt -l <the 27 changed .go files>               # clean
+go test ./... -count=1                            # exit 0, 23 packages
+```
+
+`gofmt -l` over the whole tree is **not** clean, and was not before this change:
+about sixty files this work never touched are reported for CRLF line endings,
+which is a Windows checkout artefact rather than a formatting fault. The check
+that means something here is gofmt over exactly the files that changed, which is
+clean.
+
+**The race detector was not run.** These are SQL, pagination and response-shape
+changes with no new concurrency; `AGENTS.md` asks for it on changes that add or
+alter concurrent code, and there is none here.
+
+**No migration was created or applied.** `saved_items_user_created_at_idx` and
+`saved_items_collection_id_idx` already exist and are the indexes behind the new
+statements. `internal/database/baseline/schema.sql` is untouched.
+
+**Nothing was committed.**
+
 ### 2026-10-15 — User Service: profile and password credential
 
 Implemented. `internal/api/user/` is a complete vertical slice, registered as a
@@ -496,16 +733,20 @@ through `saved_item.RegisterModule`, and covered by tests.
 | Endpoint                  | Status | Notes                                                    |
 | ------------------------- | ------ | -------------------------------------------------------- |
 | `POST /saved-items`       | done   | 201, requires Bearer, minimal response                   |
+| `GET /saved-items`        | done   | **restored 2026-10-18** — 200, the cross-collection recent history, cursor-paginated |
 | `GET /saved-items/:id`    | done   | 200, owner-scoped, complete item + collection            |
 | `DELETE /saved-items/:id` | done   | 200, hard delete, owner-scoped, reports collection state |
 
 Update/edit (`PATCH` or `PUT`) is deliberately out of scope for now.
 
-`GET /saved-items` was removed. Every saved item belongs to exactly one collection, so
-the inbox is the Unsorted collection seen through `GET /collections/:id/saved-items`
-rather than a second, independent list. Keeping both would mean two ways to ask the
-same question, and the standalone one reported fewer fields: it carried no
-`enrichment_status`, `last_enriched_at`, `description` or `image_url`.
+`GET /saved-items` was removed in `644e612` and **restored** in 2026-10-18. The
+original decision that there should be no standalone listing is superseded — see
+decision 19g and "Recent saved items and collection counts" above. `GET /saved-items`
+is now the cross-collection recent history: every saved item the user owns, newest
+first, cursor-paginated, with a nested `collection` per item. Every saved item
+still belongs to exactly one collection, and `GET /collections/:id/saved-items`
+remains the way to see one collection's contents. `Unsorted` is a collection, not
+the Inbox, and is never a substitute for the history.
 
 Feature package: `internal/api/saved_item/`, following the project's
 vertical-slice convention.
@@ -687,7 +928,7 @@ No public-suffix or registrable-domain detection is performed.
 | Endpoint                           | Status | Notes                                                |
 | ---------------------------------- | ------ | ---------------------------------------------------- |
 | `PUT /saved-items/:id/collection`  | done   | 200, owner-scoped, requires Bearer                   |
-| `GET /collections`                 | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
+| `GET /collections`                 | done   | 200, owner-scoped, cursor-paginated, requires Bearer, **reports a bounded saved item count per collection** |
 | `GET /collections/:id/saved-items` | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
 | `DELETE /collections/:id`          | done   | 200, owner-scoped, requires Bearer                   |
 
@@ -778,9 +1019,15 @@ Behavior:
   constant within a transaction, so equal timestamps are real: migration 000022
   inserts every user's Unsorted collection in one statement. Without a unique
   tie-break a page boundary can skip or repeat a row.
-- **Six named queries**, one per (sort × resume point). sqlc derives parameter types
-  per statement, so a runtime-selected `ORDER BY` would either collapse the types or
-  force a query framework this feature has no use for.
+- **Nine named queries**, three sorts times three resume points. The "six" in older
+  revisions of this sentence was wrong; the count is corrected here. sqlc derives
+  parameter types per statement, so a runtime-selected `ORDER BY` would either
+  collapse the types or force a query framework this feature has no use for.
+- **Every statement also projects `saved_items_count` and
+  `saved_items_count_overflow`**, through a `LEFT JOIN LATERAL` correlated on the
+  collection's own id and owner. One statement, one plan, one round trip, so naming
+  what a collection holds costs nothing beyond the read already happening. Added
+  2026-10-18; see decision 19j.
 - **The resumed queries exclude Unsorted with `IS DISTINCT FROM`.** That is
   load-bearing twice: it removes the pinned row, and it is NULL-safe, so user
   collections whose `system_key` is NULL are not dropped with it. A plain `<>` would
@@ -793,7 +1040,7 @@ Response:
 
 ```json
 {
-  "data": { "collections": [{ "id": "…", "name": "Unsorted", "type": "system", "system_key": "unsorted", "created_at": "…", "updated_at": "…" }] },
+  "data": { "collections": [{ "id": "…", "name": "Unsorted", "type": "system", "system_key": "unsorted", "saved_items_count": 4, "saved_items_count_overflow": false, "created_at": "…", "updated_at": "…" }] },
   "message": "collections retrieved successfully",
   "meta": { "cursor": { "next_cursor": null, "has_more": false } }
 }
@@ -802,11 +1049,19 @@ Response:
 - `system_key` is included so a client recognizes Unsorted by identity rather than by
   display name, and can know a collection may not be deleted before offering to
   delete it.
+- **`saved_items_count` is bounded at 99 and `saved_items_count_overflow` says
+  whether the real count was higher.** Together they carry 0, 1–99 and 100+, so a
+  client renders an exact badge or a `99+` without comparing against a threshold of
+  its own. It counts the **whole collection** on **every page**, and an empty
+  collection reports `0` rather than null. Both are added 2026-10-18; see decision
+  19j and the change section above.
 - **`next_cursor` has no `omitempty`**, so it serializes as an explicit `null` on the
   final page. A nil pointer tagged `omitempty` would drop the key entirely, and a
   missing key and a null are two different things to a client decoding it.
 - **No `total` or `total_pages`.** `has_more` comes from one extra fetched row rather
-  than a count, which is the work keyset pagination exists to avoid.
+  than a count, which is the work keyset pagination exists to avoid. That is about
+  the size of the **page**; `saved_items_count` is about the size of a collection and
+  the two do not collide.
 - An empty page serializes `collections` as `[]`, never `null`.
 - **`meta` is declared on the API response type as a documentation-only mirror.**
   `httpx.OKWithMeta` writes the real envelope, so a struct that omits `meta` returned a
@@ -3910,12 +4165,56 @@ carries both, with `cursor` omitted entirely where unset, so no existing respons
 changes. Converting the session endpoint is a separate piece of work and needs its
 own decision.
 
-19g. **There is no standalone saved-item listing.** Every saved item belongs to
-exactly one collection, so an inbox is the Unsorted collection seen through
-`GET /collections/:id/saved-items`. Two ways to ask the same question would be two
-answers to keep in step, and the standalone one was also the poorer answer: it
-carried no `enrichment_status`, `last_enriched_at`, `description` or `image_url`,
-so a caller could not tell a page with no title from one that had not been read.
+19g. **The Inbox is a cross-collection recent history, served by
+`GET /saved-items`. Every saved item belongs to exactly one collection, so each
+item reports that collection and the history is never confused with any single
+collection's contents.** This supersedes the earlier decision that there is no
+standalone saved-item listing. The reasoning it was based on still stands and is
+why the endpoint looks the way it does: it reports the full thirteen-field item
+including `enrichment_status`, `last_enriched_at`, `description` and
+`image_url`, so a caller can tell a page with no title from one that had not
+been read, and it carries a nested `collection` of `id` and `name` per item
+because a listing that spans collections cannot name one collection for the
+whole response. What changed is the product's need: the Flutter Inbox is a
+chronological record of what was saved, so an item has to stay in it after it
+has been filed into a collection of the user's own.
+
+`GET /collections/:id/saved-items` is unchanged and still the way to see one
+collection's contents. `Unsorted` is **not** the Inbox: it is one collection
+among the ones an item can be in, it is pinned first in `GET /collections`
+because every save lands there, and it is never used as a substitute for the
+cross-collection history. Do not "simplify" one of these three into another.
+
+Nothing is filtered out of the history. A `pending` item, an item whose page
+could not be read, and an item automatic organization filed are all ordinary
+states of a saved item and all appear; a history that hid the two it had not
+finished processing would be a record of only what went well. The listing also
+never writes and never triggers enrichment or organization.
+
+19j. **A collection listing reports a bounded saved item count, and the bound is
+one number with a separate boolean rather than a value a client has to
+interpret.** `saved_items_count` is capped at
+`CollectionSavedItemsCountCap` (99) and `saved_items_count_overflow` says
+whether the real count was higher, so a client renders an exact badge up to 99
+and `99+` above it without ever comparing against a threshold of its own. The
+count is of the **whole collection**, on **every page** — a count that described
+the page would be a different number on each one, and a badge that changed as
+the user scrolled would not be a count of anything.
+
+The bound is passed to every listing statement as a query parameter rather than
+written into the SQL, so `CollectionSavedItemsCountCap` is the only place it is
+stated; a literal in each of the nine statements would be nine places that could
+disagree. This is about the size of a collection, not about the size of a page,
+and does not reintroduce a pagination `total`: `has_more` still comes from one
+extra fetched row.
+
+The bound is on the **rows read**, not only on the number reported. The inner
+`SELECT` asks for at most `CollectionSavedItemsCountCap + 1` matching rows and
+stops there, so one collection's count costs the same whether it holds 5 items or
+50,000. Clipping `COUNT(*)` alone would have bounded only the answer and left the
+aggregate walking every row. The `+ 1` is what makes the threshold decidable:
+exactly `cap` rows is still an exact count, so without it a collection holding
+exactly 99 would be indistinguishable from one holding more.
 
 19h. **A collection listing names its collection.** `GET /collections/:id/saved-items`
 reports `data.collection` with `id` and `name`, reused from the ownership lookup

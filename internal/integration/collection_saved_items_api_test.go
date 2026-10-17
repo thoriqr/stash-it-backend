@@ -1615,36 +1615,40 @@ func TestCollectionAPI_ListSavedItems_Errors(t *testing.T) {
 	})
 }
 
-// TestSavedItems_ListRouteIsGone pins the removal of GET /saved-items.
+// TestSavedItems_ListRouteIsDistinctFromTheItemRoute pins that GET /saved-items and
+// GET /saved-items/:id are two routes rather than one swallowing the other.
 //
-// Every saved item belongs to a collection, so the listing is now addressed through
-// one. The route must not survive as a second way to ask for the same thing, because a
-// client that used it would receive a representation without the enrichment columns
-// the collection listing reports.
-func TestSavedItems_ListRouteIsGone(t *testing.T) {
+// It replaced a test that pinned the opposite: this path used to assert that
+// GET /saved-items was not registered, because the listing was addressed only through
+// a collection. The Flutter Inbox requirement superseded that decision — see
+// PROGRESS.md decision 19g — and the endpoint came back with the full representation
+// rather than the thinner one that removal was part.
+//
+// The thing worth keeping is the second half. Registering a collection-less listing on
+// the same group as GET /saved-items/:id puts a static path beside a parameterised one,
+// and a router that resolved them in the wrong order would answer every item request
+// with an empty list. Asserting the item route still 404s on a missing id is what holds
+// that in place.
+func TestSavedItems_ListRouteIsDistinctFromTheItemRoute(t *testing.T) {
 	truncateCollectionData(t)
 
-	userID := createCollectionUser(t, "saved-items-list-removed@example.com")
+	userID := createCollectionUser(t, "saved-items-list-restored@example.com")
 	createUnsorted(t, userID)
 
-	req := httptest.NewRequest(http.MethodGet, "/saved-items", nil)
-	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+	listReq := httptest.NewRequest(http.MethodGet, "/saved-items", nil)
+	listReq.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
 
-	resp, err := testApp.Test(req)
+	listResp, err := testApp.Test(listReq)
 	require.NoError(t, err)
 
-	// No GET route matches /saved-items any more. POST does, so the router reports the
-	// method as not allowed rather than the path as missing, which is itself the
-	// evidence that the listing route specifically was removed while the resource
-	// stayed.
 	require.Equal(
 		t,
-		http.StatusMethodNotAllowed,
-		resp.StatusCode,
-		"GET /saved-items must no longer be registered",
+		http.StatusOK,
+		listResp.StatusCode,
+		"GET /saved-items must be registered as the recent history",
 	)
 
-	// The saved-item resource itself is untouched by that removal.
+	// The saved-item resource itself is untouched by the listing returning.
 	singleReq := httptest.NewRequest(
 		http.MethodGet,
 		"/saved-items/"+uuid.New().String(),

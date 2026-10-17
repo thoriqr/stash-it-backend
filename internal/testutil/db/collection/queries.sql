@@ -99,6 +99,19 @@ SET enrichment_status = sqlc.arg(enrichment_status),
     created_at = sqlc.arg(created_at)
 WHERE id = sqlc.arg(id);
 
+-- name: SetTestSavedItemPlatform :exec
+-- Sets platform on an existing saved item.
+--
+-- A separate statement rather than another column on
+-- SetTestSavedItemEnrichmentStateAt, which several other tests use and none of which
+-- has a platform in mind: a new column there would write NULL into rows those tests
+-- go on to assert against. This one is only called where the platform is what the
+-- test is actually about, which is a response-shape test that needs every nullable
+-- column populated.
+UPDATE saved_items
+SET platform = sqlc.arg(platform)
+WHERE id = sqlc.arg(id);
+
 -- name: GetCollectionState :one
 SELECT
     id,
@@ -175,6 +188,24 @@ SELECT COUNT(*)
 FROM saved_items
 WHERE collection_id = sqlc.arg(collection_id)
   AND user_id = sqlc.arg(user_id);
+
+-- name: CreateTestSavedItemsInCollection :exec
+-- Seeds many saved items into one collection in a single statement.
+--
+-- A test that needs a collection holding more than a hundred rows would otherwise
+-- pay one round trip per row, and the rows would all share a created_at anyway
+-- because created_at defaults to NOW(), which is constant within a transaction.
+-- Both reasons are why this exists rather than a loop in the test.
+--
+-- The urls are generated rather than supplied because no test asserting a count
+-- cares what they are.
+INSERT INTO saved_items (user_id, url, domain, collection_id)
+SELECT
+    sqlc.arg(user_id),
+    'https://example.com/bulk-' || g,
+    'example.com',
+    sqlc.arg(collection_id)
+FROM generate_series(1, sqlc.arg(item_count)::int) AS g;
 
 -- name: ListSavedItemCollectionsInCollection :many
 -- Every distinct collection a set of saved items is filed in. Used to assert that

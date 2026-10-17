@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -11,6 +12,7 @@ import (
 
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/pagination"
 )
 
 type SavedItemService interface {
@@ -31,6 +33,15 @@ type SavedItemService interface {
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
 	) (DeleteResult, error)
+
+	// List returns one page of the user's recent saved items across every collection
+	// they own, newest first, plus the cursor state that follows the page.
+	List(
+		ctx context.Context,
+		userID uuid.UUID,
+		limit int,
+		cursor string,
+	) (ListSavedItemsResult, error)
 }
 
 type service struct {
@@ -312,6 +323,167 @@ func (s *service) Delete(
 		CollectionEmpty:     collectionEmpty,
 		CollectionDeletable: collectionEmpty && !isUnsorted,
 	}, nil
+}
+
+// List returns one page of the user's recent saved items, newest first.
+//
+// This is the recent history: every saved item the caller owns, across every
+// collection they own. It is deliberately not a view of one collection, and it is
+// deliberately not a filtered subset.
+//
+// The three rules it owns are the same ones every other listing in this repository
+// owns, and each exists because the alternative would be guessing:
+//
+//   - The limit is defaulted and clamped here, so the bound is stated once rather
+//     than per query and a caller reaching this service without going through the
+//     request type still gets the same page size.
+//   - The cursor is decoded, validated and its position parsed here. The repository
+//     receives a position, never a token.
+//   - The next cursor is built here rather than in the repository, from the last row
+//     actually returned.
+//
+// The cursor is settled before anything else runs. A token is a string this build did
+// not write, so it cannot be trusted to hold a usable position, and rejecting one
+// without spending a query or taking a connection is the difference between a 400
+// and a 500 that a client cannot act on.
+//
+// Nothing here filters on enrichment_status, and there is no branch on how far
+// enrichment or automatic organization got. An item whose page has not been read, an
+// item whose page could not be read and an item that has been filed into a collection
+// are all ordinary states of a saved item, and all of them happened. A history that
+// hid the two it had not finished processing would be a record of only what went
+// well. Each item reports its own enrichment_status, so a client can tell the states
+// apart without any of them being withheld.
+//
+// This method reads and nothing else. It holds no enqueuer, opens no transaction and
+// writes nothing: enrichment is scheduled by saving a URL and by an explicit request
+// for one item, and looking at the history is not a reason to fetch anything.
+func (s *service) List(
+	ctx context.Context,
+	userID uuid.UUID,
+	limit int,
+	cursor string,
+) (ListSavedItemsResult, error) {
+	if limit <= 0 {
+		limit = SavedItemListDefaultLimit
+	}
+
+	if limit > SavedItemListMaxLimit {
+		limit = SavedItemListMaxLimit
+	}
+
+	params := ListSavedItemsParams{
+		UserID: userID,
+		Limit:  limit,
+	}
+
+	if cursor != "" {
+		decoded, err := decodeListSavedItemsCursor(cursor)
+		if err != nil {
+			return ListSavedItemsResult{}, err
+		}
+
+		params.Cursor = decoded
+	}
+
+	result, err := s.repository.ListSavedItems(ctx, params)
+	if err != nil {
+		return ListSavedItemsResult{}, err
+	}
+
+	// The next cursor is derived from the last item actually returned, never the
+	// lookahead row: a cursor built from a row the client never received would resume
+	// past it and skip one item at every page boundary.
+	if result.HasMore && len(result.SavedItems) > 0 {
+		token, err := encodeListSavedItemsCursor(result.SavedItems)
+		if err != nil {
+			return ListSavedItemsResult{}, apperror.Internal(err)
+		}
+
+		result.NextCursor = &token
+	} else {
+		// A final page and an empty page are the same shape, which the response
+		// renders as an explicit null rather than omitting the field.
+		result.HasMore = false
+		result.NextCursor = nil
+	}
+
+	return result, nil
+}
+
+// decodeListSavedItemsCursor turns an opaque token into a validated cursor.
+//
+// Every failure is the same 400 with the same code: a cursor is not a capability, so
+// "malformed" and "unusable" mean one thing to a caller, which is to start over
+// without a cursor.
+//
+// There is no sort or group to check. This listing has one ordering and no pinned
+// row, so a token cannot be mismatched against anything.
+//
+// Both halves of the position are required. An ordering on created_at alone is not
+// total, so a position without the tie-breaker cannot describe where a page ended,
+// and reading one as the top of the history would silently return the newest page to
+// a caller that asked to resume.
+func decodeListSavedItemsCursor(token string) (*ListSavedItemsCursor, error) {
+	decoded, err := pagination.DecodeVersioned[ListSavedItemsCursor](token)
+	if err != nil {
+		return nil, invalidCursorError(err)
+	}
+
+	if decoded.Value == nil || decoded.ID == nil {
+		return nil, invalidCursorError(nil)
+	}
+
+	if *decoded.Value == "" || *decoded.ID == uuid.Nil {
+		return nil, invalidCursorError(nil)
+	}
+
+	// The position is compared against a timestamptz column, so it has to actually be
+	// a timestamp. Checking it here rather than in the repository turns an unusable
+	// token into the 400 it is before any query runs: the value arrives as a string
+	// because that is what JSON carries, and only this layer knows the payload's
+	// shape well enough to say whether a string is well formed.
+	//
+	// The parsed form is recorded on the cursor, so the repository receives the type
+	// sqlc expects and has nothing left to parse or reinterpret.
+	parsed, err := time.Parse(time.RFC3339Nano, *decoded.Value)
+	if err != nil {
+		return nil, invalidCursorError(err)
+	}
+
+	decoded.Timestamp = pgtype.Timestamptz{Time: parsed, Valid: true}
+
+	return &decoded, nil
+}
+
+// invalidCursorError reports that a cursor cannot be used.
+//
+// The underlying cause is kept as the wrapped error for the log rather than the
+// message, since the message is what reaches anything rendering the response and a
+// cursor's internal shape is not something to describe there.
+func invalidCursorError(cause error) error {
+	return apperror.BadRequestWith(
+		CodeInvalidCursor,
+		"cursor is invalid",
+		cause,
+	)
+}
+
+// encodeListSavedItemsCursor builds the token for the page ending at the given item.
+//
+// The position is read from the item as stored, never re-derived, so the value in the
+// token is the one the query ordered by. RFC3339Nano is used because it round-trips a
+// time.Time exactly and is the only lossless textual form available for one.
+func encodeListSavedItemsCursor(savedItems []ListedSavedItem) (string, error) {
+	last := savedItems[len(savedItems)-1]
+
+	value := last.CreatedAt.Time.Format(time.RFC3339Nano)
+
+	return pagination.Encode(ListSavedItemsCursor{
+		Version: pagination.CurrentVersion,
+		Value:   &value,
+		ID:      &last.ID,
+	})
 }
 
 // deriveDomain extracts and normalizes the host from the submitted URL. It never

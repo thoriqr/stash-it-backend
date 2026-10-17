@@ -92,3 +92,134 @@ type DeletedSavedItem struct {
 	// deleted row's own value and cannot disagree with the row that is gone.
 	CollectionID uuid.UUID
 }
+
+// ListedSavedItem is a saved item as the recent saved items listing reports it.
+//
+// It is a separate projection from SavedItem because it carries one column SavedItem
+// cannot: CollectionName. A listing spans every collection the user owns, so unlike
+// a per-collection listing the caller cannot learn from the request which collection
+// any given row is in, and a bare collection_id would leave a client unable to name
+// where an item lives without a request per row.
+//
+// CollectionName is read from the same statement as the item, by joining collections,
+// so reporting it costs nothing beyond the read that was happening anyway.
+type ListedSavedItem struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	Url      string
+	Domain   pgtype.Text
+	Platform pgtype.Text
+	Title    pgtype.Text
+
+	// Description and ImageURL are NULL until enrichment supplies them, and stay
+	// NULL afterwards when a page exposed neither. Neither being present is an
+	// ordinary outcome and not a defect, and neither is a reason to leave the item
+	// out of the history.
+	Description pgtype.Text
+	ImageURL    pgtype.Text
+
+	// CollectionID is the collection this item is filed in. Every saved item belongs
+	// to exactly one, and the column is NOT NULL, so it always has a value. It is
+	// reported alongside the collection name because the id alone is what makes the
+	// item addressable and the name is what makes it legible.
+	CollectionID uuid.UUID
+
+	// EnrichmentStatus is pending, completed or failed. The listing reports it and
+	// never filters on it: all three are ordinary states of a saved item, and a
+	// history that hid the two it had not finished processing would be a history of
+	// only the items that went well.
+	EnrichmentStatus string
+
+	// LastEnrichedAt is NULL until an enrichment has succeeded at least once. A
+	// failed attempt refreshes nothing, so it does not set this.
+	LastEnrichedAt pgtype.Timestamptz
+
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+
+	// CollectionName is the display name of CollectionID. collections.name is NOT
+	// NULL, so it is always a real value rather than an optional one.
+	CollectionName string
+}
+
+// ListSavedItemsParams is one validated request to list a user's recent saved items.
+type ListSavedItemsParams struct {
+	UserID uuid.UUID
+
+	// Limit is the number of saved items to return, already defaulted and clamped by
+	// the service. The repository asks for one more so HasMore is exact.
+	Limit int
+
+	// Cursor resumes a listing, or is nil for the first page. It is the decoded token,
+	// never the raw query string.
+	Cursor *ListSavedItemsCursor
+}
+
+// ListSavedItemsCursor is the position a page ended at, encoded into an opaque
+// token.
+//
+// It is a feature payload rather than part of internal/pagination, and it is
+// deliberately the smallest cursor payload in the project. It has no Sort and no
+// Group: this listing has one ordering and no pinned row, so a token cannot be
+// mismatched against anything and there is nothing for a sort comparison to reject.
+// Carrying fields that can never vary here would mean every validation below had a
+// branch that could not be reached.
+//
+// Value and ID are pointers so an absent field stays distinguishable from a zero one.
+// A truncated token has to be rejected rather than read as the top of the history,
+// which would silently return the newest page to a client that asked to resume.
+type ListSavedItemsCursor struct {
+	// Version is the payload format, checked against pagination.CurrentVersion. A
+	// cursor can outlive a deployment, so a token written by another build has to
+	// fail cleanly rather than be misread as a position.
+	Version int `json:"v"`
+
+	// Value is the item's created_at at that position, as RFC3339Nano because the
+	// payload travels as JSON.
+	//
+	// The service checks it is a real timestamp and records the parsed form in
+	// Timestamp before any query runs, so Value never reaches a query unvalidated.
+	Value *string `json:"val"`
+
+	// ID is the tie-breaker at that position, which is what makes created_at a total
+	// order.
+	ID *uuid.UUID `json:"i"`
+
+	// Timestamp is Value already parsed into the type sqlc expects for a timestamptz
+	// column. It is derived, not transmitted: json:"-" keeps it out of the token, so
+	// the payload stays the wire contract and this is never a second copy of the
+	// position that could disagree with it.
+	//
+	// Because the service fills it, the repository never parses a client-supplied
+	// value and can only pass along something that was already accepted.
+	Timestamp pgtype.Timestamptz `json:"-"`
+}
+
+// CursorVersion reports the payload format so pagination.DecodeVersioned can check
+// it without this package needing to know the field.
+func (c ListSavedItemsCursor) CursorVersion() int {
+	return c.Version
+}
+
+// hasPosition reports whether the cursor carries a position to resume from.
+func (c *ListSavedItemsCursor) hasPosition() bool {
+	return c.Value != nil && c.ID != nil
+}
+
+// ListSavedItemsResult is one page of recent saved items plus the cursor state that
+// follows it.
+type ListSavedItemsResult struct {
+	// SavedItems is the page itself. It is made with a length by the repository, so
+	// an empty history serializes as [] rather than null.
+	SavedItems []ListedSavedItem
+	Limit      int
+
+	// HasMore is exact: the repository fetched one row beyond Limit and this says
+	// whether that row existed, rather than counting every item to find out.
+	HasMore bool
+
+	// NextCursor is the token for the following page, or nil when HasMore is false.
+	// It is derived from the last item actually returned, never from the lookahead
+	// row, so a page boundary never skips an item the client did not receive.
+	NextCursor *string
+}

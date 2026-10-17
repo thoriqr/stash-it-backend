@@ -53,6 +53,24 @@ const (
 	CreateUserRateLimitWindow = 10 * time.Minute
 )
 
+const (
+	// SavedItemListDefaultLimit and SavedItemListMaxLimit bound a page of recent
+	// saved items.
+	//
+	// They are stated here rather than borrowed from internal/api/collection, which
+	// has its own identical pair for a page of one collection's saved items. The two
+	// bound different resources and are separate features that deliberately do not
+	// import one another, so borrowing would couple two listings that may reasonably
+	// move apart without silently changing the other. That they match today is the
+	// intended consistency, not a shared constant.
+	//
+	// limit=0 is read as absent and falls back to the default rather than being
+	// rejected, while a value above the maximum is a VALIDATION_ERROR rather than a
+	// silently resized page.
+	SavedItemListDefaultLimit = 20
+	SavedItemListMaxLimit     = 50
+)
+
 // createUserRateLimitNamespace groups the save counters in Redis.
 //
 // It is its own namespace, separate from the enrichment budget, because the two

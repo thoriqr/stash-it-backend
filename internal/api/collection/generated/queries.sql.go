@@ -217,28 +217,58 @@ func (q *Queries) GetUserCollectionByNameForUser(ctx context.Context, arg GetUse
 
 const listCollectionsByNameAfterRow = `-- name: ListCollectionsByNameAfterRow :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (lower(btrim(name)), id) > ($2::text, $3::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (lower(btrim(c.name)), c.id) > (
+      $3::text,
+      $4::uuid
+  )
 ORDER BY
-    lower(btrim(name)) ASC,
-    id ASC
-LIMIT $4
+    lower(btrim(c.name)) ASC,
+    c.id ASC
+LIMIT $5
 `
 
 type ListCollectionsByNameAfterRowParams struct {
+	CountCap    int64
 	UserID      uuid.UUID
 	CursorValue string
 	CursorID    uuid.UUID
 	PageLimit   int32
+}
+
+type ListCollectionsByNameAfterRowRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // Alphabetically ascending collections after the position a cursor carries.
@@ -250,8 +280,13 @@ type ListCollectionsByNameAfterRowParams struct {
 //
 // The casts are load-bearing: without them sqlc would type cursor_id from the row's
 // leftmost element. See ListCollectionsNewestAfterRow.
-func (q *Queries) ListCollectionsByNameAfterRow(ctx context.Context, arg ListCollectionsByNameAfterRowParams) ([]Collection, error) {
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst. A resumed page
+// reports each collection's whole contents exactly as the first page did.
+func (q *Queries) ListCollectionsByNameAfterRow(ctx context.Context, arg ListCollectionsByNameAfterRowParams) ([]ListCollectionsByNameAfterRowRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionsByNameAfterRow,
+		arg.CountCap,
 		arg.UserID,
 		arg.CursorValue,
 		arg.CursorID,
@@ -261,9 +296,9 @@ func (q *Queries) ListCollectionsByNameAfterRow(ctx context.Context, arg ListCol
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsByNameAfterRowRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsByNameAfterRowRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -272,6 +307,8 @@ func (q *Queries) ListCollectionsByNameAfterRow(ctx context.Context, arg ListCol
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -285,40 +322,69 @@ func (q *Queries) ListCollectionsByNameAfterRow(ctx context.Context, arg ListCol
 
 const listCollectionsByNameAfterUnsorted = `-- name: ListCollectionsByNameAfterUnsorted :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    lower(btrim(name)) ASC,
-    id ASC
-LIMIT $2
+    lower(btrim(c.name)) ASC,
+    c.id ASC
+LIMIT $3
 `
 
 type ListCollectionsByNameAfterUnsortedParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsByNameAfterUnsortedRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // Alphabetically ascending collections with Unsorted excluded, from the top.
 //
 // See the other AfterUnsorted variants for why the exclusion is IS DISTINCT FROM
-// and why this page takes no position parameter.
-func (q *Queries) ListCollectionsByNameAfterUnsorted(ctx context.Context, arg ListCollectionsByNameAfterUnsortedParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsByNameAfterUnsorted, arg.UserID, arg.PageLimit)
+// and why this page takes no position parameter, and see
+// ListCollectionsNewestFirst for why the bounded saved_items_count pair is projected
+// the way it is.
+func (q *Queries) ListCollectionsByNameAfterUnsorted(ctx context.Context, arg ListCollectionsByNameAfterUnsortedParams) ([]ListCollectionsByNameAfterUnsortedRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsByNameAfterUnsorted, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsByNameAfterUnsortedRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsByNameAfterUnsortedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -327,6 +393,8 @@ func (q *Queries) ListCollectionsByNameAfterUnsorted(ctx context.Context, arg Li
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -340,25 +408,52 @@ func (q *Queries) ListCollectionsByNameAfterUnsorted(ctx context.Context, arg Li
 
 const listCollectionsByNameFirst = `-- name: ListCollectionsByNameFirst :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    lower(btrim(name)) ASC,
-    id ASC
-LIMIT $2
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    lower(btrim(c.name)) ASC,
+    c.id ASC
+LIMIT $3
 `
 
 type ListCollectionsByNameFirstParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsByNameFirstRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // First page of the user's collections, alphabetically ascending, with Unsorted
@@ -374,15 +469,18 @@ type ListCollectionsByNameFirstParams struct {
 // collections in one user cannot share a normalized name. It is kept so the ordering
 // is total regardless of collation, since lower(btrim(name)) is not locale-stable
 // for equal keys.
-func (q *Queries) ListCollectionsByNameFirst(ctx context.Context, arg ListCollectionsByNameFirstParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsByNameFirst, arg.UserID, arg.PageLimit)
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst.
+func (q *Queries) ListCollectionsByNameFirst(ctx context.Context, arg ListCollectionsByNameFirstParams) ([]ListCollectionsByNameFirstRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsByNameFirst, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsByNameFirstRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsByNameFirstRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -391,6 +489,8 @@ func (q *Queries) ListCollectionsByNameFirst(ctx context.Context, arg ListCollec
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -404,28 +504,58 @@ func (q *Queries) ListCollectionsByNameFirst(ctx context.Context, arg ListCollec
 
 const listCollectionsNewestAfterRow = `-- name: ListCollectionsNewestAfterRow :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (created_at, id) < ($2::timestamptz, $3::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (c.created_at, c.id) < (
+      $3::timestamptz,
+      $4::uuid
+  )
 ORDER BY
-    created_at DESC,
-    id DESC
-LIMIT $4
+    c.created_at DESC,
+    c.id DESC
+LIMIT $5
 `
 
 type ListCollectionsNewestAfterRowParams struct {
+	CountCap    int64
 	UserID      uuid.UUID
 	CursorValue pgtype.Timestamptz
 	CursorID    uuid.UUID
 	PageLimit   int32
+}
+
+type ListCollectionsNewestAfterRowRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // Newest-first collections after the position a cursor carries.
@@ -448,8 +578,14 @@ type ListCollectionsNewestAfterRowParams struct {
 // every row-comparison parameter from the row's leftmost element, which would give
 // cursor_id a timestamptz type and let a caller pass a timestamp where a UUID
 // belongs. Naming each type explicitly is what keeps the generated parameters honest.
-func (q *Queries) ListCollectionsNewestAfterRow(ctx context.Context, arg ListCollectionsNewestAfterRowParams) ([]Collection, error) {
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst. Every statement in
+// this listing reports a collection's whole contents, not the contents of the page, so
+// a resumed page describes each collection as completely as the first one did.
+func (q *Queries) ListCollectionsNewestAfterRow(ctx context.Context, arg ListCollectionsNewestAfterRowParams) ([]ListCollectionsNewestAfterRowRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionsNewestAfterRow,
+		arg.CountCap,
 		arg.UserID,
 		arg.CursorValue,
 		arg.CursorID,
@@ -459,9 +595,9 @@ func (q *Queries) ListCollectionsNewestAfterRow(ctx context.Context, arg ListCol
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsNewestAfterRowRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsNewestAfterRowRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -470,6 +606,8 @@ func (q *Queries) ListCollectionsNewestAfterRow(ctx context.Context, arg ListCol
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -483,25 +621,52 @@ func (q *Queries) ListCollectionsNewestAfterRow(ctx context.Context, arg ListCol
 
 const listCollectionsNewestAfterUnsorted = `-- name: ListCollectionsNewestAfterUnsorted :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    created_at DESC,
-    id DESC
-LIMIT $2
+    c.created_at DESC,
+    c.id DESC
+LIMIT $3
 `
 
 type ListCollectionsNewestAfterUnsortedParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsNewestAfterUnsortedRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // Newest-first collections with Unsorted excluded, from the top of the ordering.
@@ -518,15 +683,19 @@ type ListCollectionsNewestAfterUnsortedParams struct {
 // collections_system_key_check gives every type = 'user' collection a NULL key, so a
 // plain <> would evaluate to NULL for all of them and this query would return system
 // collections only.
-func (q *Queries) ListCollectionsNewestAfterUnsorted(ctx context.Context, arg ListCollectionsNewestAfterUnsortedParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsNewestAfterUnsorted, arg.UserID, arg.PageLimit)
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst. Every statement in
+// this listing reports a collection's whole contents, not the contents of the page.
+func (q *Queries) ListCollectionsNewestAfterUnsorted(ctx context.Context, arg ListCollectionsNewestAfterUnsortedParams) ([]ListCollectionsNewestAfterUnsortedRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsNewestAfterUnsorted, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsNewestAfterUnsortedRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsNewestAfterUnsortedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -535,6 +704,8 @@ func (q *Queries) ListCollectionsNewestAfterUnsorted(ctx context.Context, arg Li
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -548,25 +719,52 @@ func (q *Queries) ListCollectionsNewestAfterUnsorted(ctx context.Context, arg Li
 
 const listCollectionsNewestFirst = `-- name: ListCollectionsNewestFirst :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    created_at DESC,
-    id DESC
-LIMIT $2
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    c.created_at DESC,
+    c.id DESC
+LIMIT $3
 `
 
 type ListCollectionsNewestFirstParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsNewestFirstRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // First page of the user's collections, newest first, with Unsorted pinned ahead of
@@ -592,15 +790,67 @@ type ListCollectionsNewestFirstParams struct {
 // trigger overrides it, so it is unique and monotonic in creation order.
 //
 // Callers request limit + 1 rows so has_more is exact rather than inferred.
-func (q *Queries) ListCollectionsNewestFirst(ctx context.Context, arg ListCollectionsNewestFirstParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsNewestFirst, arg.UserID, arg.PageLimit)
+//
+// saved_items_count and saved_items_count_overflow are the one thing this listing
+// computes rather than reads, and every other ListCollections* statement carries
+// them for the same reasons.
+//
+// The count comes from a LATERAL subquery rather than a second statement, so
+// naming it costs no extra round trip and the rows and their counts are read from
+// one snapshot: a collection cannot be reported beside a count that a separate
+// statement disagreed with.
+//
+// LATERAL rather than a pre-aggregated derived table joined on equality, because
+// the derived table would aggregate every saved_items row in the database on every
+// page while this counts one collection's rows at a time through
+// saved_items_collection_id_idx, at most once per returned row.
+//
+// The count is bounded, and bounded in the rows it reads rather than only in the
+// number it reports. saved_items_count is capped at count_cap and
+// saved_items_count_overflow says whether the real number was higher. Those two
+// together carry the whole range 0, 1 to 99, and 100 or more, which is everything a
+// client renders, without a client having to rediscover the threshold or infer it
+// from the number. count_cap is a parameter rather than a literal so
+// CollectionSavedItemsCountCap states the bound once for every statement in this
+// listing; a literal here would be nine places that could disagree about the same
+// number.
+//
+// Clipping COUNT(*) alone would bound what is REPORTED and not what is READ: the
+// aggregate still walks every saved item in the collection and only discards the
+// answer at the end, so a collection of 50,000 items costs 50,000 index entries and
+// 50,000 heap visits to produce the same "99+". Nothing in the response can tell the
+// difference between 100 and 50,000, so none of that work can change the answer.
+//
+// The inner SELECT therefore does the bounding: it asks for at most count_cap + 1
+// rows and stops there, and the aggregate counts that bounded set. One extra row is
+// what makes the threshold decidable — exactly count_cap rows is still an exact count,
+// so without the +1 a collection holding exactly 99 would be indistinguishable from
+// one holding 100 or more. From that bounded count the two expressions are unchanged:
+// a set of 0 to count_cap rows reports itself with no overflow, and a set of
+// count_cap + 1 rows reports count_cap with overflow set.
+//
+// The bound is on rows, so the cost of one collection's count is now independent of
+// how much that collection holds.
+//
+// LEFT rather than inner, and COALESCE rather than the raw value. An empty
+// collection is an ordinary state in this product and an inner join would drop it
+// from the listing altogether. An ungrouped aggregate always returns exactly one
+// row, so the lateral itself never yields NULL; the COALESCE is here so a future
+// change that adds a grouping key cannot quietly turn an empty collection's count
+// into null.
+//
+// si.user_id cannot change the result, because migration 000025's composite foreign
+// key already guarantees every item filed in a collection belongs to that
+// collection's owner. It states the intent rather than leaving it to the constraint.
+func (q *Queries) ListCollectionsNewestFirst(ctx context.Context, arg ListCollectionsNewestFirstParams) ([]ListCollectionsNewestFirstRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsNewestFirst, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsNewestFirstRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsNewestFirstRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -609,6 +859,8 @@ func (q *Queries) ListCollectionsNewestFirst(ctx context.Context, arg ListCollec
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -622,36 +874,71 @@ func (q *Queries) ListCollectionsNewestFirst(ctx context.Context, arg ListCollec
 
 const listCollectionsOldestAfterRow = `-- name: ListCollectionsOldestAfterRow :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (created_at, id) > ($2::timestamptz, $3::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (c.created_at, c.id) > (
+      $3::timestamptz,
+      $4::uuid
+  )
 ORDER BY
-    created_at ASC,
-    id ASC
-LIMIT $4
+    c.created_at ASC,
+    c.id ASC
+LIMIT $5
 `
 
 type ListCollectionsOldestAfterRowParams struct {
+	CountCap    int64
 	UserID      uuid.UUID
 	CursorValue pgtype.Timestamptz
 	CursorID    uuid.UUID
 	PageLimit   int32
 }
 
+type ListCollectionsOldestAfterRowRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
+}
+
 // Oldest-first collections after the position a cursor carries.
 //
 // ASC ordering resumes with >, which is the same ordering the ORDER BY describes.
 // The anchor row is not read, so the position survives that row being deleted.
-func (q *Queries) ListCollectionsOldestAfterRow(ctx context.Context, arg ListCollectionsOldestAfterRowParams) ([]Collection, error) {
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst. A resumed page
+// reports each collection's whole contents exactly as the first page did.
+func (q *Queries) ListCollectionsOldestAfterRow(ctx context.Context, arg ListCollectionsOldestAfterRowParams) ([]ListCollectionsOldestAfterRowRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionsOldestAfterRow,
+		arg.CountCap,
 		arg.UserID,
 		arg.CursorValue,
 		arg.CursorID,
@@ -661,9 +948,9 @@ func (q *Queries) ListCollectionsOldestAfterRow(ctx context.Context, arg ListCol
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsOldestAfterRowRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsOldestAfterRowRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -672,6 +959,8 @@ func (q *Queries) ListCollectionsOldestAfterRow(ctx context.Context, arg ListCol
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -685,41 +974,70 @@ func (q *Queries) ListCollectionsOldestAfterRow(ctx context.Context, arg ListCol
 
 const listCollectionsOldestAfterUnsorted = `-- name: ListCollectionsOldestAfterUnsorted :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    created_at ASC,
-    id ASC
-LIMIT $2
+    c.created_at ASC,
+    c.id ASC
+LIMIT $3
 `
 
 type ListCollectionsOldestAfterUnsortedParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsOldestAfterUnsortedRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // Oldest-first collections with Unsorted excluded, from the top of the ordering.
 //
 // See ListCollectionsNewestAfterUnsorted: IS DISTINCT FROM both removes the pinned
-// row and keeps the NULL system_key of user collections, and there is no position
-// parameter because this page always starts at the top of the ordering.
-func (q *Queries) ListCollectionsOldestAfterUnsorted(ctx context.Context, arg ListCollectionsOldestAfterUnsortedParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsOldestAfterUnsorted, arg.UserID, arg.PageLimit)
+// row and keeps the NULL system_key of user collections, there is no position
+// parameter because this page always starts at the top of the ordering, and the
+// bounded saved_items_count pair is projected exactly as in
+// ListCollectionsNewestFirst.
+func (q *Queries) ListCollectionsOldestAfterUnsorted(ctx context.Context, arg ListCollectionsOldestAfterUnsortedParams) ([]ListCollectionsOldestAfterUnsortedRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsOldestAfterUnsorted, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsOldestAfterUnsortedRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsOldestAfterUnsortedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -728,6 +1046,8 @@ func (q *Queries) ListCollectionsOldestAfterUnsorted(ctx context.Context, arg Li
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}
@@ -741,25 +1061,52 @@ func (q *Queries) ListCollectionsOldestAfterUnsorted(ctx context.Context, arg Li
 
 const listCollectionsOldestFirst = `-- name: ListCollectionsOldestFirst :many
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = $1
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), $1::bigint) AS saved_items_count,
+        COUNT(*) > $1::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT $1::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = $2
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    created_at ASC,
-    id ASC
-LIMIT $2
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    c.created_at ASC,
+    c.id ASC
+LIMIT $3
 `
 
 type ListCollectionsOldestFirstParams struct {
+	CountCap  int64
 	UserID    uuid.UUID
 	PageLimit int32
+}
+
+type ListCollectionsOldestFirstRow struct {
+	ID                      uuid.UUID
+	UserID                  uuid.UUID
+	Name                    string
+	Type                    string
+	SystemKey               pgtype.Text
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	SavedItemsCount         int64
+	SavedItemsCountOverflow bool
 }
 
 // First page of the user's collections, oldest first, with Unsorted pinned ahead of
@@ -770,15 +1117,18 @@ type ListCollectionsOldestFirstParams struct {
 // collection's type never restricts what the user may see or delete.
 //
 // created_at ASC, id ASC keeps the ordering total for the same reason DESC does.
-func (q *Queries) ListCollectionsOldestFirst(ctx context.Context, arg ListCollectionsOldestFirstParams) ([]Collection, error) {
-	rows, err := q.db.Query(ctx, listCollectionsOldestFirst, arg.UserID, arg.PageLimit)
+//
+// The bounded saved_items_count and saved_items_count_overflow are projected here for
+// the reasons and with the same SQL as ListCollectionsNewestFirst.
+func (q *Queries) ListCollectionsOldestFirst(ctx context.Context, arg ListCollectionsOldestFirstParams) ([]ListCollectionsOldestFirstRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionsOldestFirst, arg.CountCap, arg.UserID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsOldestFirstRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsOldestFirstRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -787,6 +1137,8 @@ func (q *Queries) ListCollectionsOldestFirst(ctx context.Context, arg ListCollec
 			&i.SystemKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SavedItemsCount,
+			&i.SavedItemsCountOverflow,
 		); err != nil {
 			return nil, err
 		}

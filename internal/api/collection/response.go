@@ -54,6 +54,32 @@ type ListedCollectionResponse struct {
 	Name      string    `json:"name" example:"Wishlist"`
 	Type      string    `json:"type" example:"user"`
 	SystemKey *string   `json:"system_key" example:"youtube"`
+
+	// SavedItemsCount is how many saved items the collection holds, capped at 99.
+	//
+	// The two count fields together are the whole contract: a value from 0 to 99 is
+	// exact, and 99 with saved_items_count_overflow true means "99 or more" rather
+	// than "99". Splitting them is what lets a client render an exact badge up to 99
+	// and a "99+" above it without ever comparing against a threshold this API
+	// chose, and without the two states ever being confused for one another.
+	//
+	// It counts the whole collection on every page. A count that described the page
+	// rather than the collection would be a different number on each one, and a
+	// badge that changes as the user scrolls is not a count of anything.
+	//
+	// It is never null. A collection holding nothing reports 0, because a collection
+	// holding nothing is an ordinary state in this product rather than an absence of
+	// a count.
+	SavedItemsCount int64 `json:"saved_items_count" example:"12"`
+
+	// SavedItemsCountOverflow is true when the collection holds more saved items
+	// than SavedItemsCount could show, which is to say more than 99.
+	//
+	// It is a separate boolean rather than something inferred from the count so that
+	// the threshold lives in one place on the server. A client comparing against its
+	// own copy of 99 is a second source of truth for a product decision.
+	SavedItemsCountOverflow bool `json:"saved_items_count_overflow" example:"false"`
+
 	CreatedAt time.Time `json:"created_at" example:"2026-10-02T10:30:00Z"`
 	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T10:30:00Z"`
 }

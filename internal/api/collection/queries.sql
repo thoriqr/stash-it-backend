@@ -45,20 +45,86 @@ FOR UPDATE;
 -- trigger overrides it, so it is unique and monotonic in creation order.
 --
 -- Callers request limit + 1 rows so has_more is exact rather than inferred.
+--
+-- saved_items_count and saved_items_count_overflow are the one thing this listing
+-- computes rather than reads, and every other ListCollections* statement carries
+-- them for the same reasons.
+--
+-- The count comes from a LATERAL subquery rather than a second statement, so
+-- naming it costs no extra round trip and the rows and their counts are read from
+-- one snapshot: a collection cannot be reported beside a count that a separate
+-- statement disagreed with.
+--
+-- LATERAL rather than a pre-aggregated derived table joined on equality, because
+-- the derived table would aggregate every saved_items row in the database on every
+-- page while this counts one collection's rows at a time through
+-- saved_items_collection_id_idx, at most once per returned row.
+--
+-- The count is bounded, and bounded in the rows it reads rather than only in the
+-- number it reports. saved_items_count is capped at count_cap and
+-- saved_items_count_overflow says whether the real number was higher. Those two
+-- together carry the whole range 0, 1 to 99, and 100 or more, which is everything a
+-- client renders, without a client having to rediscover the threshold or infer it
+-- from the number. count_cap is a parameter rather than a literal so
+-- CollectionSavedItemsCountCap states the bound once for every statement in this
+-- listing; a literal here would be nine places that could disagree about the same
+-- number.
+--
+-- Clipping COUNT(*) alone would bound what is REPORTED and not what is READ: the
+-- aggregate still walks every saved item in the collection and only discards the
+-- answer at the end, so a collection of 50,000 items costs 50,000 index entries and
+-- 50,000 heap visits to produce the same "99+". Nothing in the response can tell the
+-- difference between 100 and 50,000, so none of that work can change the answer.
+--
+-- The inner SELECT therefore does the bounding: it asks for at most count_cap + 1
+-- rows and stops there, and the aggregate counts that bounded set. One extra row is
+-- what makes the threshold decidable — exactly count_cap rows is still an exact count,
+-- so without the +1 a collection holding exactly 99 would be indistinguishable from
+-- one holding 100 or more. From that bounded count the two expressions are unchanged:
+-- a set of 0 to count_cap rows reports itself with no overflow, and a set of
+-- count_cap + 1 rows reports count_cap with overflow set.
+--
+-- The bound is on rows, so the cost of one collection's count is now independent of
+-- how much that collection holds.
+--
+-- LEFT rather than inner, and COALESCE rather than the raw value. An empty
+-- collection is an ordinary state in this product and an inner join would drop it
+-- from the listing altogether. An ungrouped aggregate always returns exactly one
+-- row, so the lateral itself never yields NULL; the COALESCE is here so a future
+-- change that adds a grouping key cannot quietly turn an empty collection's count
+-- into null.
+--
+-- si.user_id cannot change the result, because migration 000025's composite foreign
+-- key already guarantees every item filed in a collection belongs to that
+-- collection's owner. It states the intent rather than leaving it to the constraint.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    created_at DESC,
-    id DESC
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    c.created_at DESC,
+    c.id DESC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsNewestAfterUnsorted :many
@@ -76,20 +142,38 @@ LIMIT sqlc.arg(page_limit);
 -- collections_system_key_check gives every type = 'user' collection a NULL key, so a
 -- plain <> would evaluate to NULL for all of them and this query would return system
 -- collections only.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst. Every statement in
+-- this listing reports a collection's whole contents, not the contents of the page.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    created_at DESC,
-    id DESC
+    c.created_at DESC,
+    c.id DESC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsNewestAfterRow :many
@@ -113,21 +197,43 @@ LIMIT sqlc.arg(page_limit);
 -- every row-comparison parameter from the row's leftmost element, which would give
 -- cursor_id a timestamptz type and let a caller pass a timestamp where a UUID
 -- belongs. Naming each type explicitly is what keeps the generated parameters honest.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst. Every statement in
+-- this listing reports a collection's whole contents, not the contents of the page, so
+-- a resumed page describes each collection as completely as the first one did.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (created_at, id) < (sqlc.arg(cursor_value)::timestamptz, sqlc.arg(cursor_id)::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (c.created_at, c.id) < (
+      sqlc.arg(cursor_value)::timestamptz,
+      sqlc.arg(cursor_id)::uuid
+  )
 ORDER BY
-    created_at DESC,
-    id DESC
+    c.created_at DESC,
+    c.id DESC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsOldestFirst :many
@@ -139,42 +245,75 @@ LIMIT sqlc.arg(page_limit);
 -- collection's type never restricts what the user may see or delete.
 --
 -- created_at ASC, id ASC keeps the ordering total for the same reason DESC does.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    created_at ASC,
-    id ASC
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    c.created_at ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsOldestAfterUnsorted :many
 -- Oldest-first collections with Unsorted excluded, from the top of the ordering.
 --
 -- See ListCollectionsNewestAfterUnsorted: IS DISTINCT FROM both removes the pinned
--- row and keeps the NULL system_key of user collections, and there is no position
--- parameter because this page always starts at the top of the ordering.
+-- row and keeps the NULL system_key of user collections, there is no position
+-- parameter because this page always starts at the top of the ordering, and the
+-- bounded saved_items_count pair is projected exactly as in
+-- ListCollectionsNewestFirst.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    created_at ASC,
-    id ASC
+    c.created_at ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsOldestAfterRow :many
@@ -182,21 +321,42 @@ LIMIT sqlc.arg(page_limit);
 --
 -- ASC ordering resumes with >, which is the same ordering the ORDER BY describes.
 -- The anchor row is not read, so the position survives that row being deleted.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst. A resumed page
+-- reports each collection's whole contents exactly as the first page did.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (created_at, id) > (sqlc.arg(cursor_value)::timestamptz, sqlc.arg(cursor_id)::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (c.created_at, c.id) > (
+      sqlc.arg(cursor_value)::timestamptz,
+      sqlc.arg(cursor_id)::uuid
+  )
 ORDER BY
-    created_at ASC,
-    id ASC
+    c.created_at ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsByNameFirst :many
@@ -213,41 +373,74 @@ LIMIT sqlc.arg(page_limit);
 -- collections in one user cannot share a normalized name. It is kept so the ordering
 -- is total regardless of collation, since lower(btrim(name)) is not locale-stable
 -- for equal keys.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
 ORDER BY
-    (CASE WHEN system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
-    lower(btrim(name)) ASC,
-    id ASC
+    (CASE WHEN c.system_key = 'unsorted' THEN 0 ELSE 1 END) ASC,
+    lower(btrim(c.name)) ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsByNameAfterUnsorted :many
 -- Alphabetically ascending collections with Unsorted excluded, from the top.
 --
 -- See the other AfterUnsorted variants for why the exclusion is IS DISTINCT FROM
--- and why this page takes no position parameter.
+-- and why this page takes no position parameter, and see
+-- ListCollectionsNewestFirst for why the bounded saved_items_count pair is projected
+-- the way it is.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
 ORDER BY
-    lower(btrim(name)) ASC,
-    id ASC
+    lower(btrim(c.name)) ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListCollectionsByNameAfterRow :many
@@ -260,21 +453,42 @@ LIMIT sqlc.arg(page_limit);
 --
 -- The casts are load-bearing: without them sqlc would type cursor_id from the row's
 -- leftmost element. See ListCollectionsNewestAfterRow.
+--
+-- The bounded saved_items_count and saved_items_count_overflow are projected here for
+-- the reasons and with the same SQL as ListCollectionsNewestFirst. A resumed page
+-- reports each collection's whole contents exactly as the first page did.
 SELECT
-    id,
-    user_id,
-    name,
-    type,
-    system_key,
-    created_at,
-    updated_at
-FROM collections
-WHERE user_id = sqlc.arg(user_id)
-  AND system_key IS DISTINCT FROM 'unsorted'
-  AND (lower(btrim(name)), id) > (sqlc.arg(cursor_value)::text, sqlc.arg(cursor_id)::uuid)
+    c.id,
+    c.user_id,
+    c.name,
+    c.type,
+    c.system_key,
+    c.created_at,
+    c.updated_at,
+    COALESCE(cnt.saved_items_count, 0)::bigint AS saved_items_count,
+    COALESCE(cnt.saved_items_count_overflow, FALSE) AS saved_items_count_overflow
+FROM collections c
+LEFT JOIN LATERAL (
+    SELECT
+        LEAST(COUNT(*), sqlc.arg(count_cap)::bigint) AS saved_items_count,
+        COUNT(*) > sqlc.arg(count_cap)::bigint AS saved_items_count_overflow
+    FROM (
+        SELECT 1
+        FROM saved_items si
+        WHERE si.collection_id = c.id
+          AND si.user_id = c.user_id
+        LIMIT sqlc.arg(count_cap)::bigint + 1
+    ) bounded
+) cnt ON TRUE
+WHERE c.user_id = sqlc.arg(user_id)
+  AND c.system_key IS DISTINCT FROM 'unsorted'
+  AND (lower(btrim(c.name)), c.id) > (
+      sqlc.arg(cursor_value)::text,
+      sqlc.arg(cursor_id)::uuid
+  )
 ORDER BY
-    lower(btrim(name)) ASC,
-    id ASC
+    lower(btrim(c.name)) ASC,
+    c.id ASC
 LIMIT sqlc.arg(page_limit);
 
 -- name: ListSavedItemsInCollectionFirst :many

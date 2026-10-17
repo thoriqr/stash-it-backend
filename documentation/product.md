@@ -221,8 +221,8 @@ are organized. An item may remain in `Unsorted` indefinitely.
 A person who wants to see their saved items looks at the collection they are in.
 
 - **Saved items are seen through the collection they belong to.** There is one
-  collection per item, so there is no separate "all items" list to keep in step with
-  them. Seeing everything means seeing each collection.
+  collection per item, so a collection's contents are one view of the items filed
+  in it. `GET /collections/{id}/saved-items` is that view.
 - **`Unsorted` is where items go until they are filed elsewhere**, and it is seen the
   same way as any other collection: the same contents, the same order, the same
   handling.
@@ -244,15 +244,60 @@ A person who wants to see their saved items looks at the collection they are in.
   when an item is saved or when someone asks for one item specifically; browsing a
   collection is not a reason to go and read pages.
 
+### The Inbox: recent saved items
+
+The Inbox is a **chronological record of what the user has saved, across every
+collection they have**. It answers "what did I save, and when", not "what is in this
+particular collection".
+
+- **The Inbox is not a collection.** `Unsorted` is where a save lands and is a real
+  collection with its own purpose; it is not the Inbox, and it is never used in place
+  of the Inbox. Seeing a collection's contents and seeing the recent history are two
+  different questions, and each has its own answer.
+- **An item stays in the Inbox after it has been organized.** Filing something into a
+  collection of the user's own does not take it out of the history: what was saved
+  and when is not changed by where it was put. Each entry says which collection it is
+  in, so the history is also a way back to the collection.
+- **The newest saved item comes first.** There is no other order. Someone coming back
+  to what they saved is looking for what is new, and offering orders over a history
+  would answer a question they did not ask.
+- **Nothing is left out because of how it went.** An item whose details have not been
+  read yet, one whose page could not be read, and one that has been filed somewhere
+  automatically are all ordinary and all appear. Each entry reports whether its
+  details have been read, so the difference between "this page has no title" and "this
+  page has not been read yet" stays visible. A history that hid the entries it had not
+  finished processing would be a record of only what went well.
+- **Each entry is shown in full, with the collection it is in by name.** The caller
+  cannot know from one answer which collection any given entry lives in, so each says
+  so itself rather than making them ask again for every entry.
+- **The list grows as a person scrolls**, and continuing means handing back a position
+  rather than a page number, so entries saved or deleted while someone is reading do
+  not make them skip one or see one twice.
+- **Looking never changes anything and never fetches anything.** A history is read;
+  it is not a reason to go and read pages.
+
 ### Seeing your collections
 
 A user can see every collection they have, which is what the collection list is for.
 
 - **The list holds every collection the user has**, whether they named it or it
-  arrived on its own, and whether it holds anything.
+  arrived on its own, and whether it holds anything. A collection holding nothing is
+  an ordinary entry rather than a missing one.
 - **`Unsorted` is always at the top**, under any ordering. It is the one collection
   every save lands in, so it is where a person looks first; it is recognized as
-  Unsorted by what it is rather than by what it happens to be called.
+  Unsorted by what it is rather than by what it happens to be called. It is pinned
+  here as a collection; it is **not** the Inbox, and it is not a substitute for the
+  recent saved items history.
+- **Each collection says how many saved items it holds.** The number is exact up to
+  99. Above that it reads "99+", and the answer says so rather than leaving a client
+  to work out where the change happens. Two facts together, never one number a client
+  has to interpret:
+  - a count from 0 to 99 is the real number, with nothing further to say;
+  - a count of 99 **plus a separate "there are more" flag** means 99 or more.
+- **The number is of the whole collection**, and it is the same on every page. It is
+  not a count of what one page happened to show: a number that changed as someone
+  scrolled would not be a count of anything.
+- **It is zero for a collection holding nothing**, which is a count like any other.
 - **The list can be ordered three ways**: most recently created first, which is the
   default; earliest created first; or by name, alphabetically, ignoring capitalization
   and surrounding spaces so that ordering agrees with the rule that treats `"Wishlist"`
@@ -335,22 +380,29 @@ Implemented:
 
 - Authentication
 - Save a URL
-- Inbox, which is the Unsorted collection
+- The Inbox, which is the recent saved items history across every collection, and
+  `Unsorted` as the collection a save lands in
 - Saved item detail
 - Delete a saved item
 - Collections, including filing an item into a collection of the user's own,
   listing the collections a user has, seeing the saved items in one, and deleting a
   collection along with a chosen fate for its saved items
+- The Inbox, which is the recent history of saved items across every collection,
+  reported with the collection each one is in
+- How many saved items each collection holds, bounded at 99 with a separate flag
+  for anything above it
 - Basic search, across saved items and collections
 
 Saved item detail and delete were built during Phase A to complete the core loop.
 Collections and Basic Search complete Phase B.
 
-The inbox is not a separate list. Every saved item belongs to exactly one collection,
-and `Unsorted` is the one they land in, so the inbox is that collection seen through
-the same lens as any other. There is deliberately no endpoint that lists every saved
-item at once: it would be a second way to ask the same question, and it would answer
-it without the collection context that says where an item belongs.
+The Inbox and the collections list answer two different questions and are not
+alternatives to one another. **The Inbox is the recent history across every
+collection, so an item stays in it after it has been organized.** **`Unsorted` is
+one collection among those an item can be in**: every save lands there, it is
+pinned first in the collections list because that is where saving goes, and it is
+never used in place of the history. `GET /collections/{id}/saved-items` remains
+the way to see one collection's contents.
 
 The database foundation is in place: `collections`, `saved_items.collection_id`,
 and the saved item enrichment state columns. Enrichment is reachable both ways: a

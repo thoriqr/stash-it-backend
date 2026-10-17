@@ -322,3 +322,238 @@ func (q *Queries) GetUnsortedCollectionByUser(ctx context.Context, userID uuid.U
 	err := row.Scan(&id)
 	return id, err
 }
+
+const listSavedItemsAfterRow = `-- name: ListSavedItemsAfterRow :many
+SELECT
+    si.id,
+    si.user_id,
+    si.url,
+    si.domain,
+    si.platform,
+    si.title,
+    si.description,
+    si.image_url,
+    si.collection_id,
+    si.enrichment_status,
+    si.last_enriched_at,
+    si.created_at,
+    si.updated_at,
+    c.name AS collection_name
+FROM saved_items si
+JOIN collections c
+    ON c.id = si.collection_id
+   AND c.user_id = si.user_id
+WHERE si.user_id = $1
+  AND (si.created_at, si.id) < (
+      $2::timestamptz,
+      $3::uuid
+  )
+ORDER BY
+    si.created_at DESC,
+    si.id DESC
+LIMIT $4
+`
+
+type ListSavedItemsAfterRowParams struct {
+	UserID      uuid.UUID
+	CursorValue pgtype.Timestamptz
+	CursorID    uuid.UUID
+	PageLimit   int32
+}
+
+type ListSavedItemsAfterRowRow struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	CollectionName   string
+}
+
+// Recent saved items, newest first, after the position a cursor carries.
+//
+// The row comparison describes the same total order as the ORDER BY above it, which
+// is what makes this keyset pagination rather than an offset in disguise: DESC
+// ordering resumes with <. Row comparison short-circuits like the expanded form, so
+// it needs only the leading index column and resolves ties without an OR chain.
+//
+// The casts are load-bearing. Without them sqlc types every row-comparison parameter
+// from the row's leftmost element, which would give cursor_id a timestamptz type and
+// let a timestamp be passed where a UUID belongs.
+//
+// The stored position comes from the cursor, never from a lookup of the row it came
+// from. Nothing here reads saved_items by id, so a cursor keeps working after its
+// anchor item is deleted: it resumes from the position it recorded. That is the
+// property offset pagination cannot offer, since deleting an item shifts everything
+// after it and makes a client receive a duplicate.
+func (q *Queries) ListSavedItemsAfterRow(ctx context.Context, arg ListSavedItemsAfterRowParams) ([]ListSavedItemsAfterRowRow, error) {
+	rows, err := q.db.Query(ctx, listSavedItemsAfterRow,
+		arg.UserID,
+		arg.CursorValue,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSavedItemsAfterRowRow
+	for rows.Next() {
+		var i ListSavedItemsAfterRowRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Url,
+			&i.Domain,
+			&i.Platform,
+			&i.Title,
+			&i.Description,
+			&i.ImageUrl,
+			&i.CollectionID,
+			&i.EnrichmentStatus,
+			&i.LastEnrichedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CollectionName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedItemsFirst = `-- name: ListSavedItemsFirst :many
+SELECT
+    si.id,
+    si.user_id,
+    si.url,
+    si.domain,
+    si.platform,
+    si.title,
+    si.description,
+    si.image_url,
+    si.collection_id,
+    si.enrichment_status,
+    si.last_enriched_at,
+    si.created_at,
+    si.updated_at,
+    c.name AS collection_name
+FROM saved_items si
+JOIN collections c
+    ON c.id = si.collection_id
+   AND c.user_id = si.user_id
+WHERE si.user_id = $1
+ORDER BY
+    si.created_at DESC,
+    si.id DESC
+LIMIT $2
+`
+
+type ListSavedItemsFirstParams struct {
+	UserID    uuid.UUID
+	PageLimit int32
+}
+
+type ListSavedItemsFirstRow struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	CollectionName   string
+}
+
+// First page of the authenticated user's recent saved items, newest first.
+//
+// This is the recent history: every saved item the user owns, across every
+// collection they own, including Unsorted and collections automatic organization
+// created. It is deliberately NOT a per-collection view. The inbox is a
+// chronological record of what was saved, so an item stays in it after it has been
+// filed into a collection of the user's own, and it says which collection that is.
+//
+// No filter on enrichment_status or on any organization outcome. A pending item, an
+// item whose page could not be read and an item that has been organized are all
+// ordinary states of a saved item and all appear here; the item exists and belongs
+// to the caller, so "its metadata has not arrived" is a fact about the item rather
+// than a reason to withhold it. The item's enrichment_status is reported, so a
+// client can tell the three apart without anything being hidden.
+//
+// collections is joined for the collection name, exactly as GetSavedItemByIDForUser
+// joins it for one item: the listing spans collections, so a client cannot learn
+// from the request which collection any given row is in, and reading the names
+// separately would be a second round trip per page for a row the join already had in
+// hand. The join is owner-scoped on both sides and is INNER because every saved item
+// has a NOT NULL collection_id referencing an existing row.
+//
+// created_at DESC, id DESC is a total order, and the tie-break is not optional.
+// created_at defaults to NOW(), which is transaction_timestamp() and therefore
+// constant within a transaction, so rows inserted together genuinely share a
+// timestamp and a page boundary could otherwise skip or repeat an item.
+// saved_items.id is uuidv7() with no overriding trigger, so it is unique and
+// monotonic in creation order.
+//
+// There is no sort parameter. A history is read newest first or not at all; offering
+// orders would answer a question this resource does not pose.
+//
+// This is a read. It writes nothing and triggers nothing: enrichment is scheduled by
+// saving a URL and by POST /saved-items/{id}/enrich, and looking at the history is
+// not a reason to fetch anything.
+//
+// saved_items_user_created_at_idx ON (user_id, created_at DESC) is the index behind
+// this ordering, so the leading prefix is walked rather than sorted.
+//
+// Callers request limit + 1 rows so has_more is exact rather than inferred.
+func (q *Queries) ListSavedItemsFirst(ctx context.Context, arg ListSavedItemsFirstParams) ([]ListSavedItemsFirstRow, error) {
+	rows, err := q.db.Query(ctx, listSavedItemsFirst, arg.UserID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSavedItemsFirstRow
+	for rows.Next() {
+		var i ListSavedItemsFirstRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Url,
+			&i.Domain,
+			&i.Platform,
+			&i.Title,
+			&i.Description,
+			&i.ImageUrl,
+			&i.CollectionID,
+			&i.EnrichmentStatus,
+			&i.LastEnrichedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CollectionName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -317,7 +317,7 @@ func invalidCursorError(cause error) error {
 // produced and quietly return the wrong rows.
 func encodeListCollectionsCursor(
 	sort CollectionSort,
-	collections []collectiondb.Collection,
+	collections []ListedCollection,
 ) (string, error) {
 	last := collections[len(collections)-1]
 
@@ -353,7 +353,7 @@ func encodeListCollectionsCursor(
 // Timestamps become RFC3339Nano, which round-trips a time.Time exactly and is the
 // only lossless textual form available for one. The name sort stores the normalized
 // name, which is already the ordering expression's own output.
-func formatCursorValue(sort CollectionSort, collection collectiondb.Collection) string {
+func formatCursorValue(sort CollectionSort, collection ListedCollection) string {
 	if sort == CollectionSortName {
 		return normalizeCollectionNameForCursor(collection.Name)
 	}

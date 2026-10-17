@@ -197,7 +197,7 @@ func (c *ListCollectionsCursor) hasPosition() bool {
 // ListCollectionsResult is one page of collections plus the cursor state that
 // follows it.
 type ListCollectionsResult struct {
-	Collections []collectiondb.Collection
+	Collections []ListedCollection
 	Limit       int
 	Sort        CollectionSort
 
@@ -211,6 +211,56 @@ type ListCollectionsResult struct {
 	// row: a cursor built from a row the client never received would resume past it
 	// and skip one collection at every page boundary.
 	NextCursor *string
+}
+
+// ListedCollection is a collection as the collection listing reports it.
+//
+// It is the feature's own projection rather than the generated collections table
+// model, and it is separate from collectiondb.Collection for two reasons. The
+// listing carries two columns the table does not have — the bounded saved item
+// count and its overflow flag — so the statements no longer project the table's
+// shape and sqlc emits a distinct row type per statement. And a user collection has
+// no system_key while Unsorted has one, so this type carries a pgtype.Text where
+// the table model carries a string; the mapper is the only place that decides an
+// absent key means null rather than empty.
+//
+// Every statement in the listing projects the same nine columns, so this is the one
+// type all of them are mapped onto. The repository converts each statement's own
+// generated row type into it.
+type ListedCollection struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+	Name   string
+
+	// Type is 'system' or 'user'. It describes who created a collection, not who
+	// owns it and not what it is, so nothing in the listing is decided by it.
+	Type string
+
+	// SystemKey is NULL for every collection the user named and carries the stable
+	// identity for the ones the product owns. Valid is what tells the two apart,
+	// and Valid rather than String is what a caller reading a null key is getting.
+	SystemKey pgtype.Text
+
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+
+	// SavedItemsCount is how many saved items this collection holds, capped at
+	// CollectionSavedItemsCountCap. It counts the whole collection on every page,
+	// not the page and not a saved-items pagination window: a client rendering a
+	// badge needs the collection's total, and a count that meant "the rows this
+	// listing happened to return" would be a different number every time.
+	//
+	// It is never NULL. An empty collection reports 0, because an empty collection
+	// is an ordinary state in this product rather than an absence.
+	SavedItemsCount int64
+
+	// SavedItemsCountOverflow reports that the real count was greater than
+	// SavedItemsCount, so the value beside it is the cap and not the total.
+	//
+	// It is a separate field rather than something a client infers from the
+	// number, because inferring it means every client hard-coding the threshold
+	// this package states once.
+	SavedItemsCountOverflow bool
 }
 
 type CollectionType string

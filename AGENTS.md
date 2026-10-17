@@ -372,12 +372,38 @@ user_id)`. Do not weaken or work around it, and do not write code that assumes
   It is not a general batch move and no endpoint exposes one on its own.
 
 **Listing collections** is `GET /collections`, registered on the same
-`/collections` group as the delete. It is currently the only cursor-paginated
-endpoint.
+`/collections` group as the delete. It is one of three cursor-paginated endpoints,
+alongside `GET /collections/:id/saved-items` and `GET /saved-items`.
 
 - **Unsorted is pinned first under every sort** by a rank over `system_key` in the
   `ORDER BY`, not filtered out and not special-cased per sort, so every ordering
   inherits the rule once. It must never reappear on a later page.
+- **Unsorted is a collection, not the Inbox.** `GET /saved-items` is the recent
+  saved items history across every collection the user owns; `Unsorted` is one
+  collection among the ones an item can be in. Pinning it first is about where
+  saving lands, not about standing in for the history. Do not unify them.
+- **Each collection reports a bounded `saved_items_count` and a separate
+  `saved_items_count_overflow` boolean.** The count is clipped at
+  `CollectionSavedItemsCountCap` and the flag says whether the real total was
+  higher, so a client renders an exact badge up to the cap and `99+` above it
+  without comparing against a threshold of its own. Both are computed in the
+  **same statement** as the page, by a `LEFT JOIN LATERAL` correlated on the
+  collection's own id and owner — never a second statement, never a
+  pre-aggregated derived table over all of `saved_items`, and never one query per
+  collection. The cap is passed in as a query parameter so the constant is stated
+  once; a literal in each statement would be nine places that could disagree.
+- **The count is of the whole collection, on every page**, never of the page. A
+  count that changed as the user paged would not be a count of anything, and this
+  is a different thing from the `has_more` lookahead row, which exists precisely
+  so no count is needed to size a page.
+- **An empty collection is reported, not dropped**, and reports `0` rather than
+  null. Note that `LEFT` and `COALESCE` are defensive rather than load-bearing:
+  an ungrouped aggregate always returns exactly one row, so replacing either with
+  its inner or raw form was measured and every test still passed. They are kept
+  so a future grouping key cannot silently produce a null count or drop an empty
+  collection. The observable contract is what the tests hold in place.
+- **`GET /collections` is one of three cursor-paginated endpoints** with
+  `GET /collections/:id/saved-items` and `GET /saved-items`.
 - **Exclude the pinned row with `system_key IS DISTINCT FROM 'unsorted'`.** That is
   NULL-safe as well as selective: `collections_system_key_check` gives every
   `type = 'user'` collection a NULL key, so a plain `<>` evaluates to NULL for all of
@@ -413,9 +439,7 @@ endpoint.
   `timestamptz` type to an id parameter.
 
 **Listing a collection's saved items** is `GET /collections/:id/saved-items`, also on
-the `/collections` group. There is no standalone saved-item listing: every saved item
-belongs to exactly one collection, so an inbox is the Unsorted collection seen through
-the same endpoint.
+the `/collections` group. It answers "what is filed in this collection".
 
 - It reports the **full** saved item, including `description`, `image_url`,
   `collection_id`, `enrichment_status` and `last_enriched_at`. The field is named
@@ -457,6 +481,56 @@ the same endpoint.
   trimmed display name already define. Reuse that semantics rather than writing a
   second normalization: a collection whose stored name disagrees with the name the
   unique index matched cannot be found again.
+
+**Listing recent saved items** is `GET /saved-items`, registered as `router.Get("/")`
+in `saved_item.Routes` on the `/saved-items` group. It answers "what did I save, and
+when" and is the Inbox. It is **not** a third way to see a collection, and
+`GET /collections/:id/saved-items` is unchanged beside it.
+
+- **The Inbox is not `Unsorted`.** Every saved item belongs to exactly one collection
+  and each item reports which one, by id and by name. An item stays in the history
+  after it has been filed, because what was saved and when is not changed by where it
+  was put. Do not "simplify" this into the Unsorted collection or into the
+  per-collection listing, and do not use `Unsorted` as a stand-in for it.
+- **It reports the full twelve fields plus a nested `collection` of `id` and
+  `name`.** The reasoning that keeps `type` and `system_key` out of the
+  per-collection listing inverts here: that caller arrived knowing the id, and a
+  cross-collection caller cannot. The collection is joined by the listing's own
+  statement — the same `INNER JOIN collections` `GetSavedItemByIDForUser` makes,
+  owner-scoped on both sides — so naming it costs no extra query and no request per
+  row. Do not add collection fields without a demonstrated need.
+- **Nothing is filtered.** No predicate on `enrichment_status`, and no branch on
+  whether automatic organization ran. `pending`, `completed` and `failed` are all
+  ordinary states and all appear, and each item reports its own status so a client
+  tells them apart without any of them being withheld. A history that hid the items
+  it had not finished processing would be a record of only what went well.
+- **It is ordered `created_at DESC, id DESC` with no sort option.** A history is read
+  newest first or not at all. The `id` tie-break is not optional: `created_at`
+  defaults to `NOW()`, which is constant within a transaction, so rows inserted
+  together genuinely share a timestamp.
+- **Listing must never trigger enrichment or organization, or write anything.** The
+  service holds no enqueuer on this path.
+- **It is scoped to `si.user_id`**, taken from the token and never from the request.
+  No other user's item is reachable from it.
+- **Two queries, not six:** one first-page statement and one after-position
+  statement. Keyset predicates need the explicit casts, `limit + 1`, and a cursor
+  built from the last **returned** row, exactly as the two other listings do.
+- **`ListSavedItemsCursor` carries no `Sort` and no `Group`.** One ordering and no
+  pinned row, so there is nothing a token could be mismatched against and every
+  validation branch for them would be unreachable. There is a test asserting the
+  payload's JSON keys do not contain them.
+- **`...APIResponse` must declare its `meta`**, sharing `CursorPageMeta`, for the
+  reason the other two do: the description talks about `meta.cursor`, and a schema
+  omitting `meta` contradicts it while still parsing as valid OpenAPI.
+- **No rate limiter.** This is one indexed read that holds nothing beyond the
+  request, like `GET /saved-items/:id` and `DELETE /saved-items/:id`. The two
+  saved-item routes that are limited stay limited, because a save arranges unbounded
+  downstream work and `POST /saved-items/:id/enrich` performs an outbound fetch in
+  the API process.
+- **`SavedItemListDefaultLimit`/`MaxLimit` are stated here rather than borrowed**
+  from `internal/api/collection`, which has its own identical pair for a page of one
+  collection's items. The features do not import one another; that they match today
+  is the intended consistency, not a shared constant.
 
 ## Data integrity
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -29,6 +30,14 @@ type listCollectionsPage struct {
 			Name      string    `json:"name"`
 			Type      string    `json:"type"`
 			SystemKey *string   `json:"system_key"`
+
+			// SavedItemsCount is the bounded count and SavedItemsCountOverflow says
+			// whether it was clipped. Both are decoded here rather than reusing the
+			// API response type, so the suite asserts the wire shape itself including
+			// that a zero count arrives as 0 rather than as null or a missing key.
+			SavedItemsCount         int64 `json:"saved_items_count"`
+			SavedItemsCountOverflow bool  `json:"saved_items_count_overflow"`
+
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 		} `json:"collections"`
@@ -40,6 +49,41 @@ type listCollectionsPage struct {
 			HasMore    bool    `json:"has_more"`
 		} `json:"cursor"`
 	} `json:"meta"`
+}
+
+// lookupCount finds one collection's reported count pair by name.
+//
+// It returns found separately from the pair because "the collection was absent" and
+// "the collection reported zero" have to be told apart: an inner join instead of a
+// left one would report the first while looking like the second.
+func (p listCollectionsPage) lookupCount(name string) (count int64, overflow bool, found bool) {
+	for _, c := range p.Data.Collections {
+		if c.Name == name {
+			return c.SavedItemsCount, c.SavedItemsCountOverflow, true
+		}
+	}
+
+	return 0, false, false
+}
+
+// requireCount asserts one collection's reported count pair by name.
+//
+// Both halves are asserted together because neither means anything on its own: the
+// count alone cannot say whether it is exact, and the flag alone cannot say how many
+// there are.
+func (p listCollectionsPage) requireCount(
+	t *testing.T,
+	name string,
+	wantCount int64,
+	wantOverflow bool,
+) {
+	t.Helper()
+
+	count, overflow, found := p.lookupCount(name)
+
+	require.True(t, found, "collection %q was not in the page", name)
+	require.Equal(t, wantCount, count, "collection %q count", name)
+	require.Equal(t, wantOverflow, overflow, "collection %q overflow", name)
 }
 
 func (p listCollectionsPage) ids() []uuid.UUID {
@@ -1090,6 +1134,531 @@ func TestCollectionAPI_ListCollections_Errors(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestCollectionAPI_ListCollections_SavedItemsCount covers the bounded count the
+// listing reports for every collection.
+//
+// The bound is a product decision rather than a cost one, so the cases below walk the
+// two edges it creates and the state just inside each: nothing held, an exact count,
+// the bound itself reported exactly, and the first counts above it. Reporting the
+// bound without saying it was clipped would make "99 items" and "99 or more" the same
+// answer, and a client would have to hard-code the threshold to tell them apart.
+func TestCollectionAPI_ListCollections_SavedItemsCount(t *testing.T) {
+	// A collection holding nothing is an ordinary state in this product, so it is
+	// reported as zero rather than as an absence. It is also the case an inner join
+	// instead of a left one would drop from the listing entirely.
+	t.Run("an empty collection reports zero with no overflow", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-empty@example.com")
+		createUnsorted(t, userID)
+
+		emptyID := createTestUserCollection(t, userID, "Empty")
+
+		require.Zero(
+			t,
+			countSavedItemsInCollectionForUser(t, emptyID, userID),
+			"the fixture must start from a collection holding nothing",
+		)
+
+		page := listCollectionsOverHTTP(t, userID, "")
+
+		page.requireCount(t, "Empty", 0, false)
+	})
+
+	t.Run("an exact count below the bound is reported exactly", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-one@example.com")
+		createUnsorted(t, userID)
+
+		oneID := createTestUserCollection(t, userID, "One")
+
+		createSavedItemInCollection(t, userID, oneID, "https://example.com/one")
+
+		page := listCollectionsOverHTTP(t, userID, "")
+
+		page.requireCount(t, "One", 1, false)
+	})
+
+	// The bound itself is a real count and is not overflow. A client rendering "99"
+	// and "99+" has to be able to tell them apart, and only this can.
+	t.Run("a count at the bound is reported exactly with no overflow", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-99@example.com")
+		createUnsorted(t, userID)
+
+		exactID := createTestUserCollection(t, userID, "Exact")
+
+		seedSavedItems(t, userID, exactID, collection.CollectionSavedItemsCountCap)
+
+		page := listCollectionsOverHTTP(t, userID, "")
+
+		page.requireCount(
+			t,
+			"Exact",
+			collection.CollectionSavedItemsCountCap,
+			false,
+		)
+	})
+
+	// One above the bound is the first clipped count, and 100 and 101 must be
+	// reported identically: the response says "99 or more" in both cases, which is
+	// the whole point of the flag rather than exposing a total nobody renders.
+	t.Run("counts above the bound report the cap with overflow", func(t *testing.T) {
+		for _, extra := range []struct {
+			name  string
+			total int
+		}{
+			{name: "one above the bound", total: collection.CollectionSavedItemsCountCap + 1},
+			{name: "well above the bound", total: collection.CollectionSavedItemsCountCap + 2},
+			{name: "far above the bound", total: collection.CollectionSavedItemsCountCap * 3},
+		} {
+			t.Run(extra.name, func(t *testing.T) {
+				truncateCollectionData(t)
+
+				userID := createCollectionUser(
+					t,
+					"collection-count-overflow-"+strconv.Itoa(extra.total)+"@example.com",
+				)
+				createUnsorted(t, userID)
+
+				bigID := createTestUserCollection(
+					t,
+					userID,
+					"Overflow "+strconv.Itoa(extra.total),
+				)
+
+				seedSavedItems(t, userID, bigID, extra.total)
+
+				page := listCollectionsOverHTTP(t, userID, "")
+
+				page.requireCount(
+					t,
+					"Overflow "+strconv.Itoa(extra.total),
+					collection.CollectionSavedItemsCountCap,
+					true,
+				)
+			})
+		}
+	})
+
+	// Unsorted is a collection like any other for this purpose. It holds everything a
+	// user saved before filing it, so it is where a count above the bound is most
+	// likely to appear, and the pinned row must carry it like every other row.
+	t.Run("unsorted reports its own count", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-unsorted@example.com")
+		unsortedID := createUnsorted(t, userID)
+
+		createTestUserCollection(t, userID, "Wishlist")
+
+		seedSavedItems(t, userID, unsortedID, collection.CollectionSavedItemsCountCap+5)
+
+		page := listCollectionsOverHTTP(t, userID, "")
+
+		require.Len(t, page.Data.Collections, 2)
+		require.Equal(t, "Unsorted", page.Data.Collections[0].Name)
+		page.requireCount(
+			t,
+			"Unsorted",
+			collection.CollectionSavedItemsCountCap,
+			true,
+		)
+		page.requireCount(t, "Wishlist", 0, false)
+	})
+
+	// A collection automatic organization created is one the user owns, so its
+	// contents are counted exactly like a collection they named. The count is about
+	// what a collection holds, not about how it came to be.
+	t.Run("an automatically created system collection is counted", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-system@example.com")
+		createUnsorted(t, userID)
+
+		platformID := createTestSystemCollection(t, userID, "youtube", "youtube")
+
+		seedSavedItems(t, userID, platformID, 3)
+
+		page := listCollectionsOverHTTP(t, userID, "")
+
+		page.requireCount(t, "youtube", 3, false)
+	})
+
+	// Another user's items must never be counted. They are in a different collection
+	// with a different owner, so this proves the count is scoped by the collection's
+	// own rows rather than by anything about the caller.
+	t.Run("another user's items are not counted", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		ownerID := createCollectionUser(t, "collection-count-owner@example.com")
+		createUnsorted(t, ownerID)
+		ownerCollectionID := createTestUserCollection(t, ownerID, "Mine")
+
+		createSavedItemInCollection(t, ownerID, ownerCollectionID, "https://example.com/mine")
+
+		otherID := createCollectionUser(t, "collection-count-other@example.com")
+		createUnsorted(t, otherID)
+		otherCollectionID := createTestUserCollection(t, otherID, "Theirs")
+
+		createSavedItemInCollection(t, otherID, otherCollectionID, "https://example.com/theirs")
+		createSavedItemInCollection(t, otherID, otherCollectionID, "https://example.com/theirs2")
+
+		page := listCollectionsOverHTTP(t, ownerID, "")
+
+		page.requireCount(t, "Mine", 1, false)
+
+		// The other user's collection is not reachable at all, which is the same
+		// non-disclosure guarantee every listing here makes.
+		_, _, found := page.lookupCount("Theirs")
+		require.False(t, found, "another user's collection must not be listed")
+	})
+
+	// The count describes the collection, not the page. A badge that changed as the
+	// user scrolled would not be a count of anything, and the first page reporting a
+	// different number from the second is the failure this asserts against.
+	t.Run("every cursor page reports the collection's whole contents", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-paged@example.com")
+		createUnsorted(t, userID)
+
+		base := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+		firstID := createCollectionAt(t, userID, "First", base, "")
+		secondID := createCollectionAt(t, userID, "Second", base.Add(time.Minute), "")
+		thirdID := createCollectionAt(t, userID, "Third", base.Add(2*time.Minute), "")
+
+		// The counts deliberately straddle the bound across two pages: the exact
+		// one, the clipped one and an empty one are all on different pages, so a
+		// count that meant "the rows on this page" would be visibly wrong.
+		seedSavedItems(t, userID, secondID, collection.CollectionSavedItemsCountCap+3)
+		seedSavedItems(t, userID, thirdID, 7)
+
+		require.NotEqual(t, firstID, secondID)
+		require.NotEqual(t, secondID, thirdID)
+
+		seen := map[string][2]int64{}
+		pages := 0
+
+		cursor := ""
+
+		for {
+			query := "limit=1"
+			if cursor != "" {
+				query += "&cursor=" + cursor
+			}
+
+			page := listCollectionsOverHTTP(t, userID, query)
+			pages++
+
+			for _, c := range page.Data.Collections {
+				seen[c.Name] = [2]int64{c.SavedItemsCount, boolToInt64(c.SavedItemsCountOverflow)}
+			}
+
+			if !page.Meta.Cursor.HasMore {
+				break
+			}
+
+			require.NotNil(t, page.Meta.Cursor.NextCursor)
+
+			cursor = *page.Meta.Cursor.NextCursor
+
+			require.Less(t, pages, 20, "paging did not terminate")
+		}
+
+		require.GreaterOrEqual(t, pages, 3, "the fixture must span more than one page")
+
+		require.Equal(t, [2]int64{0, 0}, seen["First"])
+		require.Equal(
+			t,
+			[2]int64{collection.CollectionSavedItemsCountCap, 1},
+			seen["Second"],
+		)
+		require.Equal(t, [2]int64{7, 0}, seen["Third"])
+	})
+
+	// Every statement in the listing projects the pair, and a statement that quietly
+	// dropped it would report zero for every collection under one sort, or on one
+	// resume point only. Walking all three pages of each sort is what covers all
+	// three statement groups: the first page, the page after the pinned Unsorted row,
+	// and the resumed page after a position.
+	t.Run("the pair is reported under every sort and on every resume point", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-sorts@example.com")
+		createUnsorted(t, userID)
+
+		base := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+		wishlistID := createCollectionAt(t, userID, "Wishlist", base, "")
+		readLaterID := createCollectionAt(t, userID, "Read later", base.Add(time.Minute), "")
+
+		// The counts deliberately straddle the bound, so a statement that dropped the
+		// overflow flag or clipped at the wrong number is visibly wrong.
+		seedSavedItems(t, userID, wishlistID, collection.CollectionSavedItemsCountCap+1)
+		seedSavedItems(t, userID, readLaterID, 4)
+
+		for _, sort := range []collection.CollectionSort{
+			collection.CollectionSortNewest,
+			collection.CollectionSortOldest,
+			collection.CollectionSortName,
+		} {
+			t.Run(string(sort), func(t *testing.T) {
+				counts := map[string][2]int64{}
+				pages := 0
+
+				cursor := ""
+
+				for {
+					query := "sort=" + string(sort) + "&limit=1"
+					if cursor != "" {
+						query += "&cursor=" + cursor
+					}
+
+					page := listCollectionsOverHTTP(t, userID, query)
+					pages++
+
+					for _, c := range page.Data.Collections {
+						counts[c.Name] = [2]int64{
+							c.SavedItemsCount,
+							boolToInt64(c.SavedItemsCountOverflow),
+						}
+					}
+
+					if !page.Meta.Cursor.HasMore {
+						break
+					}
+
+					require.NotNil(t, page.Meta.Cursor.NextCursor)
+
+					cursor = *page.Meta.Cursor.NextCursor
+
+					require.Less(t, pages, 20, "paging did not terminate")
+				}
+
+				require.Equal(t, 3, pages, "three collections at one per page")
+				require.Equal(
+					t,
+					[2]int64{collection.CollectionSavedItemsCountCap, 1},
+					counts["Wishlist"],
+				)
+				require.Equal(t, [2]int64{4, 0}, counts["Read later"])
+				require.Equal(t, [2]int64{0, 0}, counts["Unsorted"])
+			})
+		}
+	})
+
+	// The count is additive. Nothing about ordering, pinning or paging may move, and
+	// this asserts that directly rather than trusting that a projection cannot. The
+	// expected order differs per sort, so it is stated per sort rather than once.
+	t.Run("ordering and pinning are unchanged by the count", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-count-order@example.com")
+		createUnsorted(t, userID)
+
+		base := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+		// Aardvark is older and alphabetically first, so the two sorts disagree about
+		// the order after Unsorted. Both are asserted, so a sort that silently became
+		// another one is caught.
+		oldest := createCollectionAt(t, userID, "Aardvark", base, "")
+		middle := createCollectionAt(t, userID, "Mammal", base.Add(time.Minute), "")
+
+		seedSavedItems(t, userID, oldest, collection.CollectionSavedItemsCountCap+9)
+		seedSavedItems(t, userID, middle, collection.CollectionSavedItemsCountCap+10)
+
+		for _, tc := range []struct {
+			sort collection.CollectionSort
+			want []string
+		}{
+			{
+				sort: collection.CollectionSortNewest,
+				want: []string{"Unsorted", "Mammal", "Aardvark"},
+			},
+			{
+				sort: collection.CollectionSortOldest,
+				want: []string{"Unsorted", "Aardvark", "Mammal"},
+			},
+			{
+				sort: collection.CollectionSortName,
+				want: []string{"Unsorted", "Aardvark", "Mammal"},
+			},
+		} {
+			page := listCollectionsOverHTTP(t, userID, "sort="+string(tc.sort))
+
+			require.Equal(
+				t,
+				tc.want,
+				page.names(),
+				"sort %q must keep Unsorted pinned first and the documented order",
+			)
+		}
+	})
+}
+
+// TestCollectionAPI_ListCollections_DocumentedShape pins the generated documentation
+// to the real response, the way TestCollectionAPI_ListSavedItems_DocumentedShape does
+// for the other two cursor listings.
+//
+// The endpoint's own description talks about saved_items_count,
+// saved_items_count_overflow and meta.cursor, and a schema that omitted meta — or
+// documented one count field and not the other — would contradict it while still
+// parsing as valid OpenAPI. Nothing else in the suite catches that, so this walks
+// the documented tree and the actual body side by side at every level: the envelope,
+// data, one collection, and meta.cursor.
+func TestCollectionAPI_ListCollections_DocumentedShape(t *testing.T) {
+	truncateCollectionData(t)
+
+	doc := loadSwaggerDoc(t)
+
+	userID := createCollectionUser(t, "collection-list-docshape@example.com")
+	createUnsorted(t, userID)
+
+	// One collection of each interesting kind, so the documented element schema is
+	// compared against both a system collection carrying a key and a user collection
+	// whose key is null.
+	wishlistID := createTestUserCollection(t, userID, "YouTube")
+	createTestSystemCollection(t, userID, "reddit", "reddit")
+
+	seedSavedItems(t, userID, wishlistID, 3)
+
+	req := httptest.NewRequest(http.MethodGet, "/collections", nil)
+	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+	resp, err := testApp.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	api := doc.definition(t, "collection.ListCollectionsAPIResponse")
+
+	// The envelope itself: data, message, meta.
+	requireSameKeys(t, "$", propertyKeys(api), jsonKeys(t, body, "$"))
+
+	data := doc.property(t, api, "data", "$")
+
+	actualData, ok := body["data"].(map[string]any)
+	require.True(t, ok, "response has no data object")
+
+	requireSameKeys(t, "data", propertyKeys(data), jsonKeys(t, actualData, "data"))
+
+	// Resolving the array's element schema rather than the array itself is the point:
+	// the element schema is what describes one collection's fields, and it is where a
+	// count field added to the runtime type but not to the response would show up.
+	documentedCollections := doc.arrayItem(
+		t,
+		doc.property(t, data, "collections", "data"),
+		"data.collections",
+	)
+
+	actualCollections, ok := actualData["collections"].([]any)
+	require.True(t, ok, "response has no collections array")
+	require.NotEmpty(t, actualCollections)
+
+	requireSameKeys(
+		t,
+		"data.collections[]",
+		propertyKeys(documentedCollections),
+		jsonKeys(t, actualCollections[0], "data.collections[]"),
+	)
+
+	// Both count keys are named explicitly and with the right type, because this is
+	// the assertion that a schema documenting one of the pair as something else
+	// fails. Types rather than a key-set comparison: these are scalars, so what
+	// matters is that a client reading the document learns a number and a boolean.
+	for field, wantType := range map[string]string{
+		"saved_items_count":          "integer",
+		"saved_items_count_overflow": "boolean",
+	} {
+		documented := doc.property(t, documentedCollections, field, "data.collections[]")
+
+		gotType, ok := documented["type"].(string)
+		require.True(t, ok, field+" must document a type")
+		require.Equal(t, wantType, gotType, field)
+	}
+
+	// meta.cursor, which the endpoint's description promised and the schema omitted.
+	documentedMeta := doc.property(t, api, "meta", "$")
+	requireSameKeys(
+		t,
+		"meta",
+		propertyKeys(documentedMeta),
+		jsonKeys(t, body["meta"], "meta"),
+	)
+
+	documentedCursor := doc.property(t, documentedMeta, "cursor", "meta")
+	requireSameKeys(
+		t,
+		"meta.cursor",
+		propertyKeys(documentedCursor),
+		jsonKeys(t, body["meta"].(map[string]any)["cursor"], "meta.cursor"),
+	)
+}
+
+// seedSavedItems puts count saved items into a collection in one statement.
+func seedSavedItems(
+	t *testing.T,
+	userID uuid.UUID,
+	collectionID uuid.UUID,
+	count int,
+) {
+	t.Helper()
+
+	require.NoError(
+		t,
+		collectiondbtest.New(testPool).CreateTestSavedItemsInCollection(
+			context.Background(),
+			collectiondbtest.CreateTestSavedItemsInCollectionParams{
+				UserID:       userID,
+				CollectionID: collectionID,
+				ItemCount:    int32(count),
+			},
+		),
+	)
+
+	// Asserted from the database rather than from the listing, so a count that came
+	// back wrong cannot be explained by a fixture that did not seed what it claimed.
+	require.Equal(
+		t,
+		int64(count),
+		countSavedItemsInCollectionForUser(t, collectionID, userID),
+	)
+}
+
+func countSavedItemsInCollectionForUser(
+	t *testing.T,
+	collectionID uuid.UUID,
+	userID uuid.UUID,
+) int64 {
+	t.Helper()
+
+	count, err := collectiondbtest.New(testPool).CountSavedItemsInCollectionForUser(
+		context.Background(),
+		collectiondbtest.CountSavedItemsInCollectionForUserParams{
+			CollectionID: collectionID,
+			UserID:       userID,
+		},
+	)
+	require.NoError(t, err)
+
+	return count
+}
+
+func boolToInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+
+	return 0
 }
 
 // encodeTimestampCursor builds a structurally valid cursor carrying an arbitrary

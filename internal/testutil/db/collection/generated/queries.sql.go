@@ -223,6 +223,36 @@ func (q *Queries) CreateTestSavedItemInCollection(ctx context.Context, arg Creat
 	return id, err
 }
 
+const createTestSavedItemsInCollection = `-- name: CreateTestSavedItemsInCollection :exec
+INSERT INTO saved_items (user_id, url, domain, collection_id)
+SELECT
+    $1,
+    'https://example.com/bulk-' || g,
+    'example.com',
+    $2
+FROM generate_series(1, $3::int) AS g
+`
+
+type CreateTestSavedItemsInCollectionParams struct {
+	UserID       uuid.UUID
+	CollectionID uuid.UUID
+	ItemCount    int32
+}
+
+// Seeds many saved items into one collection in a single statement.
+//
+// A test that needs a collection holding more than a hundred rows would otherwise
+// pay one round trip per row, and the rows would all share a created_at anyway
+// because created_at defaults to NOW(), which is constant within a transaction.
+// Both reasons are why this exists rather than a loop in the test.
+//
+// The urls are generated rather than supplied because no test asserting a count
+// cares what they are.
+func (q *Queries) CreateTestSavedItemsInCollection(ctx context.Context, arg CreateTestSavedItemsInCollectionParams) error {
+	_, err := q.db.Exec(ctx, createTestSavedItemsInCollection, arg.UserID, arg.CollectionID, arg.ItemCount)
+	return err
+}
+
 const createTestSystemCollection = `-- name: CreateTestSystemCollection :one
 INSERT INTO collections (
     user_id,
@@ -469,6 +499,30 @@ func (q *Queries) SetTestSavedItemEnrichmentStateAt(ctx context.Context, arg Set
 		arg.CreatedAt,
 		arg.ID,
 	)
+	return err
+}
+
+const setTestSavedItemPlatform = `-- name: SetTestSavedItemPlatform :exec
+UPDATE saved_items
+SET platform = $1
+WHERE id = $2
+`
+
+type SetTestSavedItemPlatformParams struct {
+	Platform pgtype.Text
+	ID       uuid.UUID
+}
+
+// Sets platform on an existing saved item.
+//
+// A separate statement rather than another column on
+// SetTestSavedItemEnrichmentStateAt, which several other tests use and none of which
+// has a platform in mind: a new column there would write NULL into rows those tests
+// go on to assert against. This one is only called where the platform is what the
+// test is actually about, which is a response-shape test that needs every nullable
+// column populated.
+func (q *Queries) SetTestSavedItemPlatform(ctx context.Context, arg SetTestSavedItemPlatformParams) error {
+	_, err := q.db.Exec(ctx, setTestSavedItemPlatform, arg.Platform, arg.ID)
 	return err
 }
 

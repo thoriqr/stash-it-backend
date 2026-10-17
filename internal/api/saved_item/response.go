@@ -138,3 +138,112 @@ type GetSavedItemAPIResponse struct {
 	Data    *GetSavedItemResponse `json:"data"`
 	Message string                `json:"message" example:"saved item retrieved successfully"`
 }
+
+// ListedSavedItemResponse is a saved item as the recent saved items listing reports
+// it.
+//
+// It carries the same twelve fields as SavedItemDetailResponse, for the same reason:
+// without enrichment_status a null title is ambiguous between "this page has no
+// title" and "this page has not been read yet", and without last_enriched_at there is
+// no way to tell whether the metadata above is current.
+//
+// It is a separate type rather than a reuse of SavedItemDetailResponse because this
+// listing carries one thing the detail response cannot: the collection's name sits
+// inside each item, because the history spans collections. In the detail endpoint the
+// caller already knows which collection it asked about and the collection is reported
+// once beside the item; here there is no such collection to name, so each row names
+// its own. Sharing one type would have meant either dropping the name or putting it
+// where it does not belong.
+//
+// description, image_url, domain, platform, title and last_enriched_at are nullable
+// and are reported as null rather than omitted, on a key that is always present. An
+// item that was never enriched, and an item whose page exposed nothing, are both
+// listed.
+type ListedSavedItemResponse struct {
+	ID       uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	URL      string    `json:"url" example:"https://example.com/articles/1"`
+	Domain   *string   `json:"domain" example:"example.com"`
+	Platform *string   `json:"platform" example:"youtube"`
+	Title    *string   `json:"title" example:"An interesting article"`
+
+	// Description and ImageURL are null until enrichment supplies them, and stay null
+	// afterwards when a page exposed neither. Both are ordinary states rather than
+	// defects, and neither is a reason to leave the item out of the history.
+	Description  *string   `json:"description" example:"A short summary of the page"`
+	ImageURL     *string   `json:"image_url" example:"https://example.com/og.png"`
+	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+
+	// EnrichmentStatus is pending, completed or failed. Completed means the process
+	// ran, not that every field above is populated. No item is filtered out of this
+	// listing on this value, so all three appear here.
+	EnrichmentStatus string `json:"enrichment_status" example:"completed"`
+
+	// LastEnrichedAt is null until an enrichment has succeeded at least once. A failed
+	// attempt refreshes nothing, so it does not set this.
+	LastEnrichedAt *time.Time `json:"last_enriched_at" example:"2026-10-02T10:31:00Z"`
+
+	CreatedAt time.Time `json:"created_at" example:"2026-10-02T10:30:00Z"`
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T10:31:00Z"`
+
+	// Collection names the collection this item is filed in, as the same id and name
+	// object GET /saved-items/{id} reports. It is inside the item rather than beside
+	// the page because this listing spans every collection the caller owns: there is
+	// no single collection for the response to name, so each row has to name its own.
+	//
+	// It is read by the listing's own statement, so naming it costs nothing and a
+	// client never has to make a request per row to learn where an item lives.
+	// collection_id above always equals collection.id.
+	Collection SavedItemCollectionResponse `json:"collection"`
+}
+
+// ListSavedItemsResponse is one page of the recent saved items history.
+//
+// An empty page is an empty array, never null. A user who has saved nothing is an
+// ordinary state this product already has, so it is reported as an empty list rather
+// than as an absence of one.
+type ListSavedItemsResponse struct {
+	SavedItems []ListedSavedItemResponse `json:"saved_items"`
+}
+
+// ListSavedItemsAPIResponse is the documented 200 body for the recent saved items
+// listing.
+type ListSavedItemsAPIResponse struct {
+	Data    *ListSavedItemsResponse `json:"data"`
+	Message string                  `json:"message" example:"saved items retrieved successfully"`
+	Meta    ListSavedItemsMeta      `json:"meta"`
+}
+
+// ListSavedItemsMeta is the envelope's meta for the recent saved items listing.
+//
+// Documentation only. httpx builds the real one; this mirrors it so the generated
+// description of a 200 body shows where next_cursor lives, rather than describing a
+// two-key envelope while the endpoint actually returns three. That drift is invisible
+// at runtime and still parses as valid OpenAPI, so nothing else would catch it, and
+// it already happened once in this project on the two collection listing endpoints.
+//
+// CursorPageMeta is not a $ref to httpx.CursorPage. That type is the runtime one and
+// swag emits no schema for it, so referencing it would produce a definition with no
+// properties rather than one describing the fields.
+type ListSavedItemsMeta struct {
+	Cursor CursorPageMeta `json:"cursor"`
+}
+
+// CursorPageMeta is the documented shape of meta.cursor.
+//
+// Documentation only. It mirrors httpx.CursorPage, whose NextCursor field carries no
+// omitempty precisely so a final page emits an explicit null rather than a missing
+// key. The field is a pointer here for the same reason: the null is the contract, and
+// a schema rendering it as an ordinary string would say the opposite.
+//
+// Restating two fields keeps the generated document readable on its own rather than
+// emitting a reference to a type swag does not describe.
+type CursorPageMeta struct {
+	// NextCursor is the token for the following page, or null on the final page and on
+	// an empty result. It is null whenever has_more is false.
+	NextCursor *string `json:"next_cursor" example:"eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9"`
+
+	// HasMore is computed from one row fetched beyond the requested limit, so it is
+	// exact rather than inferred from a count. There is deliberately no total: a
+	// cursor-paginated response does not know how many results exist overall.
+	HasMore bool `json:"has_more" example:"true"`
+}

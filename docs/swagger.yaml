@@ -127,6 +127,35 @@ definitions:
       name:
         example: Wishlist
         type: string
+      saved_items_count:
+        description: |-
+          SavedItemsCount is how many saved items the collection holds, capped at 99.
+
+          The two count fields together are the whole contract: a value from 0 to 99 is
+          exact, and 99 with saved_items_count_overflow true means "99 or more" rather
+          than "99". Splitting them is what lets a client render an exact badge up to 99
+          and a "99+" above it without ever comparing against a threshold this API
+          chose, and without the two states ever being confused for one another.
+
+          It counts the whole collection on every page. A count that described the page
+          rather than the collection would be a different number on each one, and a
+          badge that changes as the user scrolls is not a count of anything.
+
+          It is never null. A collection holding nothing reports 0, because a collection
+          holding nothing is an ordinary state in this product rather than an absence of
+          a count.
+        example: 12
+        type: integer
+      saved_items_count_overflow:
+        description: |-
+          SavedItemsCountOverflow is true when the collection holds more saved items
+          than SavedItemsCount could show, which is to say more than 99.
+
+          It is a separate boolean rather than something inferred from the count so that
+          the threshold lives in one place on the server. A client comparing against its
+          own copy of 99 is a second source of truth for a product decision.
+        example: false
+        type: boolean
       system_key:
         example: youtube
         type: string
@@ -789,6 +818,22 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  saved_item.CursorPageMeta:
+    properties:
+      has_more:
+        description: |-
+          HasMore is computed from one row fetched beyond the requested limit, so it is
+          exact rather than inferred from a count. There is deliberately no total: a
+          cursor-paginated response does not know how many results exist overall.
+        example: true
+        type: boolean
+      next_cursor:
+        description: |-
+          NextCursor is the token for the following page, or null on the final page and on
+          an empty result. It is null whenever has_more is false.
+        example: eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9
+        type: string
+    type: object
   saved_item.DeleteSavedItemAPIResponse:
     properties:
       data:
@@ -829,6 +874,90 @@ definitions:
         $ref: '#/definitions/saved_item.SavedItemCollectionResponse'
       saved_item:
         $ref: '#/definitions/saved_item.SavedItemDetailResponse'
+    type: object
+  saved_item.ListSavedItemsAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/saved_item.ListSavedItemsResponse'
+      message:
+        example: saved items retrieved successfully
+        type: string
+      meta:
+        $ref: '#/definitions/saved_item.ListSavedItemsMeta'
+    type: object
+  saved_item.ListSavedItemsMeta:
+    properties:
+      cursor:
+        $ref: '#/definitions/saved_item.CursorPageMeta'
+    type: object
+  saved_item.ListSavedItemsResponse:
+    properties:
+      saved_items:
+        items:
+          $ref: '#/definitions/saved_item.ListedSavedItemResponse'
+        type: array
+    type: object
+  saved_item.ListedSavedItemResponse:
+    properties:
+      collection:
+        allOf:
+        - $ref: '#/definitions/saved_item.SavedItemCollectionResponse'
+        description: |-
+          Collection names the collection this item is filed in, as the same id and name
+          object GET /saved-items/{id} reports. It is inside the item rather than beside
+          the page because this listing spans every collection the caller owns: there is
+          no single collection for the response to name, so each row has to name its own.
+
+          It is read by the listing's own statement, so naming it costs nothing and a
+          client never has to make a request per row to learn where an item lives.
+          collection_id above always equals collection.id.
+      collection_id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      description:
+        description: |-
+          Description and ImageURL are null until enrichment supplies them, and stay null
+          afterwards when a page exposed neither. Both are ordinary states rather than
+          defects, and neither is a reason to leave the item out of the history.
+        example: A short summary of the page
+        type: string
+      domain:
+        example: example.com
+        type: string
+      enrichment_status:
+        description: |-
+          EnrichmentStatus is pending, completed or failed. Completed means the process
+          ran, not that every field above is populated. No item is filtered out of this
+          listing on this value, so all three appear here.
+        example: completed
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+      image_url:
+        example: https://example.com/og.png
+        type: string
+      last_enriched_at:
+        description: |-
+          LastEnrichedAt is null until an enrichment has succeeded at least once. A failed
+          attempt refreshes nothing, so it does not set this.
+        example: "2026-10-02T10:31:00Z"
+        type: string
+      platform:
+        example: youtube
+        type: string
+      title:
+        example: An interesting article
+        type: string
+      updated_at:
+        example: "2026-10-02T10:31:00Z"
+        type: string
+      url:
+        example: https://example.com/articles/1
+        type: string
     type: object
   saved_item.SavedItemCollectionResponse:
     properties:
@@ -2486,8 +2615,10 @@ paths:
         The Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is "unsorted"; the display name is not its identity and a collection's type never decides anything about it.
         Collections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.
         sort selects the order and defaults to "newest". "newest" and "oldest" order by when the collection was created; "name" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.
+        Every collection reports what it holds through two fields. saved_items_count is how many saved items the collection contains, and saved_items_count_overflow says whether that number is the real one. Together they cover the whole range: a count from 0 to 99 with saved_items_count_overflow false is exact, and a count of 99 with saved_items_count_overflow true means "99 or more". A client can therefore render an exact number up to 99 and a "99+" above it without comparing against a threshold of its own. A collection holding nothing reports 0 and false, never null.
+        The count is of the whole collection and is identical on every page of the listing, so a value shown beside a collection does not change as the user pages through the list. Items belonging to another user are never counted. The count is computed in the same statement that returns the page, so it costs no additional query.
         Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted or renamed, and a cursor pointing past the end returns an empty page rather than an error.
-        meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, or does not match the requested sort is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall, and this response reports no meta.pagination.
+        meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, or does not match the requested sort is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall, and this response reports no meta.pagination. That is about the size of the page, not about the size of a collection.
         Search is not available here. GET /search already searches collections by name.
         Possible error codes:
         - INVALID_COLLECTION_SORT
@@ -2732,6 +2863,71 @@ paths:
       tags:
       - Internal
   /saved-items:
+    get:
+      description: |-
+        Get the current user's recent saved items, newest first, one page at a time. This is the recent history: every saved item the user owns, across every collection they own.
+        An item appears here wherever it has been filed. It stays in the history after it is moved into a collection of the user's own or created for it automatically, and each item reports which collection that is. Unsorted is not this listing's subject: it is one collection among the ones an item can be in, and it keeps its own place in GET /collections.
+        Nothing is filtered out. An item whose enrichment has not run, one whose page could not be read, and one that has been filed into a collection are all ordinary states and all listed. There is no filter on enrichment_status and no branch on whether automatic organization ran; each item reports its own enrichment_status, so a client can tell pending, completed and failed apart without any of them being withheld.
+        The response body is {"data": {...}, "message": "...", "meta": {...}}. data holds the page: {"saved_items": [...]}. Each item carries its full representation: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at, plus a collection object of {"id": "...", "name": "..."}.
+        The collection object is inside each item because this listing spans collections. There is no single collection for the response to name, so each row names the one it is in, and the listing reads it in the same statement as the item so a client never needs a second request per row to learn where something lives. collection_id always equals collection.id. Only id and name are reported: type and system_key belong to GET /collections.
+        title, description, image_url, domain, platform and last_enriched_at are nullable and are reported as null on a key that is always present. enrichment_status is pending, completed or failed and describes whether the enrichment process ran rather than whether every field is populated, so an item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once.
+        saved_items is an empty array rather than null when the user has saved nothing.
+        This listing never starts enrichment, never organizes anything, and never writes. Enrichment is scheduled by saving a URL and by POST /saved-items/{id}/enrich; reading the history is not a reason to fetch anything.
+        Ordering is fixed at created_at DESC, id DESC. There is no sort parameter: a history is read newest first or not at all. The id breaks ties, because created_at is constant within a transaction and rows inserted together genuinely share a timestamp.
+        limit defaults to 20 and is capped at 50. A limit of 51 or more, or one below 1, is rejected as VALIDATION_ERROR; a non-numeric limit is BAD_REQUEST. limit=0 is treated as absent and falls back to the default.
+        Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the newest item. A cursor records a position rather than an item, so it keeps working even if the item it came from has since been deleted, and a cursor past the end returns an empty page rather than an error.
+        meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, has no position, or holds a value that is not a timestamp is rejected as INVALID_CURSOR before any listing query runs. There is deliberately no total count: a cursor-paginated response does not know how many items exist overall, and this response reports no meta.pagination.
+        Only the authenticated user's saved items are ever returned. No other user's item is reachable from this endpoint.
+        This route is not rate limited, for the same reason GET /saved-items/{id} and DELETE /saved-items/{id} are not: it performs one indexed read, holds nothing beyond the request, and spends no shared resource. The two saved item routes that do cost something are limited, because a save arranges unbounded downstream work and an on-demand enrichment performs an outbound fetch.
+        Possible error codes:
+        - BAD_REQUEST (unparsable limit or cursor length)
+        - INVALID_CURSOR
+        - VALIDATION_ERROR (limit outside 1..50)
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - default: 20
+        description: Number of saved items per page. Defaults to 20, capped at 50.
+        example: 20
+        in: query
+        maximum: 50
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Opaque cursor from meta.cursor.next_cursor of the previous page.
+          Omit to start at the newest item.
+        example: eyJ2IjoxLCJ2YWwiOiIyMDI2LTEwLTAyVDEwOjMwOjAwWiJ9
+        in: query
+        maxLength: 512
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: A page of recent saved items, with meta.cursor.next_cursor
+            null when there is no next page
+          schema:
+            $ref: '#/definitions/saved_item.ListSavedItemsAPIResponse'
+        "400":
+          description: Invalid limit or cursor
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List recent saved items
+      tags:
+      - SavedItem
     post:
       consumes:
       - application/json

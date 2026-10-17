@@ -21,4 +21,25 @@ const (
 	// reasonably move apart later without silently changing the other.
 	SavedItemListDefaultLimit = 20
 	SavedItemListMaxLimit     = 50
+
+	// CollectionSavedItemsCountCap is the largest saved_items_count the collection
+	// listing reports. A collection holding more reports this value together with
+	// its overflow flag set, instead of its real total.
+	//
+	// The cap is a display decision, not a cost one: the statement counts the rows
+	// either way, so bounding what is reported saves no work. It exists because the
+	// number of saved items in a collection is unbounded and a list of collections
+	// has to stay a list of collections, and because a client rendering a badge
+	// needs to be told the threshold rather than have to rediscover it from the
+	// value.
+	//
+	// It is passed to every statement in the listing as a query parameter rather
+	// than written into the SQL, so this is the single place the bound is stated. A
+	// literal in each statement would be nine places that could disagree about the
+	// same number, which is the kind of duplication this project keeps rejecting.
+	//
+	// **This is an initial product estimate, not a measured value.** No deployment
+	// has been selected and no traffic observed. Raise it deliberately rather than
+	// because it looked arbitrary.
+	CollectionSavedItemsCountCap = 99
 )

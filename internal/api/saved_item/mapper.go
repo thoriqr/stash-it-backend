@@ -79,6 +79,69 @@ func mapCreateSavedItemResponse(result CreateResult) CreateSavedItemResponse {
 	}
 }
 
+// mapListedSavedItemResponse builds one row of the recent saved items listing.
+//
+// LastEnrichedAt is a pointer for the same reason it is on the detail response: a
+// pending, never-run or failed enrichment leaves it NULL, and reporting the zero
+// time would claim metadata was refreshed at a moment when nothing was fetched.
+//
+// The collection is built from the name the listing's own statement joined in,
+// beside the same collection_id, so the two cannot describe different collections.
+// Both are reported unconditionally, including for an item that was never enriched:
+// where an item lives is a fact about the item, not a consequence of its metadata.
+func mapListedSavedItemResponse(
+	savedItem ListedSavedItem,
+) ListedSavedItemResponse {
+	var lastEnrichedAt *time.Time
+
+	if savedItem.LastEnrichedAt.Valid {
+		enrichedAt := savedItem.LastEnrichedAt.Time
+		lastEnrichedAt = &enrichedAt
+	}
+
+	return ListedSavedItemResponse{
+		ID:               savedItem.ID,
+		URL:              savedItem.Url,
+		Domain:           mapOptionalText(savedItem.Domain),
+		Platform:         mapOptionalText(savedItem.Platform),
+		Title:            mapOptionalText(savedItem.Title),
+		Description:      mapOptionalText(savedItem.Description),
+		ImageURL:         mapOptionalText(savedItem.ImageURL),
+		CollectionID:     savedItem.CollectionID,
+		EnrichmentStatus: savedItem.EnrichmentStatus,
+		LastEnrichedAt:   lastEnrichedAt,
+		CreatedAt:        savedItem.CreatedAt.Time,
+		UpdatedAt:        savedItem.UpdatedAt.Time,
+		Collection: SavedItemCollectionResponse{
+			ID:   savedItem.CollectionID,
+			Name: savedItem.CollectionName,
+		},
+	}
+}
+
+// mapListSavedItemsResponse builds one page of the history.
+//
+// Made with a length rather than left nil, so an empty history serializes as []
+// rather than null. A user who has saved nothing is an ordinary state rather than an
+// absence of a list, and a list that arrives as null where a list was promised is a
+// shape change every client has to defend against.
+func mapListSavedItemsResponse(
+	result ListSavedItemsResult,
+) ListSavedItemsResponse {
+	savedItems := make([]ListedSavedItemResponse, 0, len(result.SavedItems))
+
+	for _, savedItem := range result.SavedItems {
+		savedItems = append(
+			savedItems,
+			mapListedSavedItemResponse(savedItem),
+		)
+	}
+
+	return ListSavedItemsResponse{
+		SavedItems: savedItems,
+	}
+}
+
 func mapGetSavedItemResponse(result GetResult) GetSavedItemResponse {
 	return GetSavedItemResponse{
 		SavedItem:  mapSavedItemDetailResponse(result.SavedItem),

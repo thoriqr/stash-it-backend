@@ -46,6 +46,16 @@ type Repository interface {
 		userID uuid.UUID,
 		collectionID uuid.UUID,
 	) (pgtype.Text, error)
+
+	// ListSavedItems returns one page of the user's recent saved items across every
+	// collection they own, newest first, plus whether more rows follow.
+	//
+	// The cursor arrives already decoded, validated and parsed, so this never
+	// interprets a client-supplied value.
+	ListSavedItems(
+		ctx context.Context,
+		params ListSavedItemsParams,
+	) (ListSavedItemsResult, error)
 }
 
 type repository struct {
@@ -247,6 +257,153 @@ func (r *repository) GetCollectionSystemKeyForUser(
 	}
 
 	return systemKey, nil
+}
+
+// ListSavedItems returns one page of the user's recent saved items.
+//
+// One row beyond the limit is requested so HasMore is a fact about rows that exist
+// rather than an inference from a count. The extra row is dropped before the page is
+// returned, and the service builds the next cursor from the last row actually
+// returned, never from this lookahead row: the lookahead row was never sent, so a
+// cursor built from it would resume past an item the client never received.
+//
+// No transaction is needed. A listing reads, so there is nothing to keep consistent,
+// and the page is a single statement with its own snapshot.
+func (r *repository) ListSavedItems(
+	ctx context.Context,
+	params ListSavedItemsParams,
+) (ListSavedItemsResult, error) {
+	pageLimit := int32(params.Limit + 1)
+
+	var (
+		rows []saveditemdb.ListSavedItemsFirstRow
+		err  error
+	)
+
+	if params.Cursor == nil {
+		rows, err = r.queries.ListSavedItemsFirst(
+			ctx,
+			saveditemdb.ListSavedItemsFirstParams{
+				UserID:    params.UserID,
+				PageLimit: pageLimit,
+			},
+		)
+	} else {
+		// Both halves of the position were validated and the timestamp parsed by the
+		// service before this was called. CursorValue is therefore already the type
+		// sqlc generated for a timestamptz column, and a token that survived
+		// validation cannot become a query error here.
+		afterRow, queryErr := r.queries.ListSavedItemsAfterRow(
+			ctx,
+			saveditemdb.ListSavedItemsAfterRowParams{
+				UserID:      params.UserID,
+				CursorValue: params.Cursor.Timestamp,
+				CursorID:    *params.Cursor.ID,
+				PageLimit:   pageLimit,
+			},
+		)
+
+		if queryErr != nil {
+			return ListSavedItemsResult{}, internalError(queryErr)
+		}
+
+		return buildListSavedItemsResult(
+			newListedSavedItemsAfterCursor(afterRow),
+			params.Limit,
+		), nil
+	}
+
+	if err != nil {
+		return ListSavedItemsResult{}, internalError(err)
+	}
+
+	return buildListSavedItemsResult(newListedSavedItems(rows), params.Limit), nil
+}
+
+// buildListSavedItemsResult applies the limit and derives HasMore from the lookahead
+// row the two statements were asked for.
+//
+// This is shared rather than restated because the arithmetic has to agree between
+// the two statements: a page that reported HasMore from one count and returned rows
+// sized by another would either drop an item or send one it never should.
+func buildListSavedItemsResult(
+	savedItems []ListedSavedItem,
+	limit int,
+) ListSavedItemsResult {
+	hasMore := len(savedItems) > limit
+	if hasMore {
+		savedItems = savedItems[:limit]
+	}
+
+	return ListSavedItemsResult{
+		SavedItems: savedItems,
+		Limit:      limit,
+		HasMore:    hasMore,
+	}
+}
+
+// newListedSavedItems maps the first-page rows onto the listing projection.
+//
+// Made with a length rather than left nil, so an empty history serializes as []
+// rather than null, which is the shape a caller decoding this list expects.
+func newListedSavedItems(
+	rows []saveditemdb.ListSavedItemsFirstRow,
+) []ListedSavedItem {
+	savedItems := make([]ListedSavedItem, 0, len(rows))
+
+	for _, row := range rows {
+		savedItems = append(savedItems, ListedSavedItem{
+			ID:               row.ID,
+			UserID:           row.UserID,
+			Url:              row.Url,
+			Domain:           row.Domain,
+			Platform:         row.Platform,
+			Title:            row.Title,
+			Description:      row.Description,
+			ImageURL:         row.ImageUrl,
+			CollectionID:     row.CollectionID,
+			EnrichmentStatus: row.EnrichmentStatus,
+			LastEnrichedAt:   row.LastEnrichedAt,
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
+			CollectionName:   row.CollectionName,
+		})
+	}
+
+	return savedItems
+}
+
+// newListedSavedItemsAfterCursor maps the resumed-page rows.
+//
+// sqlc emits a distinct row type per query because the two statements differ, even
+// though they project identical columns. This mirrors rather than restates: each row
+// field is copied straight across, and both statements are kept column-identical on
+// purpose so a future change to one has to be made to the other visibly.
+func newListedSavedItemsAfterCursor(
+	rows []saveditemdb.ListSavedItemsAfterRowRow,
+) []ListedSavedItem {
+	savedItems := make([]ListedSavedItem, 0, len(rows))
+
+	for _, row := range rows {
+		savedItems = append(savedItems, ListedSavedItem{
+			ID:               row.ID,
+			UserID:           row.UserID,
+			Url:              row.Url,
+			Domain:           row.Domain,
+			Platform:         row.Platform,
+			Title:            row.Title,
+			Description:      row.Description,
+			ImageURL:         row.ImageUrl,
+			CollectionID:     row.CollectionID,
+			EnrichmentStatus: row.EnrichmentStatus,
+			LastEnrichedAt:   row.LastEnrichedAt,
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
+			CollectionName:   row.CollectionName,
+		})
+	}
+
+	return savedItems
 }
 
 // newSavedItem builds the SavedItem projection from the columns the saved items
