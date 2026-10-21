@@ -22,15 +22,14 @@ func NewHandler(service Service) *Handler {
 
 // PutSavedItem godoc
 // @Summary Put a saved item into a collection
-// @Description File one of the current user's saved items into one of their user collections, identified by display name.
-// @Description The collection is created if it does not exist yet. A user collection is never created empty, so this call always ends with the saved item inside it.
-// @Description Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed.
+// @Description File one of the current user's saved items into one of their collections, identified by display name.
+// @Description Any existing collection owned by the user is a valid destination, including system collections such as "Unsorted" and automatically created platform collections such as "YouTube". Collection type does not restrict the destination.
+// @Description If no collection with that name exists, a user collection is created as part of the same action. Collection names are unique per user across both types, so a matching collection is reused rather than duplicated. A user collection is never created empty, so this call always ends with the saved item inside it.
+// @Description Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed. There is no reserved-name error: a name held by a system collection is a destination, not a rejection.
 // @Description This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
-// @Description A name already held by a system collection, such as "Unsorted", is reserved. It returns COLLECTION_NAME_RESERVED rather than filing the saved item into a system collection.
 // @Description The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
 // @Description Possible error codes:
 // @Description - INVALID_COLLECTION_NAME
-// @Description - COLLECTION_NAME_RESERVED
 // @Description - BAD_REQUEST
 // @Description - SAVED_ITEM_NOT_FOUND
 // @Description - INVALID_AUTHORIZATION_HEADER
@@ -47,7 +46,6 @@ func NewHandler(service Service) *Handler {
 // @Failure 400 {object} swagger.APIErrorResponse "Invalid collection name or saved item ID"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
 // @Failure 404 {object} swagger.APIErrorResponse "Saved item not found"
-// @Failure 409 {object} swagger.APIErrorResponse "Collection name is reserved"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /saved-items/{id}/collection [put]
 func (h *Handler) PutSavedItem(c fiber.Ctx) error {

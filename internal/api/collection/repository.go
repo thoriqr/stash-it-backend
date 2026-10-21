@@ -90,8 +90,9 @@ func NewRepository(
 	}
 }
 
-// PutSavedItemIntoUserCollection puts one of the user's saved items into the user
-// collection with the given name, creating that collection if it does not exist.
+// PutSavedItemIntoUserCollection puts one of the user's saved items into the
+// collection with the given name, creating a user collection if it does not exist.
+// An existing collection of either type is a valid destination.
 //
 // The whole operation is a single transaction owned here, because its two halves
 // cannot be split across repository calls: a committed collection with no item in
@@ -145,17 +146,19 @@ func (r *repository) PutSavedItemIntoUserCollection(
 		return PutSavedItemIntoUserCollectionResult{}, apperror.Internal(err)
 	}
 
-	// 2. Create the user collection, or resolve the existing one.
+	// 2. Create a user collection, or resolve the existing one.
 	//
 	// This is two statements on purpose. CreateUserCollection returns no row when
 	// the name is already taken for this user, and the separate lookup that follows
 	// takes a fresh snapshot under READ COMMITTED, so it also sees a collection
 	// that a concurrent transaction committed while this one waited on the
-	// conflicting index entry. A data-modifying CTE cannot be used instead: it
-	// shares one snapshot with its own SELECT and would return nothing in that
-	// case. A single ON CONFLICT DO UPDATE would return the row too, but
-	// collections has an updated_at trigger, so it would write to a pre-existing
-	// collection purely to read it.
+	// conflicting index entry. The lookup has no type filter because a system
+	// collection is a valid destination; an insert conflict is therefore resolved,
+	// not reported as a reserved name. A data-modifying CTE cannot be used instead:
+	// it shares one snapshot with its own SELECT and would return nothing in that
+	// case. A single ON CONFLICT DO UPDATE would return the row too, but collections
+	// has an updated_at trigger, so it would write to a pre-existing collection
+	// purely to read it.
 	collection, collectionCreated, err := createOrGetUserCollection(
 		ctx,
 		qtx,
@@ -1139,13 +1142,17 @@ func mapCollectionChildrenError(err error) error {
 const savedItemsCollectionFKConstraint = "saved_items_collection_id_fkey"
 
 // createOrGetUserCollection resolves the user's collection with the given name,
-// creating it as a user collection when it does not exist yet.
+// creating it as a user collection when no collection of that name exists yet.
 //
-// A name already held by a system collection is not a user collection, and
-// GetUserCollectionByNameForUser only matches type = 'user'. Returning no row
-// therefore means the name is reserved, and that is reported as a conflict instead
-// of silently filing the saved item into a system collection the user named by
-// accident.
+// The lookup deliberately matches either collection type. collections_user_name_unique
+// is scoped to the user across both types, so a system collection such as Unsorted
+// or a platform collection such as YouTube already occupies the name; that makes it
+// the destination rather than a name to reject. Only when the insert succeeds is a
+// new user collection created.
+//
+// A no-row lookup after a unique-name conflict means the conflicting row disappeared
+// between the two statements. That is a concurrent mutation, not a reserved-name
+// rule, so it is reported as an internal failure rather than as a client conflict.
 func createOrGetUserCollection(
 	ctx context.Context,
 	qtx *collectiondb.Queries,
@@ -1180,10 +1187,10 @@ func createOrGetUserCollection(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return collectiondb.Collection{}, false, apperror.ConflictWith(
-				CodeCollectionNameReserved,
-				"collection name is already in use",
-				nil,
+			return collectiondb.Collection{}, false, apperror.Internal(
+				errors.New(
+					"collection name conflict resolved to no collection",
+				),
 			)
 		}
 

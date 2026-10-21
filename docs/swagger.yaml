@@ -233,10 +233,12 @@ definitions:
     properties:
       collection_name:
         description: |-
-          CollectionName is the display name of the user collection to file the saved
-          item under. The collection is created if it does not exist yet. Names are
-          matched case-insensitively with surrounding whitespace ignored, and a name
-          already used by a system collection is rejected.
+          CollectionName is the display name of the collection to file the saved item
+          under. Any existing collection owned by the user is a valid destination,
+          including a system collection such as Unsorted or an automatically created
+          platform collection. If no collection with that name exists, a user collection
+          is created. Names are matched case-insensitively with surrounding whitespace
+          ignored, and an existing name is reused rather than duplicated.
 
           This field carries no `validate` constraint on purpose. The service owns
           collection name rules and answers with the INVALID_COLLECTION_NAME code, so
@@ -3091,15 +3093,14 @@ paths:
       consumes:
       - application/json
       description: |-
-        File one of the current user's saved items into one of their user collections, identified by display name.
-        The collection is created if it does not exist yet. A user collection is never created empty, so this call always ends with the saved item inside it.
-        Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed.
+        File one of the current user's saved items into one of their collections, identified by display name.
+        Any existing collection owned by the user is a valid destination, including system collections such as "Unsorted" and automatically created platform collections such as "YouTube". Collection type does not restrict the destination.
+        If no collection with that name exists, a user collection is created as part of the same action. Collection names are unique per user across both types, so a matching collection is reused rather than duplicated. A user collection is never created empty, so this call always ends with the saved item inside it.
+        Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed. There is no reserved-name error: a name held by a system collection is a destination, not a rejection.
         This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
-        A name already held by a system collection, such as "Unsorted", is reserved. It returns COLLECTION_NAME_RESERVED rather than filing the saved item into a system collection.
         The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
         Possible error codes:
         - INVALID_COLLECTION_NAME
-        - COLLECTION_NAME_RESERVED
         - BAD_REQUEST
         - SAVED_ITEM_NOT_FOUND
         - INVALID_AUTHORIZATION_HEADER
@@ -3136,10 +3137,6 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "404":
           description: Saved item not found
-          schema:
-            $ref: '#/definitions/swagger.APIErrorResponse'
-        "409":
-          description: Collection name is reserved
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "500":

@@ -15,8 +15,9 @@ import (
 )
 
 type Service interface {
-	// PutSavedItem puts one of the user's saved items into the user collection
-	// with the given name, creating that collection if it does not exist yet.
+	// PutSavedItem puts one of the user's saved items into the collection with the
+	// given name, creating a user collection if it does not exist yet. An existing
+	// collection of either type is a valid destination.
 	PutSavedItem(
 		ctx context.Context,
 		userID uuid.UUID,
@@ -77,7 +78,9 @@ type PutSavedItemResult struct {
 }
 
 // PutSavedItem puts a saved item into the user's collection with the given name,
-// creating the collection if it does not exist yet.
+// creating a user collection if no collection of that name exists yet. A system
+// collection the user owns is a valid destination and is reused rather than
+// shadowed.
 //
 // The operation is idempotent. When the saved item is already in the target
 // collection nothing is written, and this is reported through AlreadyInCollection

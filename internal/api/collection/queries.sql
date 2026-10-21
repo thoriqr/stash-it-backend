@@ -701,17 +701,18 @@ RETURNING
     updated_at;
 
 -- name: GetUserCollectionByNameForUser :one
--- Resolves an existing user collection by name, compared the same way the unique
--- index compares it: case-insensitively and with surrounding whitespace
--- ignored. This runs as a separate statement after CreateUserCollection returned
--- no row, so it takes a fresh snapshot under READ COMMITTED and therefore sees a
--- collection that a concurrent transaction committed in the meantime.
+-- Resolves an existing collection belonging to this user by name, compared the
+-- same way the unique index compares it: case-insensitively and with surrounding
+-- whitespace ignored. This runs as a separate statement after CreateUserCollection
+-- returned no row, so it takes a fresh snapshot under READ COMMITTED and therefore
+-- sees a collection that a concurrent transaction committed in the meantime.
 --
--- type = 'user' is deliberate. collections_user_name_unique also covers system
--- collections, and its display names are reserved precisely so a user cannot
--- shadow them. Returning no row here therefore means the name is held by a system
--- collection, which the caller reports as a reserved name rather than silently
--- filing the saved item into a system collection the user only named by accident.
+-- There is deliberately no type filter. collections_user_name_unique is scoped to
+-- the user across both collection types, and an existing collection of either type
+-- is a valid destination: the user's Unsorted collection and an automatically
+-- created platform collection such as YouTube are theirs to file into. A conflict
+-- from CreateUserCollection means this lookup must find the row that caused it,
+-- not that the name is rejected.
 SELECT
     id,
     user_id,
@@ -722,7 +723,6 @@ SELECT
     updated_at
 FROM collections
 WHERE user_id = sqlc.arg(user_id)
-  AND type = 'user'
   AND lower(btrim(name)) = lower(btrim(sqlc.arg(name)));
 
 -- name: MoveSavedItemToCollection :one

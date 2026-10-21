@@ -195,22 +195,26 @@ remain independent of organizing.
 
 ### Collections
 
-`Unsorted` is where saving lands; user collections are where items go when they
-are organized. An item may remain in `Unsorted` indefinitely.
+`Unsorted` is where saving lands; the user's collections are where items go when
+they are organized. An item may remain in `Unsorted` indefinitely.
 
 - A user names the collection when filing an item into it. If that collection
   does not exist yet it is created as part of the same action, so a collection is
   never created holding nothing.
-- A user collection belongs to exactly one user. Only the owner can file an item
-  into it, and only their own items can be moved.
+- A collection belongs to exactly one user. Only the owner can file an item into
+  it, and only their own items can be moved. This applies to system collections
+  too: a system collection is still one user's collection.
 - Collection names are unique per user. `"Wishlist"`, `"wishlist"` and
   `" Wishlist "` are the same name, so organizing stays predictable instead of
   producing near-duplicate piles. Surrounding whitespace is not stored.
-- Names already reserved by a system collection, such as `Unsorted`, cannot be
-  used for a user collection.
-- A collection is always referred to by its ID, including when saved items are
-  moved into it. Names are for people to read, so they are not a way to address
-  one.
+- A name already held by one of the user's collections, including a system
+  collection such as `Unsorted` or an automatically created platform collection,
+  refers to that collection. Filing an item uses the existing collection instead
+  of creating a duplicate, so a system collection's name is a valid destination
+  rather than a rejected name.
+- Other collection operations refer to a collection by its ID. Filing a saved item
+  is the one name-addressed action: the user names the destination, and the backend
+  resolves an existing collection or creates one. Names are for people to read.
 - Filing an item that is already in that collection succeeds and changes nothing,
   so repeating the action — or retrying after a dropped connection — is harmless.
 - Organizing never waits on or alters metadata enrichment; an item can be moved

@@ -7,6 +7,42 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-22 — Any owned collection is a valid move destination
+
+`PUT /saved-items/:id/collection` now resolves the requested name against every
+collection the user owns, not only `type = 'user'`. `YouTube`, `Unsorted` and any
+other existing system collection are valid destinations; an absent name still
+creates a user collection, and movement remains atomic, owner-scoped and idempotent.
+
+Root cause: `GetUserCollectionByNameForUser` filtered `type = 'user'`. When the name
+belonged to a system collection, `CreateUserCollection` conflicted with
+`collections_user_name_unique` (which spans `(user_id, lower(btrim(name)))` for both
+types), the lookup returned no row, and the repository reported the name as reserved.
+The lookup now has no type filter; a unique-name conflict resolves to the existing
+row, whatever its type.
+
+`COLLECTION_NAME_RESERVED` was removed from the collection API error codes and
+Swagger for this endpoint: no collection name is rejected because a system collection
+owns it. A no-row result after a conflict now means the row was changed or removed
+concurrently, and is reported as an internal failure rather than a client conflict. The
+worker's independent reserved-name rule for organization is unchanged and out of
+scope.
+
+No migration or baseline schema change was needed. The baseline has no reserved-name
+constraint; `collections_user_name_unique` is only per-user name uniqueness, and
+`saved_items_collection_id_fkey` enforces the composite ownership guard.
+
+Verification (2026-10-22):
+
+- `sqlc generate` — pass; the generated lookup no longer filters by type.
+- `swag init -g cmd/api/main.go -parseInternal` — pass; the old 409 and reserved-name text are gone.
+- `gofmt` on the changed Go files — pass.
+- `go build ./...` — pass.
+- `go vet ./...` — pass.
+- `go test ./internal/api/collection/... -count=1` — pass.
+- `go test ./internal/integration -run 'TestCollection_PutSavedItem|TestCollectionAPI_PutSavedItem' -count=1 -v` — pass.
+- `go test ./... -count=1` — pass.
+
 ### 2026-10-18 — Recent saved items and collection counts
 
 Implemented. Two independent changes, both additive, neither altering an existing
@@ -933,16 +969,21 @@ No public-suffix or registrable-domain detection is performed.
 | `DELETE /collections/:id`          | done   | 200, owner-scoped, requires Bearer                   |
 
 The endpoint accepts `{"collection_name": "..."}` and files one saved item
-into one user collection, creating that collection when necessary.
+into one of the user's collections, creating a user collection when no collection
+with that name exists.
 
 Important behavior:
 
 - Collection creation and item movement are atomic.
 - Filing an item into its current collection is idempotent.
 - Unknown and foreign item IDs return the same 404 response.
-- The `Unsorted` system collection is resolved by `system_key`, never display name.
-- System collection names are reserved.
-- User collection names are trimmed and compared case-insensitively.
+- The `Unsorted` system collection is resolved by display name here, like any other
+  destination; its `system_key` remains its stable identity elsewhere.
+- Any existing collection owned by the user is a valid destination, including
+  system collections such as `Unsorted` and platform collections such as `YouTube`.
+- Collection names are unique per user across both types. An existing name is
+  resolved to that collection rather than rejected as reserved or duplicated.
+- Collection names are trimmed and compared case-insensitively.
 - Enrichment does not participate in collection movement.
 
 Committed as `1e85c5d feat: add saved item collection flow`.
@@ -4233,6 +4274,15 @@ result is still valid OpenAPI, so no linter did either. Both now declare a
 documentation-only mirror sharing one `CursorPageMeta`, and
 `TestCollectionAPI_ListSavedItems_DocumentedShape` walks `docs/swagger.json` and a
 real body side by side at every level, failing if either gains or loses a key.
+
+19k. **A collection name is a destination, not a reserved namespace.** Filing a
+saved item resolves the name against every collection the user owns, and collection
+type does not restrict the result. A name already held by a system collection such
+as `Unsorted` or `YouTube` resolves to that collection; it is not a name to reject.
+`collections_user_name_unique` is per-user uniqueness across both types, not a
+reserved-name rule, and `COLLECTION_NAME_RESERVED` is not part of the collection API
+contract. The automatic organization worker has its own, narrower reserved-name rule
+for platform names and is a separate writer with separate behavior.
 
 20. **A forward header is believed only behind a verified allowlist, and the
     declaration of where a client's address comes from is one setting rather than

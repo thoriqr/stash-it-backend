@@ -197,38 +197,60 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		)
 	})
 
-	t.Run("returns 409 for a system collection name", func(t *testing.T) {
+	t.Run("moves the item into an existing system collection through HTTP", func(t *testing.T) {
 		truncateCollectionData(t)
 
-		userID := createCollectionUser(t, "collection-api-reserved@example.com")
+		userID := createCollectionUser(t, "collection-api-system@example.com")
 		unsortedID := createUnsorted(t, userID)
+		youtubeID := createTestSystemCollection(t, userID, "YouTube", "youtube")
 		savedItemID := createSavedItemInCollection(
 			t,
 			userID,
 			unsortedID,
-			"https://example.com/reserved",
+			"https://example.com/system",
 		)
 
-		resp := putIntoCollection(t, userID, savedItemID, "Unsorted")
-		require.Equal(t, http.StatusConflict, resp.StatusCode)
+		resp := putIntoCollection(t, userID, savedItemID, "  youtube ")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var body struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
+		var body putCollectionResponse
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
-		require.Equal(
+		require.False(t, body.Data.CollectionCreated)
+		require.False(t, body.Data.AlreadyInCollection)
+		require.Equal(t, youtubeID.String(), body.Data.Collection.ID)
+		require.Equal(t, "YouTube", body.Data.Collection.Name)
+		require.Equal(t, "system", body.Data.Collection.Type)
+		require.Equal(t, youtubeID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "YouTube"))
+	})
+
+	t.Run("moves the item into Unsorted through HTTP", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-api-unsorted@example.com")
+		unsortedID := createUnsorted(t, userID)
+		sourceID := createTestUserCollection(t, userID, "Wishlist")
+		savedItemID := createSavedItemInCollection(
 			t,
-			collection.CodeCollectionNameReserved,
-			body.Error.Code,
+			userID,
+			sourceID,
+			"https://example.com/unsorted",
 		)
 
-		// No user collection was created and the item stayed in Unsorted.
-		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Unsorted"))
+		resp := putIntoCollection(t, userID, savedItemID, "  uNsOrTeD ")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body putCollectionResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+		require.False(t, body.Data.CollectionCreated)
+		require.False(t, body.Data.AlreadyInCollection)
+		require.Equal(t, unsortedID.String(), body.Data.Collection.ID)
+		require.Equal(t, "Unsorted", body.Data.Collection.Name)
+		require.Equal(t, "system", body.Data.Collection.Type)
 		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Unsorted"))
 	})
 
 	t.Run("returns 404 for a foreign saved item and creates no collection", func(t *testing.T) {

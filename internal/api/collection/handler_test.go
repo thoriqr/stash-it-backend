@@ -222,31 +222,32 @@ func TestHandler_PutSavedItem(t *testing.T) {
 		require.False(t, payload.Data.AlreadyInCollection)
 	})
 
-	t.Run("does not expose a system key on the collection", func(t *testing.T) {
+	t.Run("does not expose a system key when the destination is a system collection", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := collectionmocks.NewMockRepository(ctrl)
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
+		collectionID := uuid.New()
 
 		repo.EXPECT().
 			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
 			Return(
 				collection.PutSavedItemIntoUserCollectionResult{
 					Collection: collectiondb.Collection{
-						ID:        uuid.New(),
+						ID:        collectionID,
 						UserID:    userID,
-						Name:      "Wishlist",
-						Type:      "user",
+						Name:      "Unsorted",
+						Type:      "system",
 						SystemKey: pgtype.Text{String: "unsorted", Valid: true},
 						CreatedAt: handlerTimestamptz(),
 						UpdatedAt: handlerTimestamptz(),
 					},
-					CollectionCreated: true,
+					CollectionCreated: false,
 					SavedItem: collection.SavedItem{
 						ID:           savedItemID,
 						UserID:       userID,
-						CollectionID: uuid.New(),
+						CollectionID: collectionID,
 						CreatedAt:    handlerTimestamptz(),
 						UpdatedAt:    handlerTimestamptz(),
 					},
@@ -261,16 +262,20 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Unsorted"}`,
 				true,
 			),
 		)
 		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// This endpoint only ever targets a user collection, so the system key must
-		// not leak into the contract even if a row carried one.
-		require.NotContains(t, readBody(t, resp), "system_key")
-		require.NotContains(t, readBody(t, resp), "unsorted")
+		raw := readBody(t, resp)
+
+		// The destination can be a system collection, but the stable system key stays
+		// in GET /collections. Type is enough to tell a caller what it resolved.
+		require.Contains(t, raw, `"type":"system"`)
+		require.NotContains(t, raw, "system_key")
+		require.NotContains(t, raw, "unsorted")
 	})
 
 	t.Run("omits enrichment and null metadata from the payload", func(t *testing.T) {
@@ -434,52 +439,6 @@ func TestHandler_PutSavedItem(t *testing.T) {
 		)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-	})
-
-	t.Run("returns the reserved name conflict unchanged", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		repo := collectionmocks.NewMockRepository(ctrl)
-
-		userID := uuid.New()
-		savedItemID := uuid.New()
-
-		repo.EXPECT().
-			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
-			Return(
-				collection.PutSavedItemIntoUserCollectionResult{},
-				apperror.ConflictWith(
-					collection.CodeCollectionNameReserved,
-					"collection name is already in use",
-					nil,
-				),
-			)
-
-		app := newHandlerTestApp(t, repo)
-
-		resp, err := app.Test(
-			putSavedItemRequest(
-				t,
-				userID,
-				savedItemID,
-				`{"collection_name": "Unsorted"}`,
-				true,
-			),
-		)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusConflict, resp.StatusCode)
-
-		var body struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-		require.Equal(
-			t,
-			collection.CodeCollectionNameReserved,
-			body.Error.Code,
-		)
 	})
 
 	t.Run("rejects a blank name without touching the repository", func(t *testing.T) {

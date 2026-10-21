@@ -321,85 +321,156 @@ func TestCollection_PutSavedItem(t *testing.T) {
 		require.Equal(t, first.Collection.ID, savedItemState(t, secondItemID).CollectionID)
 	})
 
-	t.Run("a user collection name is reserved against a system collection", func(t *testing.T) {
+	t.Run("reuses an existing system collection as the destination", func(t *testing.T) {
 		truncateCollectionData(t)
 
 		svc := newCollectionService(t)
 
-		userID := createCollectionUser(t, "collection-reserved@example.com")
+		ctx := context.Background()
+		db := collectiondbtest.New(testPool)
+
+		userID := createCollectionUser(t, "collection-system@example.com")
 		unsortedID := createUnsorted(t, userID)
+		youtubeID := createTestSystemCollection(t, userID, "YouTube", "youtube")
+
 		savedItemID := createSavedItemInCollection(
 			t,
 			userID,
 			unsortedID,
-			"https://example.com/reserved",
+			"https://example.com/system-destination",
 		)
 
-		// "Unsorted" is the display name of a system collection. collections_user_name_unique
-		// reserves it, and a user collection must not be created under it either.
-		_, err := svc.PutSavedItem(
-			context.Background(),
+		before, err := db.GetCollectionState(ctx, youtubeID)
+		require.NoError(t, err)
+
+		// Case-insensitive, whitespace-trimmed matching applies to system collections
+		// exactly as it does to user collections.
+		result, err := svc.PutSavedItem(
+			ctx,
 			userID,
 			savedItemID,
-			"Unsorted",
-		)
-		require.Error(t, err)
-
-		appErr := apperror.FromError(err)
-		require.Equal(t, collection.CodeCollectionNameReserved, appErr.Code)
-		require.Equal(t, 409, appErr.Status)
-
-		// The reserved name must not have produced a user collection, and the saved
-		// item must still be in Unsorted.
-		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Unsorted"))
-		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
-
-		state, err := collectiondbtest.New(testPool).GetCollectionState(
-			context.Background(),
-			unsortedID,
+			"  youtube  ",
 		)
 		require.NoError(t, err)
-		require.Equal(
-			t,
-			string(collection.CollectionTypeSystem),
-			state.Type,
-		)
-		require.True(t, state.SystemKey.Valid)
-		require.Equal(
-			t,
-			string(collection.CollectionSystemKeyUnsorted),
-			state.SystemKey.String,
-		)
+
+		require.False(t, result.CollectionCreated)
+		require.False(t, result.AlreadyInCollection)
+		require.Equal(t, youtubeID, result.Collection.ID)
+		require.Equal(t, userID, result.Collection.UserID)
+		require.Equal(t, "YouTube", result.Collection.Name)
+		require.Equal(t, string(collection.CollectionTypeSystem), result.Collection.Type)
+		require.True(t, result.Collection.SystemKey.Valid)
+		require.Equal(t, "youtube", result.Collection.SystemKey.String)
+
+		// The conflicting insert must not have created a duplicate user collection.
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "YouTube"))
+		require.Equal(t, youtubeID, savedItemState(t, savedItemID).CollectionID)
+
+		// Resolving a system collection reads it; it must not rewrite the row.
+		after, err := db.GetCollectionState(ctx, youtubeID)
+		require.NoError(t, err)
+		require.Equal(t, before.Name, after.Name)
+		require.Equal(t, before.UpdatedAt, after.UpdatedAt)
 	})
 
-	t.Run("a reserved name is rejected whatever its casing or padding", func(t *testing.T) {
+	t.Run("moves an item into Unsorted and treats a repeat as a no-op", func(t *testing.T) {
 		truncateCollectionData(t)
 
 		svc := newCollectionService(t)
 
-		userID := createCollectionUser(t, "collection-reserved-case@example.com")
+		ctx := context.Background()
+
+		userID := createCollectionUser(t, "collection-unsorted-destination@example.com")
 		unsortedID := createUnsorted(t, userID)
+		sourceID := createTestUserCollection(t, userID, "Wishlist")
 		savedItemID := createSavedItemInCollection(
 			t,
 			userID,
-			unsortedID,
-			"https://example.com/reserved-case",
+			sourceID,
+			"https://example.com/back-to-unsorted",
 		)
 
-		_, err := svc.PutSavedItem(
-			context.Background(),
+		result, err := svc.PutSavedItem(
+			ctx,
 			userID,
 			savedItemID,
 			"  uNsOrTeD ",
 		)
-		require.Error(t, err)
+		require.NoError(t, err)
+
+		require.False(t, result.CollectionCreated)
+		require.False(t, result.AlreadyInCollection)
+		require.Equal(t, unsortedID, result.Collection.ID)
+		require.Equal(t, string(collection.CollectionTypeSystem), result.Collection.Type)
+		require.True(t, result.Collection.SystemKey.Valid)
 		require.Equal(
 			t,
-			collection.CodeCollectionNameReserved,
-			apperror.FromError(err).Code,
+			string(collection.CollectionSystemKeyUnsorted),
+			result.Collection.SystemKey.String,
+		)
+		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Unsorted"))
+
+		afterMove := savedItemState(t, savedItemID)
+
+		second, err := svc.PutSavedItem(
+			ctx,
+			userID,
+			savedItemID,
+			"Unsorted",
+		)
+		require.NoError(t, err)
+
+		require.True(t, second.AlreadyInCollection)
+		require.False(t, second.CollectionCreated)
+		require.Equal(t, unsortedID, second.Collection.ID)
+		require.Equal(t, afterMove.UpdatedAt, savedItemState(t, savedItemID).UpdatedAt)
+	})
+
+	t.Run("another user's system collection is not reused", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		ctx := context.Background()
+
+		ownerID := createCollectionUser(t, "collection-system-owner@example.com")
+		otherUserID := createCollectionUser(t, "collection-system-other@example.com")
+
+		createUnsorted(t, ownerID)
+		otherUnsortedID := createUnsorted(t, otherUserID)
+
+		ownerYouTubeID := createTestSystemCollection(
+			t,
+			ownerID,
+			"YouTube",
+			"youtube",
 		)
 
-		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
+		savedItemID := createSavedItemInCollection(
+			t,
+			otherUserID,
+			otherUnsortedID,
+			"https://example.com/system-scope",
+		)
+
+		result, err := svc.PutSavedItem(
+			ctx,
+			otherUserID,
+			savedItemID,
+			"YouTube",
+		)
+		require.NoError(t, err)
+
+		// The name is free for this user, so a user collection is created rather than
+		// reaching into another user's system collection.
+		require.True(t, result.CollectionCreated)
+		require.Equal(t, string(collection.CollectionTypeUser), result.Collection.Type)
+		require.Equal(t, otherUserID, result.Collection.UserID)
+		require.NotEqual(t, ownerYouTubeID, result.Collection.ID)
+		require.Equal(t, result.Collection.ID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, ownerID, "YouTube"))
+		require.Equal(t, int64(1), countCollectionsNamed(t, otherUserID, "YouTube"))
 	})
 
 	t.Run("another user's saved item is not found and creates no collection", func(t *testing.T) {

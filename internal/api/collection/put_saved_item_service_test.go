@@ -318,10 +318,8 @@ func TestService_PutSavedItem(t *testing.T) {
 
 	t.Run("returns repository errors unchanged", func(t *testing.T) {
 		cases := map[string]error{
-			"reserved name": apperror.ConflictWith(
-				collection.CodeCollectionNameReserved,
-				"collection name is already in use",
-				nil,
+			"conflict": apperror.Conflict(
+				errors.New("collection conflict"),
 			),
 			"unknown or foreign saved item": apperror.NotFoundWith(
 				collection.CodeSavedItemNotFound,

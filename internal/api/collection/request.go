@@ -89,10 +89,12 @@ type DeleteCollectionRequest struct {
 }
 
 type PutSavedItemIntoCollectionRequest struct {
-	// CollectionName is the display name of the user collection to file the saved
-	// item under. The collection is created if it does not exist yet. Names are
-	// matched case-insensitively with surrounding whitespace ignored, and a name
-	// already used by a system collection is rejected.
+	// CollectionName is the display name of the collection to file the saved item
+	// under. Any existing collection owned by the user is a valid destination,
+	// including a system collection such as Unsorted or an automatically created
+	// platform collection. If no collection with that name exists, a user collection
+	// is created. Names are matched case-insensitively with surrounding whitespace
+	// ignored, and an existing name is reused rather than duplicated.
 	//
 	// This field carries no `validate` constraint on purpose. The service owns
 	// collection name rules and answers with the INVALID_COLLECTION_NAME code, so

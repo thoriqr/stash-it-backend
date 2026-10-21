@@ -8,10 +8,11 @@ import (
 
 // CollectionResponse is the collection the saved item ended up in.
 //
-// system_key is omitted. This endpoint only ever files an item into a user
-// collection, where system_key is always NULL by the collections_system_key_check
-// constraint. Exposing the field would imply a system collection could be
-// targeted here, which it cannot.
+// system_key is omitted even though the destination may be a system collection:
+// this response identifies a collection by id, name and type, and the stable system
+// key is reported by GET /collections. Keeping it out preserves the existing move
+// response shape while type still tells the caller that a system collection was
+// targeted.
 type CollectionResponse struct {
 	ID        uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 	Name      string    `json:"name" example:"Wishlist"`
@@ -40,15 +41,16 @@ type PutSavedItemSavedItemResponse struct {
 // list.
 //
 // It is separate from CollectionResponse rather than an extension of it, because
-// that type is also returned by the move endpoint and deliberately omits system_key:
-// that endpoint files into a user collection, where system_key is always NULL, and
-// including the field there would imply a system collection could be targeted. This
-// listing returns every collection a user has, so it needs the field.
+// that type is also returned by the move endpoint and deliberately omits system_key
+// to keep that response's existing shape, even though a system collection can be
+// its destination. This listing returns every collection a user has, so it needs
+// the field.
 //
 // system_key is what lets a client recognize Unsorted. The alternative is matching
-// on the display name, which is free text and which collections_user_name_unique
-// already reserves for exactly this reason. It is also what lets the client know a
-// collection may not be deleted before offering to delete it.
+// on the display name, which is free text and is unique per user across collection
+// types so a user collection cannot shadow a system collection's name. It is also
+// what lets the client know a collection may not be deleted before offering to
+// delete it.
 type ListedCollectionResponse struct {
 	ID        uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 	Name      string    `json:"name" example:"Wishlist"`
