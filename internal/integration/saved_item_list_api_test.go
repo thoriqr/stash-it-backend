@@ -1149,7 +1149,10 @@ func moveSavedItemIntoCollection(
 ) {
 	t.Helper()
 
-	body := fmt.Sprintf(`{"collection_name":%q}`, name)
+	body := fmt.Sprintf(
+		`{"collection_name":%q,"collection_intent":"existing"}`,
+		name,
+	)
 
 	req := httptest.NewRequest(
 		http.MethodPut,

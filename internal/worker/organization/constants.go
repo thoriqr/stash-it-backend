@@ -11,8 +11,11 @@ const (
 	CodeSavedItemOwnershipMismatch = "SAVED_ITEM_OWNERSHIP_MISMATCH"
 
 	// CodeCollectionNameReserved is the code recorded when the platform's name
-	// cannot be a target collection. It matches the code the collection API uses
-	// for the same situation, so one situation has one code across both writers.
+	// cannot be a target collection. It is local to automatic organization: the
+	// collection API has no equivalent code, because an existing collection name
+	// there is a valid destination rather than a rejection. Organization still
+	// refuses the Unsorted name, since filing an item into Unsorted would move it
+	// nowhere.
 	CodeCollectionNameReserved = "COLLECTION_NAME_RESERVED"
 )
 

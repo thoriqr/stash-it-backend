@@ -92,13 +92,29 @@ type PutSavedItemIntoCollectionRequest struct {
 	// CollectionName is the display name of the collection to file the saved item
 	// under. Any existing collection owned by the user is a valid destination,
 	// including a system collection such as Unsorted or an automatically created
-	// platform collection. If no collection with that name exists, a user collection
-	// is created. Names are matched case-insensitively with surrounding whitespace
-	// ignored, and an existing name is reused rather than duplicated.
+	// platform collection. Names are matched case-insensitively with surrounding
+	// whitespace ignored, and the stored name is trimmed.
+	//
+	// What happens when the name is already taken depends on CollectionIntent,
+	// never on the name itself.
 	//
 	// This field carries no `validate` constraint on purpose. The service owns
 	// collection name rules and answers with the INVALID_COLLECTION_NAME code, so
 	// a constraint here would pre-empt that and collapse both failure cases into a
 	// generic VALIDATION_ERROR.
 	CollectionName string `json:"collection_name" example:"Wishlist"`
+
+	// CollectionIntent says which of the two operations the caller means.
+	//
+	// "existing" selects a destination: a collection of either type that holds
+	// the name is reused, and the move succeeds. "create" asks for a new
+	// collection: a name that is already held by one of the user's collections
+	// is refused with COLLECTION_NAME_ALREADY_EXISTS, and nothing is created or
+	// moved.
+	//
+	// There is no default. The same name means opposite things under the two
+	// intents, so an absent value is an error rather than a guess. Like
+	// CollectionName, this field carries no `validate` constraint because the
+	// service owns the rule and answers with INVALID_COLLECTION_INTENT.
+	CollectionIntent CollectionIntent `json:"collection_intent" enums:"existing,create" example:"create"`
 }

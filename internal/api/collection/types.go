@@ -31,6 +31,58 @@ const (
 	SavedItemsActionMove SavedItemsAction = "move"
 )
 
+// CollectionIntent is what the caller means by the submitted collection name.
+//
+// The name alone cannot answer this. "YouTube" may be a collection the user
+// selected from a list, or a new collection they typed; the two produce the same
+// body and have opposite outcomes when the name is already taken. The caller
+// therefore states which it means, and nothing is defaulted: reusing a
+// destination and refusing a duplicate name are different answers, so guessing
+// on the caller's behalf would produce the wrong one for somebody.
+type CollectionIntent string
+
+const (
+	// CollectionIntentExisting means the name identifies a collection the
+	// caller selected as a destination.
+	//
+	// The endpoint resolves it exactly as it always has: a collection of either
+	// type that holds the name is reused, and if the name no longer resolves the
+	// create-or-get fallback still applies. That fallback is deliberate rather
+	// than an oversight: the request names a destination, it does not ask the
+	// server to prove the destination exists, and a selected collection that
+	// was removed a moment ago should not turn a move into a new failure.
+	//
+	// This intent never produces COLLECTION_NAME_ALREADY_EXISTS. A name held by
+	// an existing collection is a destination, not a conflict.
+	CollectionIntentExisting CollectionIntent = "existing"
+
+	// CollectionIntentCreate means the caller wants a new collection and named
+	// it themselves.
+	//
+	// A name that is already held by one of the user's collections, compared
+	// case-insensitively with surrounding whitespace ignored, is refused with
+	// COLLECTION_NAME_ALREADY_EXISTS. Nothing is moved and nothing is created:
+	// silently filing the item into the collection the user did not choose
+	// would make "create" mean "reuse" without telling them.
+	CollectionIntentCreate CollectionIntent = "create"
+)
+
+// IsValid reports whether the intent is one this feature supports.
+//
+// The service validates through this rather than through a validate tag on the
+// request, for the reason the deletion action is validated the same way: the
+// intent decides which operation runs, so an unknown value has to be answered
+// with its own code rather than collapsed into a generic validation error that
+// says nothing about what the caller got wrong.
+func (i CollectionIntent) IsValid() bool {
+	switch i {
+	case CollectionIntentExisting, CollectionIntentCreate:
+		return true
+	default:
+		return false
+	}
+}
+
 // GetCollectionByIDForUserParams identifies one collection of the authenticated
 // user.
 //

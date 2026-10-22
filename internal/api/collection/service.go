@@ -16,13 +16,16 @@ import (
 
 type Service interface {
 	// PutSavedItem puts one of the user's saved items into the collection with the
-	// given name, creating a user collection if it does not exist yet. An existing
-	// collection of either type is a valid destination.
+	// given name. The intent decides whether that name selects an existing
+	// destination or asks for a new collection: an existing collection of either
+	// type is reused under CollectionIntentExisting, while a name that is already
+	// taken is refused under CollectionIntentCreate.
 	PutSavedItem(
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
 		collectionName string,
+		intent CollectionIntent,
 	) (PutSavedItemResult, error)
 
 	// ListCollections returns one page of the user's collections in the requested
@@ -77,10 +80,19 @@ type PutSavedItemResult struct {
 	SavedItem           SavedItem
 }
 
-// PutSavedItem puts a saved item into the user's collection with the given name,
-// creating a user collection if no collection of that name exists yet. A system
-// collection the user owns is a valid destination and is reused rather than
-// shadowed.
+// PutSavedItem puts a saved item into the user's collection with the given name.
+//
+// The intent is validated first because it decides what the operation means. It
+// is a required statement rather than a default: under CollectionIntentExisting
+// an existing collection is a destination and is reused, while under
+// CollectionIntentCreate the same name is a conflict and is refused. Defaulting
+// either way would answer a question the caller was asked to answer, and would
+// silently create a collection the user did not name or silently reuse one they
+// asked to replace.
+//
+// An existing collection of either type is a valid destination when the intent
+// is CollectionIntentExisting: a system collection such as Unsorted or an
+// automatically created platform collection is reused rather than shadowed.
 //
 // The operation is idempotent. When the saved item is already in the target
 // collection nothing is written, and this is reported through AlreadyInCollection
@@ -94,7 +106,16 @@ func (s *service) PutSavedItem(
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
 	collectionName string,
+	intent CollectionIntent,
 ) (PutSavedItemResult, error) {
+	if !intent.IsValid() {
+		return PutSavedItemResult{}, apperror.BadRequestWith(
+			CodeInvalidCollectionIntent,
+			"collection_intent must be existing or create",
+			nil,
+		)
+	}
+
 	name, err := normalizeCollectionName(collectionName)
 	if err != nil {
 		return PutSavedItemResult{}, err
@@ -106,6 +127,7 @@ func (s *service) PutSavedItem(
 			UserID:      userID,
 			SavedItemID: savedItemID,
 			Name:        name,
+			Intent:      intent,
 		},
 	)
 	if err != nil {

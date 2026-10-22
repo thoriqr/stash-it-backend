@@ -198,9 +198,9 @@ remain independent of organizing.
 `Unsorted` is where saving lands; the user's collections are where items go when
 they are organized. An item may remain in `Unsorted` indefinitely.
 
-- A user names the collection when filing an item into it. If that collection
-  does not exist yet it is created as part of the same action, so a collection is
-  never created holding nothing.
+- A user names the collection when filing an item into it, and states whether the
+  name selects an existing destination or asks for a new collection. Creation is
+  part of the same action, so a collection is never created holding nothing.
 - A collection belongs to exactly one user. Only the owner can file an item into
   it, and only their own items can be moved. This applies to system collections
   too: a system collection is still one user's collection.
@@ -209,9 +209,12 @@ they are organized. An item may remain in `Unsorted` indefinitely.
   producing near-duplicate piles. Surrounding whitespace is not stored.
 - A name already held by one of the user's collections, including a system
   collection such as `Unsorted` or an automatically created platform collection,
-  refers to that collection. Filing an item uses the existing collection instead
-  of creating a duplicate, so a system collection's name is a valid destination
-  rather than a rejected name.
+  refers to that collection when the user is selecting an existing destination.
+  Filing an item then uses that collection instead of creating a duplicate, so a
+  system collection's name is a valid destination rather than a rejected name.
+  When the user is creating a new collection, the same name is refused and nothing
+  is created or moved; the user chooses another name instead of the request
+  silently reusing a collection they did not select.
 - Other collection operations refer to a collection by its ID. Filing a saved item
   is the one name-addressed action: the user names the destination, and the backend
   resolves an existing collection or creates one. Names are for people to read.

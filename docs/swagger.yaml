@@ -1,5 +1,13 @@
 basePath: /
 definitions:
+  collection.CollectionIntent:
+    enum:
+    - existing
+    - create
+    type: string
+    x-enum-varnames:
+    - CollectionIntentExisting
+    - CollectionIntentCreate
   collection.CollectionResponse:
     properties:
       created_at:
@@ -231,14 +239,36 @@ definitions:
     type: object
   collection.PutSavedItemIntoCollectionRequest:
     properties:
+      collection_intent:
+        allOf:
+        - $ref: '#/definitions/collection.CollectionIntent'
+        description: |-
+          CollectionIntent says which of the two operations the caller means.
+
+          "existing" selects a destination: a collection of either type that holds
+          the name is reused, and the move succeeds. "create" asks for a new
+          collection: a name that is already held by one of the user's collections
+          is refused with COLLECTION_NAME_ALREADY_EXISTS, and nothing is created or
+          moved.
+
+          There is no default. The same name means opposite things under the two
+          intents, so an absent value is an error rather than a guess. Like
+          CollectionName, this field carries no `validate` constraint because the
+          service owns the rule and answers with INVALID_COLLECTION_INTENT.
+        enum:
+        - existing
+        - create
+        example: create
       collection_name:
         description: |-
           CollectionName is the display name of the collection to file the saved item
           under. Any existing collection owned by the user is a valid destination,
           including a system collection such as Unsorted or an automatically created
-          platform collection. If no collection with that name exists, a user collection
-          is created. Names are matched case-insensitively with surrounding whitespace
-          ignored, and an existing name is reused rather than duplicated.
+          platform collection. Names are matched case-insensitively with surrounding
+          whitespace ignored, and the stored name is trimmed.
+
+          What happens when the name is already taken depends on CollectionIntent,
+          never on the name itself.
 
           This field carries no `validate` constraint on purpose. The service owns
           collection name rules and answers with the INVALID_COLLECTION_NAME code, so
@@ -3095,14 +3125,16 @@ paths:
       description: |-
         File one of the current user's saved items into one of their collections, identified by display name.
         Any existing collection owned by the user is a valid destination, including system collections such as "Unsorted" and automatically created platform collections such as "YouTube". Collection type does not restrict the destination.
-        If no collection with that name exists, a user collection is created as part of the same action. Collection names are unique per user across both types, so a matching collection is reused rather than duplicated. A user collection is never created empty, so this call always ends with the saved item inside it.
-        Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed. There is no reserved-name error: a name held by a system collection is a destination, not a rejection.
+        collection_intent states which operation the caller means, and it is required. "existing" selects a destination: a collection of either type that holds the name is reused, and if the name no longer resolves a user collection is created, preserving the endpoint's original create-or-get behaviour. "create" asks for a new collection: a name that is already held by one of the user's collections is refused, and nothing is created or moved. Collection names are unique per user across both types, compared case-insensitively with surrounding whitespace ignored, and the stored name is trimmed.
+        The two intents have opposite outcomes for the same taken name, so there is no default and a missing or unknown value is INVALID_COLLECTION_INTENT. Under "existing" a name held by a system collection is a destination, not a rejection; there is no reserved-name error on this endpoint.
         This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
         The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
         Possible error codes:
         - INVALID_COLLECTION_NAME
+        - INVALID_COLLECTION_INTENT
         - BAD_REQUEST
         - SAVED_ITEM_NOT_FOUND
+        - COLLECTION_NAME_ALREADY_EXISTS
         - INVALID_AUTHORIZATION_HEADER
         - INVALID_ACCESS_TOKEN
         - ACCESS_TOKEN_EXPIRED
@@ -3128,7 +3160,7 @@ paths:
           schema:
             $ref: '#/definitions/collection.PutSavedItemIntoCollectionAPIResponse'
         "400":
-          description: Invalid collection name or saved item ID
+          description: Invalid collection name or intent, or saved item ID
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "401":
@@ -3137,6 +3169,10 @@ paths:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "404":
           description: Saved item not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Collection name already exists
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "500":

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
+	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
 	saveditemdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/saved_item/generated"
@@ -1693,7 +1694,13 @@ func TestSavedItem_Delete_ReportsCollectionState(t *testing.T) {
 		// changed by the same path a user would change it.
 		svc := newCollectionService(t)
 
-		_, err = svc.PutSavedItem(ctx, userID, item, "Wishlist")
+		_, err = svc.PutSavedItem(
+			ctx,
+			userID,
+			item,
+			"Wishlist",
+			collection.CollectionIntentExisting,
+		)
 		require.NoError(t, err)
 
 		require.Equal(t, wishlistID, savedItemCollectionID(t, item))

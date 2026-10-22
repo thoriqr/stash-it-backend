@@ -158,6 +158,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(
@@ -191,7 +192,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 				true,
 			),
 		)
@@ -262,7 +263,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Unsorted"}`,
+				`{"collection_name": "Unsorted", "collection_intent": "existing"}`,
 				true,
 			),
 		)
@@ -319,7 +320,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 				true,
 			),
 		)
@@ -377,7 +378,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 				true,
 			),
 		)
@@ -403,6 +404,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(
@@ -433,7 +435,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "  Wishlist  "}`,
+				`{"collection_name": "  Wishlist  ", "collection_intent": "existing"}`,
 				true,
 			),
 		)
@@ -456,7 +458,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 		app := newHandlerTestApp(t, repo)
 
 		resp, err := app.Test(
-			putSavedItemRequest(t, userID, savedItemID, `{"collection_name": "   "}`, true),
+			putSavedItemRequest(t, userID, savedItemID, `{"collection_name": "   ", "collection_intent": "existing"}`, true),
 		)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -475,6 +477,147 @@ func TestHandler_PutSavedItem(t *testing.T) {
 			collection.CodeInvalidCollectionName,
 			body.Error.Code,
 		)
+	})
+
+	t.Run("forwards the create intent to the repository", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		userID := uuid.New()
+		savedItemID := uuid.New()
+
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(
+				gomock.Any(),
+				collection.PutSavedItemIntoUserCollectionParams{
+					UserID:      userID,
+					SavedItemID: savedItemID,
+					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentCreate,
+				},
+			).
+			Return(
+				collection.PutSavedItemIntoUserCollectionResult{
+					Collection: collectiondb.Collection{
+						ID:        uuid.New(),
+						UserID:    userID,
+						Name:      "Wishlist",
+						Type:      "user",
+						CreatedAt: handlerTimestamptz(),
+						UpdatedAt: handlerTimestamptz(),
+					},
+					CollectionCreated: true,
+					SavedItem: collection.SavedItem{
+						ID:        savedItemID,
+						UserID:    userID,
+						CreatedAt: handlerTimestamptz(),
+						UpdatedAt: handlerTimestamptz(),
+					},
+				},
+				nil,
+			).
+			Times(1)
+
+		app := newHandlerTestApp(t, repo)
+
+		resp, err := app.Test(
+			putSavedItemRequest(
+				t,
+				userID,
+				savedItemID,
+				`{"collection_name": "Wishlist", "collection_intent": "create"}`,
+				true,
+			),
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("returns 409 with the name conflict code and no driver detail", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		userID := uuid.New()
+		savedItemID := uuid.New()
+
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
+			Return(
+				collection.PutSavedItemIntoUserCollectionResult{},
+				apperror.ConflictWith(
+					collection.CodeCollectionNameAlreadyExists,
+					"collection name already exists",
+					errors.New(
+						"duplicate key value violates unique constraint "+
+							"\"collections_user_name_unique\"",
+					),
+				),
+			)
+
+		app := newHandlerTestApp(t, repo)
+
+		resp, err := app.Test(
+			putSavedItemRequest(
+				t,
+				userID,
+				savedItemID,
+				`{"collection_name": "Wishlist", "collection_intent": "create"}`,
+				true,
+			),
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+		raw := readBody(t, resp)
+
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(raw), &body))
+		require.Equal(t, collection.CodeCollectionNameAlreadyExists, body.Error.Code)
+
+		// The cause is logged, never returned.
+		require.NotContains(t, raw, "collections_user_name_unique")
+		require.NotContains(t, raw, "duplicate key")
+		require.NotContains(t, raw, "SQLSTATE")
+	})
+
+	t.Run("rejects an absent intent without touching the repository", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		userID := uuid.New()
+		savedItemID := uuid.New()
+
+		// Nothing is defaulted, so the service must answer before the repository is
+		// consulted at all.
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
+			Times(0)
+
+		app := newHandlerTestApp(t, repo)
+
+		resp, err := app.Test(
+			putSavedItemRequest(
+				t,
+				userID,
+				savedItemID,
+				`{"collection_name": "Wishlist"}`,
+				true,
+			),
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		require.Equal(t, collection.CodeInvalidCollectionIntent, body.Error.Code)
 	})
 
 	t.Run("not found responses are identical for unknown and foreign ids", func(t *testing.T) {
@@ -504,7 +647,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 					t,
 					userID,
 					savedItemID,
-					`{"collection_name": "Wishlist"}`,
+					`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 					true,
 				),
 			)
@@ -527,7 +670,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 			t,
 			uuid.New(),
 			uuid.Nil,
-			`{"collection_name": "Wishlist"}`,
+			`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 			true,
 		)
 		req.URL.Path = "/saved-items/not-a-uuid/collection"
@@ -557,7 +700,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				uuid.New(),
 				uuid.New(),
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 				false,
 			),
 		)
@@ -584,7 +727,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 			t,
 			uuid.New(),
 			uuid.New(),
-			`{"collection_name": "Wishlist"}`,
+			`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 			false,
 		)
 		req.Header.Set("Authorization", "Bearer not-a-real-token")
@@ -624,7 +767,7 @@ func TestHandler_PutSavedItem(t *testing.T) {
 				t,
 				userID,
 				savedItemID,
-				`{"collection_name": "Wishlist"}`,
+				`{"collection_name": "Wishlist", "collection_intent": "existing"}`,
 				true,
 			),
 		)

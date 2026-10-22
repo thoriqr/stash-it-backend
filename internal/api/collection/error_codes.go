@@ -5,6 +5,23 @@ const (
 	// after trimming or longer than CollectionNameMaxLength.
 	CodeInvalidCollectionName = "INVALID_COLLECTION_NAME"
 
+	// CodeInvalidCollectionIntent is returned when collection_intent is missing
+	// or is neither 'existing' nor 'create'. Nothing is defaulted: the two
+	// intents have opposite outcomes for a name that is already taken, so a
+	// request that does not say which it means cannot be answered safely.
+	CodeInvalidCollectionIntent = "INVALID_COLLECTION_INTENT"
+
+	// CodeCollectionNameAlreadyExists is returned when the caller asked to
+	// create a new collection and the requested name is already held by one of
+	// the user's collections. Names are compared case-insensitively with
+	// surrounding whitespace ignored, the same comparison
+	// collections_user_name_unique enforces.
+	//
+	// It is deliberately not returned for a request that selects an existing
+	// destination: reuse is a success there, and the saved item is moved into
+	// the collection that holds the name.
+	CodeCollectionNameAlreadyExists = "COLLECTION_NAME_ALREADY_EXISTS"
+
 	// CodeSavedItemNotFound is returned when the saved item does not exist or
 	// belongs to another user. Both cases share this one code and message, so the
 	// operation never discloses whether an id exists.

@@ -23,11 +23,15 @@ func putIntoCollection(
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
 	collectionName string,
+	intent collection.CollectionIntent,
 ) *http.Response {
 	t.Helper()
 
 	body, err := json.Marshal(
-		map[string]string{"collection_name": collectionName},
+		map[string]string{
+			"collection_name":   collectionName,
+			"collection_intent": string(intent),
+		},
 	)
 	require.NoError(t, err)
 
@@ -81,7 +85,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/articles/1",
 		)
 
-		resp := putIntoCollection(t, userID, savedItemID, "Wishlist")
+		resp := putIntoCollection(t, userID, savedItemID, "Wishlist", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var body putCollectionResponse
@@ -137,7 +141,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/second",
 		)
 
-		firstResp := putIntoCollection(t, userID, first, "Wishlist")
+		firstResp := putIntoCollection(t, userID, first, "Wishlist", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, firstResp.StatusCode)
 
 		var firstBody putCollectionResponse
@@ -145,7 +149,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		require.True(t, firstBody.Data.CollectionCreated)
 
 		// Differently cased and padded: same collection per the unique index.
-		secondResp := putIntoCollection(t, userID, second, "  wishLIST ")
+		secondResp := putIntoCollection(t, userID, second, "  wishLIST ", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, secondResp.StatusCode)
 
 		var secondBody putCollectionResponse
@@ -175,12 +179,12 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		require.Equal(
 			t,
 			http.StatusOK,
-			putIntoCollection(t, userID, savedItemID, "Wishlist").StatusCode,
+			putIntoCollection(t, userID, savedItemID, "Wishlist", collection.CollectionIntentExisting).StatusCode,
 		)
 
 		afterFirst := savedItemState(t, savedItemID)
 
-		resp := putIntoCollection(t, userID, savedItemID, "Wishlist")
+		resp := putIntoCollection(t, userID, savedItemID, "Wishlist", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var body putCollectionResponse
@@ -210,7 +214,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/system",
 		)
 
-		resp := putIntoCollection(t, userID, savedItemID, "  youtube ")
+		resp := putIntoCollection(t, userID, savedItemID, "  youtube ", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var body putCollectionResponse
@@ -238,7 +242,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/unsorted",
 		)
 
-		resp := putIntoCollection(t, userID, savedItemID, "  uNsOrTeD ")
+		resp := putIntoCollection(t, userID, savedItemID, "  uNsOrTeD ", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var body putCollectionResponse
@@ -267,7 +271,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/someone-elses",
 		)
 
-		resp := putIntoCollection(t, otherUserID, savedItemID, "Wishlist")
+		resp := putIntoCollection(t, otherUserID, savedItemID, "Wishlist", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 		var body struct {
@@ -298,7 +302,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		)
 
 		bodyFor := func(savedItemID uuid.UUID) string {
-			resp := putIntoCollection(t, otherUserID, savedItemID, "Wishlist")
+			resp := putIntoCollection(t, otherUserID, savedItemID, "Wishlist", collection.CollectionIntentExisting)
 			require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 			raw, err := io.ReadAll(resp.Body)
@@ -324,7 +328,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 			"https://example.com/blank",
 		)
 
-		resp := putIntoCollection(t, userID, savedItemID, "   ")
+		resp := putIntoCollection(t, userID, savedItemID, "   ", collection.CollectionIntentExisting)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 		var body struct {
@@ -342,11 +346,132 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
 	})
 
+	t.Run("creates a new collection with create intent through HTTP", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-api-create-intent@example.com")
+		unsortedID := createUnsorted(t, userID)
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-intent",
+		)
+
+		resp := putIntoCollection(
+			t,
+			userID,
+			savedItemID,
+			"Recipes",
+			collection.CollectionIntentCreate,
+		)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body putCollectionResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+		require.True(t, body.Data.CollectionCreated)
+		require.False(t, body.Data.AlreadyInCollection)
+		require.Equal(t, "Recipes", body.Data.Collection.Name)
+		require.Equal(t, "user", body.Data.Collection.Type)
+		require.Equal(
+			t,
+			mustParseUUID(t, body.Data.Collection.ID),
+			savedItemState(t, savedItemID).CollectionID,
+		)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Recipes"))
+	})
+
+	t.Run("returns 409 when create intent names an existing collection", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-api-create-conflict@example.com")
+		unsortedID := createUnsorted(t, userID)
+		existingID := createTestUserCollection(t, userID, "Wishlist")
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-conflict",
+		)
+
+		before := savedItemState(t, savedItemID)
+
+		// Padded and differently cased: the unique index's comparison, not the
+		// spelling, decides whether the name is taken.
+		resp := putIntoCollection(
+			t,
+			userID,
+			savedItemID,
+			"  wishLIST ",
+			collection.CollectionIntentCreate,
+		)
+		require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+		var body struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		require.Equal(t, collection.CodeCollectionNameAlreadyExists, body.Error.Code)
+
+		// The response must not expose the constraint or the SQL that produced it.
+		require.NotContains(t, body.Error.Message, "collections_user_name_unique")
+		require.NotContains(t, body.Error.Message, "23505")
+		require.NotContains(t, body.Error.Message, "SQLSTATE")
+
+		// Nothing was moved and no duplicate was created.
+		after := savedItemState(t, savedItemID)
+		require.Equal(t, before.CollectionID, after.CollectionID)
+		require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Wishlist"))
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, existingID))
+	})
+
+	t.Run("returns 400 when collection_intent is absent", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		userID := createCollectionUser(t, "collection-api-no-intent@example.com")
+		unsortedID := createUnsorted(t, userID)
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/no-intent",
+		)
+
+		req := httptest.NewRequest(
+			http.MethodPut,
+			"/saved-items/"+savedItemID.String()+"/collection",
+			strings.NewReader(`{"collection_name": "Wishlist"}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+		resp, err := testApp.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		require.Equal(t, collection.CodeInvalidCollectionIntent, body.Error.Code)
+
+		// A missing intent is answered, never guessed into a create or a move.
+		require.Equal(t, unsortedID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(0), countCollectionsNamed(t, userID, "Wishlist"))
+	})
+
 	t.Run("returns 400 for an invalid saved item id", func(t *testing.T) {
 		req := httptest.NewRequest(
 			http.MethodPut,
 			"/saved-items/not-a-uuid/collection",
-			strings.NewReader(`{"collection_name": "Wishlist"}`),
+			strings.NewReader(`{"collection_name": "Wishlist", "collection_intent": "existing"}`),
 		)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(
@@ -374,7 +499,7 @@ func TestCollectionAPI_PutSavedItem(t *testing.T) {
 		req := httptest.NewRequest(
 			http.MethodPut,
 			"/saved-items/"+uuid.New().String()+"/collection",
-			strings.NewReader(`{"collection_name": "Wishlist"}`),
+			strings.NewReader(`{"collection_name": "Wishlist", "collection_intent": "existing"}`),
 		)
 		req.Header.Set("Content-Type", "application/json")
 

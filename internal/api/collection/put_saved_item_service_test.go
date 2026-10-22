@@ -35,6 +35,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(
@@ -60,6 +61,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -95,6 +97,7 @@ func TestService_PutSavedItem(t *testing.T) {
 							UserID:      userID,
 							SavedItemID: savedItemID,
 							Name:        "Wishlist",
+							Intent:      collection.CollectionIntentExisting,
 						},
 					).
 					Return(
@@ -107,6 +110,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					userID,
 					savedItemID,
 					rawName,
+					collection.CollectionIntentExisting,
 				)
 
 				require.NoError(t, err)
@@ -132,6 +136,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        "WiShLiSt",
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(collection.PutSavedItemIntoUserCollectionResult{}, nil)
@@ -141,6 +146,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"WiShLiSt",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -168,6 +174,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -206,6 +213,7 @@ func TestService_PutSavedItem(t *testing.T) {
 						uuid.New(),
 						uuid.New(),
 						rawName,
+						collection.CollectionIntentExisting,
 					)
 
 					require.Error(t, err)
@@ -239,6 +247,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			uuid.New(),
 			uuid.New(),
 			strings.Repeat("a", collection.CollectionNameMaxLength+1),
+			collection.CollectionIntentExisting,
 		)
 
 		require.Error(t, err)
@@ -268,6 +277,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        atLimit,
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(collection.PutSavedItemIntoUserCollectionResult{}, nil)
@@ -277,6 +287,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			atLimit,
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -302,6 +313,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        multibyte,
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			Return(collection.PutSavedItemIntoUserCollectionResult{}, nil)
@@ -311,6 +323,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			multibyte,
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -347,6 +360,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					uuid.New(),
 					uuid.New(),
 					"Wishlist",
+					collection.CollectionIntentExisting,
 				)
 
 				// The service must not wrap or reinterpret what the repository
@@ -391,6 +405,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					uuid.New(),
 					uuid.New(),
 					"Wishlist",
+					collection.CollectionIntentExisting,
 				)
 
 				require.NoError(t, err)
@@ -437,6 +452,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -460,6 +476,7 @@ func TestService_PutSavedItem(t *testing.T) {
 					UserID:      userID,
 					SavedItemID: savedItemID,
 					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentExisting,
 				},
 			).
 			DoAndReturn(
@@ -482,6 +499,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -502,6 +520,7 @@ func TestService_PutSavedItem(t *testing.T) {
 			uuid.New(),
 			uuid.New(),
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
@@ -549,8 +568,92 @@ func TestService_PutSavedItem(t *testing.T) {
 			uuid.New(),
 			uuid.New(),
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 
 		require.NoError(t, err)
+	})
+
+	t.Run("forwards the create intent and does not resolve the name first", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		svc := collection.NewService(repo)
+
+		userID := uuid.New()
+		savedItemID := uuid.New()
+
+		// The service performs no existence check of its own: uniqueness belongs to
+		// collections_user_name_unique, and a Go-level check would be a second
+		// source of truth that could disagree with the index under concurrency.
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(
+				gomock.Any(),
+				collection.PutSavedItemIntoUserCollectionParams{
+					UserID:      userID,
+					SavedItemID: savedItemID,
+					Name:        "Wishlist",
+					Intent:      collection.CollectionIntentCreate,
+				},
+			).
+			Return(collection.PutSavedItemIntoUserCollectionResult{}, nil).
+			Times(1)
+
+		_, err := svc.PutSavedItem(
+			context.Background(),
+			userID,
+			savedItemID,
+			"Wishlist",
+			collection.CollectionIntentCreate,
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects an absent intent before touching the repository", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		svc := collection.NewService(repo)
+
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
+			Times(0)
+
+		_, err := svc.PutSavedItem(
+			context.Background(),
+			uuid.New(),
+			uuid.New(),
+			"Wishlist",
+			"",
+		)
+
+		var appErr *apperror.AppError
+		require.ErrorAs(t, err, &appErr)
+		require.Equal(t, 400, appErr.Status)
+		require.Equal(t, collection.CodeInvalidCollectionIntent, appErr.Code)
+	})
+
+	t.Run("rejects an unknown intent before touching the repository", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		repo := collectionmocks.NewMockRepository(ctrl)
+
+		svc := collection.NewService(repo)
+
+		repo.EXPECT().
+			PutSavedItemIntoUserCollection(gomock.Any(), gomock.Any()).
+			Times(0)
+
+		_, err := svc.PutSavedItem(
+			context.Background(),
+			uuid.New(),
+			uuid.New(),
+			"Wishlist",
+			collection.CollectionIntent("replace"),
+		)
+
+		var appErr *apperror.AppError
+		require.ErrorAs(t, err, &appErr)
+		require.Equal(t, 400, appErr.Status)
+		require.Equal(t, collection.CodeInvalidCollectionIntent, appErr.Code)
 	})
 }

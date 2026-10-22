@@ -24,14 +24,16 @@ func NewHandler(service Service) *Handler {
 // @Summary Put a saved item into a collection
 // @Description File one of the current user's saved items into one of their collections, identified by display name.
 // @Description Any existing collection owned by the user is a valid destination, including system collections such as "Unsorted" and automatically created platform collections such as "YouTube". Collection type does not restrict the destination.
-// @Description If no collection with that name exists, a user collection is created as part of the same action. Collection names are unique per user across both types, so a matching collection is reused rather than duplicated. A user collection is never created empty, so this call always ends with the saved item inside it.
-// @Description Names are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed. There is no reserved-name error: a name held by a system collection is a destination, not a rejection.
+// @Description collection_intent states which operation the caller means, and it is required. "existing" selects a destination: a collection of either type that holds the name is reused, and if the name no longer resolves a user collection is created, preserving the endpoint's original create-or-get behaviour. "create" asks for a new collection: a name that is already held by one of the user's collections is refused, and nothing is created or moved. Collection names are unique per user across both types, compared case-insensitively with surrounding whitespace ignored, and the stored name is trimmed.
+// @Description The two intents have opposite outcomes for the same taken name, so there is no default and a missing or unknown value is INVALID_COLLECTION_INTENT. Under "existing" a name held by a system collection is a destination, not a rejection; there is no reserved-name error on this endpoint.
 // @Description This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
 // @Description The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
 // @Description Possible error codes:
 // @Description - INVALID_COLLECTION_NAME
+// @Description - INVALID_COLLECTION_INTENT
 // @Description - BAD_REQUEST
 // @Description - SAVED_ITEM_NOT_FOUND
+// @Description - COLLECTION_NAME_ALREADY_EXISTS
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
@@ -43,9 +45,10 @@ func NewHandler(service Service) *Handler {
 // @Param id path string true "Saved item ID" example(01a0f359-093b-737a-963a-80f7ca6768ed)
 // @Param request body PutSavedItemIntoCollectionRequest true "Put saved item into collection request"
 // @Success 200 {object} PutSavedItemIntoCollectionAPIResponse
-// @Failure 400 {object} swagger.APIErrorResponse "Invalid collection name or saved item ID"
+// @Failure 400 {object} swagger.APIErrorResponse "Invalid collection name or intent, or saved item ID"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
 // @Failure 404 {object} swagger.APIErrorResponse "Saved item not found"
+// @Failure 409 {object} swagger.APIErrorResponse "Collection name already exists"
 // @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
 // @Router /saved-items/{id}/collection [put]
 func (h *Handler) PutSavedItem(c fiber.Ctx) error {
@@ -76,6 +79,7 @@ func (h *Handler) PutSavedItem(c fiber.Ctx) error {
 		userID,
 		savedItemID,
 		req.CollectionName,
+		req.CollectionIntent,
 	)
 	if err != nil {
 		return err

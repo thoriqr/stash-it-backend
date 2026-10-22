@@ -7,6 +7,44 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-23 — Explicit collection intent and `COLLECTION_NAME_ALREADY_EXISTS`
+
+`PUT /saved-items/:id/collection` now requires `collection_intent`, with values
+`existing` and `create`. The name alone could not express the difference: a tapped
+row and a typed name produced the same body, so the server could not tell reuse from
+"create this".
+
+- `existing` is the old behaviour: any owned collection of either type is reused, and
+  if the name no longer resolves, a user collection is still created. It never
+  returns `COLLECTION_NAME_ALREADY_EXISTS`.
+- `create` asks for a new collection. A name already held by one of the user's
+  collections (case-insensitive, trimmed, across both types) returns **409**
+  `COLLECTION_NAME_ALREADY_EXISTS`. The item does not move and no collection is
+  created.
+- A missing or unknown intent returns **400** `INVALID_COLLECTION_INTENT`. Nothing
+  is defaulted: the two intents have opposite outcomes for a taken name.
+
+The create path uses the existing `CreateUserCollection` query unchanged. Its
+`ON CONFLICT (user_id, lower(btrim(name))) DO NOTHING` reports a taken name as
+`pgx.ErrNoRows`, which `createNewUserCollection` maps to the conflict; SQLSTATE
+`23505` is never read. No migration or baseline change. The worker's reserved-name
+rule is untouched.
+
+**Flutter is not yet updated.** Until it sends `collection_intent`, every move gets
+400; it must also map `COLLECTION_NAME_ALREADY_EXISTS` and retire the stale
+`ApiFailureCollectionNameReserved` mapping. This is a breaking request change, so the
+client must ship with (or before) this backend.
+
+Verification (2026-10-23):
+
+- `swag init -g cmd/api/main.go -parseInternal` — pass; schema adds `collection_intent` and the 409.
+- `gofmt` on the changed Go files — pass.
+- `go build ./...` — pass.
+- `go vet ./...` — pass.
+- `go test ./internal/api/collection/... -count=1` — pass.
+- `go test ./internal/integration -run 'TestCollection_PutSavedItem|TestCollection_PutSavedItemCreateIntent|TestCollection_CreateUserCollectionConflict|TestCollectionAPI_PutSavedItem' -count=1 -v` — pass.
+- `go test ./... -count=1` — pass.
+
 ### 2026-10-22 — Any owned collection is a valid move destination
 
 `PUT /saved-items/:id/collection` now resolves the requested name against every
@@ -968,9 +1006,12 @@ No public-suffix or registrable-domain detection is performed.
 | `GET /collections/:id/saved-items` | done   | 200, owner-scoped, cursor-paginated, requires Bearer |
 | `DELETE /collections/:id`          | done   | 200, owner-scoped, requires Bearer                   |
 
-The endpoint accepts `{"collection_name": "..."}` and files one saved item
-into one of the user's collections, creating a user collection when no collection
-with that name exists.
+The endpoint accepts
+`{"collection_name": "...", "collection_intent": "existing" | "create"}` and
+files one saved item into one of the user's collections. `collection_intent` is
+required. `existing` selects a destination, creating a user collection only when the
+name no longer resolves; `create` asks for a new collection and refuses a name that
+is already taken with 409 `COLLECTION_NAME_ALREADY_EXISTS`.
 
 Important behavior:
 
@@ -981,9 +1022,11 @@ Important behavior:
   destination; its `system_key` remains its stable identity elsewhere.
 - Any existing collection owned by the user is a valid destination, including
   system collections such as `Unsorted` and platform collections such as `YouTube`.
-- Collection names are unique per user across both types. An existing name is
-  resolved to that collection rather than rejected as reserved or duplicated.
+- Collection names are unique per user across both types. Under `existing`, a name
+  is resolved to that collection rather than rejected as reserved or duplicated;
+  under `create`, it is a conflict.
 - Collection names are trimmed and compared case-insensitively.
+- A create-intent conflict moves nothing and creates nothing.
 - Enrichment does not participate in collection movement.
 
 Committed as `1e85c5d feat: add saved item collection flow`.

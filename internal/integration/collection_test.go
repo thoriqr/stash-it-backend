@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
@@ -219,6 +220,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -270,6 +272,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			firstItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 		require.True(t, first.CollectionCreated)
@@ -288,6 +291,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			secondItemID,
 			"  wishLIST  ",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -350,6 +354,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"  youtube  ",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -395,6 +400,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"  uNsOrTeD ",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -418,6 +424,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Unsorted",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -459,6 +466,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			otherUserID,
 			savedItemID,
 			"YouTube",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -494,6 +502,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			otherUserID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.Error(t, err)
 		require.Equal(
@@ -536,6 +545,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 				otherUserID,
 				savedItemID,
 				"Wishlist",
+				collection.CollectionIntentExisting,
 			)
 			require.Error(t, err)
 
@@ -570,6 +580,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			uuid.New(),
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.Error(t, err)
 		require.Equal(
@@ -600,6 +611,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 		require.True(t, first.CollectionCreated)
@@ -612,6 +624,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -648,6 +661,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -659,6 +673,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"WISHLIST",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -721,6 +736,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 				userID,
 				savedItemID,
 				"Wishlist",
+				collection.CollectionIntentExisting,
 			)
 			require.NoError(t, err, status)
 			require.Equal(t, result.Collection.ID, savedItemState(t, savedItemID).CollectionID)
@@ -764,6 +780,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -794,7 +811,13 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			"https://example.com/last-item",
 		)
 
-		result, err := svc.PutSavedItem(ctx, userID, savedItemID, "Wishlist")
+		result, err := svc.PutSavedItem(
+			ctx,
+			userID,
+			savedItemID,
+			"Wishlist",
+			collection.CollectionIntentExisting,
+		)
 		require.NoError(t, err)
 
 		// The only item left Unsorted, which is allowed: Unsorted may be empty but
@@ -844,6 +867,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -852,6 +876,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Recipes",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -902,6 +927,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userA,
 			itemA,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -910,6 +936,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userB,
 			itemB,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -969,6 +996,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 					userID,
 					savedItemIDs[index],
 					"Wishlist",
+					collection.CollectionIntentExisting,
 				)
 
 				results[index] = outcome{
@@ -1047,6 +1075,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"   ",
+			collection.CollectionIntentExisting,
 		)
 		require.Error(t, err)
 		require.Equal(
@@ -1082,6 +1111,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"\t  Wishlist \n",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -1122,6 +1152,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			atLimitID,
 			atLimit,
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 		require.Equal(t, atLimit, result.Collection.Name)
@@ -1131,6 +1162,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			overLimitID,
 			atLimit+"a",
+			collection.CollectionIntentExisting,
 		)
 		require.Error(t, err)
 		require.Equal(
@@ -1160,6 +1192,7 @@ func TestCollection_PutSavedItem(t *testing.T) {
 			userID,
 			savedItemID,
 			"Wishlist",
+			collection.CollectionIntentExisting,
 		)
 		require.NoError(t, err)
 
@@ -1171,6 +1204,429 @@ func TestCollection_PutSavedItem(t *testing.T) {
 		require.False(t, result.SavedItem.Platform.Valid)
 		require.False(t, result.SavedItem.Title.Valid)
 		require.False(t, result.SavedItem.CreatedAt.Time.IsZero())
+	})
+}
+
+// A create-intent request is the only one that can refuse a name. Selecting an
+// existing destination reuses it; asking to create one refuses a name that is
+// already taken and leaves both the saved item and the collection set untouched.
+func TestCollection_PutSavedItemCreateIntent(t *testing.T) {
+	t.Run("creates a genuinely new collection and moves the item", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		userID := createCollectionUser(t, "collection-create-new@example.com")
+		unsortedID := createUnsorted(t, userID)
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-new",
+		)
+
+		result, err := svc.PutSavedItem(
+			context.Background(),
+			userID,
+			savedItemID,
+			"  Recipes  ",
+			collection.CollectionIntentCreate,
+		)
+		require.NoError(t, err)
+
+		require.True(t, result.CollectionCreated)
+		require.False(t, result.AlreadyInCollection)
+		require.Equal(t, "Recipes", result.Collection.Name)
+		require.Equal(t, string(collection.CollectionTypeUser), result.Collection.Type)
+		require.False(t, result.Collection.SystemKey.Valid)
+		require.Equal(t, result.Collection.ID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Recipes"))
+	})
+
+	t.Run("refuses a name held by an existing user collection", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		ctx := context.Background()
+		db := collectiondbtest.New(testPool)
+
+		userID := createCollectionUser(t, "collection-create-conflict@example.com")
+		unsortedID := createUnsorted(t, userID)
+		existingID := createTestUserCollection(t, userID, "Wishlist")
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-conflict",
+		)
+
+		beforeItem := savedItemState(t, savedItemID)
+
+		beforeCollection, err := db.GetCollectionState(ctx, existingID)
+		require.NoError(t, err)
+
+		_, err = svc.PutSavedItem(
+			ctx,
+			userID,
+			savedItemID,
+			"Wishlist",
+			collection.CollectionIntentCreate,
+		)
+		require.Error(t, err)
+
+		appErr := apperror.FromError(err)
+		require.Equal(t, collection.CodeCollectionNameAlreadyExists, appErr.Code)
+		require.Equal(t, 409, appErr.Status)
+
+		// The rejection is not a move. The item is where it was, and the
+		// collection that holds the name was not rewritten.
+		afterItem := savedItemState(t, savedItemID)
+		require.Equal(t, beforeItem.CollectionID, afterItem.CollectionID)
+		require.Equal(t, beforeItem.UpdatedAt, afterItem.UpdatedAt)
+
+		afterCollection, err := db.GetCollectionState(ctx, existingID)
+		require.NoError(t, err)
+		require.Equal(t, beforeCollection.Name, afterCollection.Name)
+		require.Equal(t, beforeCollection.UpdatedAt, afterCollection.UpdatedAt)
+
+		// No duplicate was created, and the item did not slip into the existing
+		// collection either.
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Wishlist"))
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, existingID))
+	})
+
+	t.Run("refuses case-insensitive and trimmed duplicates", func(t *testing.T) {
+		cases := []struct {
+			label       string
+			requestName string
+			email       string
+		}{
+			{
+				label:       "a differently cased name",
+				requestName: "wishlist",
+				email:       "collection-create-case@example.com",
+			},
+			{
+				label:       "a padded and differently cased name",
+				requestName: "  wishLIST  ",
+				email:       "collection-create-trimmed@example.com",
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.label, func(t *testing.T) {
+				truncateCollectionData(t)
+
+				svc := newCollectionService(t)
+
+				userID := createCollectionUser(t, tc.email)
+				unsortedID := createUnsorted(t, userID)
+				existingID := createTestUserCollection(t, userID, "Wishlist")
+				savedItemID := createSavedItemInCollection(
+					t,
+					userID,
+					unsortedID,
+					"https://example.com/create-variant",
+				)
+
+				before := savedItemState(t, savedItemID)
+
+				_, err := svc.PutSavedItem(
+					context.Background(),
+					userID,
+					savedItemID,
+					tc.requestName,
+					collection.CollectionIntentCreate,
+				)
+				require.Error(t, err)
+				require.Equal(
+					t,
+					collection.CodeCollectionNameAlreadyExists,
+					apperror.FromError(err).Code,
+				)
+
+				require.Equal(t, before.CollectionID, savedItemState(t, savedItemID).CollectionID)
+				require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Wishlist"))
+				require.Equal(t, int64(0), countSavedItemsInCollection(t, existingID))
+			})
+		}
+	})
+
+	t.Run("refuses the name of an existing system collection", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		userID := createCollectionUser(t, "collection-create-system@example.com")
+		unsortedID := createUnsorted(t, userID)
+		youtubeID := createTestSystemCollection(t, userID, "YouTube", "youtube")
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-system",
+		)
+
+		before := savedItemState(t, savedItemID)
+
+		// The unique index spans both collection types, so this name is taken even
+		// though no user collection holds it. Creating one would need a duplicate
+		// name, which the index does not allow.
+		_, err := svc.PutSavedItem(
+			context.Background(),
+			userID,
+			savedItemID,
+			"  youtube  ",
+			collection.CollectionIntentCreate,
+		)
+		require.Error(t, err)
+		require.Equal(
+			t,
+			collection.CodeCollectionNameAlreadyExists,
+			apperror.FromError(err).Code,
+		)
+
+		require.Equal(t, before.CollectionID, savedItemState(t, savedItemID).CollectionID)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "YouTube"))
+		require.Equal(t, int64(0), countSavedItemsInCollection(t, youtubeID))
+	})
+
+	t.Run("the same name is still available to another user", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		ownerID := createCollectionUser(t, "collection-create-scope-owner@example.com")
+		otherID := createCollectionUser(t, "collection-create-scope-other@example.com")
+
+		createUnsorted(t, ownerID)
+		otherUnsortedID := createUnsorted(t, otherID)
+		ownerCollectionID := createTestUserCollection(t, ownerID, "Wishlist")
+
+		otherItemID := createSavedItemInCollection(
+			t,
+			otherID,
+			otherUnsortedID,
+			"https://example.com/create-scope",
+		)
+
+		result, err := svc.PutSavedItem(
+			context.Background(),
+			otherID,
+			otherItemID,
+			"Wishlist",
+			collection.CollectionIntentCreate,
+		)
+		require.NoError(t, err)
+
+		require.True(t, result.CollectionCreated)
+		require.Equal(t, otherID, result.Collection.UserID)
+		require.NotEqual(t, ownerCollectionID, result.Collection.ID)
+		require.Equal(t, result.Collection.ID, savedItemState(t, otherItemID).CollectionID)
+
+		require.Equal(t, int64(1), countCollectionsNamed(t, ownerID, "Wishlist"))
+		require.Equal(t, int64(1), countCollectionsNamed(t, otherID, "Wishlist"))
+	})
+
+	t.Run("concurrent creates for one new name produce one success and one conflict", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		ctx := context.Background()
+
+		userID := createCollectionUser(t, "collection-create-concurrent@example.com")
+		unsortedID := createUnsorted(t, userID)
+
+		const callers = 2
+
+		savedItemIDs := make([]uuid.UUID, 0, callers)
+
+		for i := range callers {
+			savedItemIDs = append(
+				savedItemIDs,
+				createSavedItemInCollection(
+					t,
+					userID,
+					unsortedID,
+					"https://example.com/create-concurrent/"+string(rune('a'+i)),
+				),
+			)
+		}
+
+		type outcome struct {
+			collectionID uuid.UUID
+			created      bool
+			err          error
+		}
+
+		results := make([]outcome, callers)
+
+		var wg sync.WaitGroup
+
+		for i := range callers {
+			wg.Add(1)
+
+			go func(index int) {
+				defer wg.Done()
+
+				result, err := svc.PutSavedItem(
+					ctx,
+					userID,
+					savedItemIDs[index],
+					"Wishlist",
+					collection.CollectionIntentCreate,
+				)
+
+				results[index] = outcome{
+					collectionID: result.Collection.ID,
+					created:      result.CollectionCreated,
+					err:          err,
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// There is no pre-check to race: the unique index decides, and the caller
+		// that loses gets the conflict rather than a silent reuse.
+		successes := 0
+		conflicts := 0
+
+		for i, res := range results {
+			if res.err == nil {
+				successes++
+				require.True(t, res.created)
+				require.Equal(
+					t,
+					res.collectionID,
+					savedItemState(t, savedItemIDs[i]).CollectionID,
+				)
+
+				continue
+			}
+
+			conflicts++
+			require.Equal(
+				t,
+				collection.CodeCollectionNameAlreadyExists,
+				apperror.FromError(res.err).Code,
+			)
+
+			// The rejected request did not touch its item.
+			require.Equal(
+				t,
+				unsortedID,
+				savedItemState(t, savedItemIDs[i]).CollectionID,
+			)
+		}
+
+		require.Equal(t, 1, successes)
+		require.Equal(t, 1, conflicts)
+		require.Equal(t, int64(1), countCollectionsNamed(t, userID, "Wishlist"))
+	})
+
+	t.Run("an unrelated database failure is internal, not a name conflict", func(t *testing.T) {
+		truncateCollectionData(t)
+
+		svc := newCollectionService(t)
+
+		userID := createCollectionUser(t, "collection-create-internal@example.com")
+		unsortedID := createUnsorted(t, userID)
+		savedItemID := createSavedItemInCollection(
+			t,
+			userID,
+			unsortedID,
+			"https://example.com/create-internal",
+		)
+
+		before := savedItemState(t, savedItemID)
+
+		// A NUL byte is accepted by the name rules but refused by PostgreSQL. It
+		// reaches createNewUserCollection and fails for a reason that is not the
+		// suppressed unique-name conflict, so it must stay an internal error rather
+		// than be reported as COLLECTION_NAME_ALREADY_EXISTS.
+		_, err := svc.PutSavedItem(
+			context.Background(),
+			userID,
+			savedItemID,
+			"Bad\x00Name",
+			collection.CollectionIntentCreate,
+		)
+		require.Error(t, err)
+
+		appErr := apperror.FromError(err)
+		require.Equal(t, apperror.CodeInternal, appErr.Code)
+		require.Equal(t, 500, appErr.Status)
+		require.NotEqual(t, collection.CodeCollectionNameAlreadyExists, appErr.Code)
+
+		require.Equal(t, before.CollectionID, savedItemState(t, savedItemID).CollectionID)
+	})
+}
+
+// A duplicate collection name is not a database error in the create-or-get flow.
+// CreateUserCollection's ON CONFLICT (user_id, lower(btrim(name))) DO NOTHING
+// reports no row for an existing name, and the separate lookup then resolves the
+// collection that holds it. The lookup has no type filter, so a system collection
+// such as YouTube is a destination rather than a name to reject.
+func TestCollection_CreateUserCollectionConflict(t *testing.T) {
+	truncateCollectionData(t)
+
+	ctx := context.Background()
+	queries := collectiondb.New(testPool)
+
+	userID := createCollectionUser(t, "collection-conflict@example.com")
+
+	t.Run("resolves an existing user collection", func(t *testing.T) {
+		existingID := createTestUserCollection(t, userID, "Wishlist")
+
+		_, err := queries.CreateUserCollection(
+			ctx,
+			collectiondb.CreateUserCollectionParams{
+				UserID: userID,
+				Name:   "  wishLIST ",
+			},
+		)
+		require.ErrorIs(t, err, pgx.ErrNoRows)
+
+		found, err := queries.GetUserCollectionByNameForUser(
+			ctx,
+			collectiondb.GetUserCollectionByNameForUserParams{
+				UserID: userID,
+				Name:   "  wishLIST ",
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, existingID, found.ID)
+		require.Equal(t, string(collection.CollectionTypeUser), found.Type)
+		require.False(t, found.SystemKey.Valid)
+	})
+
+	t.Run("resolves an existing system collection", func(t *testing.T) {
+		existingID := createTestSystemCollection(t, userID, "YouTube", "youtube")
+
+		_, err := queries.CreateUserCollection(
+			ctx,
+			collectiondb.CreateUserCollectionParams{
+				UserID: userID,
+				Name:   " youtube ",
+			},
+		)
+		require.ErrorIs(t, err, pgx.ErrNoRows)
+
+		found, err := queries.GetUserCollectionByNameForUser(
+			ctx,
+			collectiondb.GetUserCollectionByNameForUserParams{
+				UserID: userID,
+				Name:   " youtube ",
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, existingID, found.ID)
+		require.Equal(t, string(collection.CollectionTypeSystem), found.Type)
+		require.True(t, found.SystemKey.Valid)
+		require.Equal(t, "youtube", found.SystemKey.String)
 	})
 }
 

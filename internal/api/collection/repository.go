@@ -18,6 +18,11 @@ type PutSavedItemIntoUserCollectionParams struct {
 	UserID      uuid.UUID
 	SavedItemID uuid.UUID
 	Name        string
+
+	// Intent is always one of the supported values. The service rejects anything
+	// else before building these params, so the repository never has to decide
+	// what an absent intent would have meant.
+	Intent CollectionIntent
 }
 
 // PutSavedItemIntoUserCollectionResult reports what the operation did.
@@ -91,8 +96,16 @@ func NewRepository(
 }
 
 // PutSavedItemIntoUserCollection puts one of the user's saved items into the
-// collection with the given name, creating a user collection if it does not exist.
-// An existing collection of either type is a valid destination.
+// collection with the given name. The intent decides how that name is resolved:
+//
+//   - CollectionIntentExisting treats it as a destination. An existing collection
+//     of either type is reused; when the name no longer resolves, the endpoint's
+//     long-standing create-or-get fallback creates a user collection, so a
+//     selection that was made a moment earlier cannot turn a move into a failure.
+//   - CollectionIntentCreate treats it as a new collection. A name that is
+//     already held by one of the user's collections is refused with
+//     COLLECTION_NAME_ALREADY_EXISTS, and neither the collection nor the item is
+//     touched.
 //
 // The whole operation is a single transaction owned here, because its two halves
 // cannot be split across repository calls: a committed collection with no item in
@@ -146,25 +159,33 @@ func (r *repository) PutSavedItemIntoUserCollection(
 		return PutSavedItemIntoUserCollectionResult{}, apperror.Internal(err)
 	}
 
-	// 2. Create a user collection, or resolve the existing one.
+	// 2. Resolve the destination. The intent decides whether a name that is
+	// already taken is the destination or a conflict.
 	//
-	// This is two statements on purpose. CreateUserCollection returns no row when
-	// the name is already taken for this user, and the separate lookup that follows
-	// takes a fresh snapshot under READ COMMITTED, so it also sees a collection
-	// that a concurrent transaction committed while this one waited on the
-	// conflicting index entry. The lookup has no type filter because a system
-	// collection is a valid destination; an insert conflict is therefore resolved,
-	// not reported as a reserved name. A data-modifying CTE cannot be used instead:
-	// it shares one snapshot with its own SELECT and would return nothing in that
-	// case. A single ON CONFLICT DO UPDATE would return the row too, but collections
-	// has an updated_at trigger, so it would write to a pre-existing collection
-	// purely to read it.
-	collection, collectionCreated, err := createOrGetUserCollection(
-		ctx,
-		qtx,
-		params.UserID,
-		params.Name,
+	// The move below is reached only when the collection was resolved or
+	// created. A create request whose name is taken returns here, so the saved
+	// item is still in its original collection and the transaction rolls back
+	// without having written anything.
+	var (
+		collection        collectiondb.Collection
+		collectionCreated bool
 	)
+
+	if params.Intent == CollectionIntentCreate {
+		collection, collectionCreated, err = createNewUserCollection(
+			ctx,
+			qtx,
+			params.UserID,
+			params.Name,
+		)
+	} else {
+		collection, collectionCreated, err = createOrGetUserCollection(
+			ctx,
+			qtx,
+			params.UserID,
+			params.Name,
+		)
+	}
 	if err != nil {
 		return PutSavedItemIntoUserCollectionResult{}, err
 	}
@@ -1144,11 +1165,22 @@ const savedItemsCollectionFKConstraint = "saved_items_collection_id_fkey"
 // createOrGetUserCollection resolves the user's collection with the given name,
 // creating it as a user collection when no collection of that name exists yet.
 //
-// The lookup deliberately matches either collection type. collections_user_name_unique
-// is scoped to the user across both types, so a system collection such as Unsorted
-// or a platform collection such as YouTube already occupies the name; that makes it
-// the destination rather than a name to reject. Only when the insert succeeds is a
-// new user collection created.
+// This is the CollectionIntentExisting path, so an existing name is a destination
+// rather than a conflict. The lookup deliberately matches either collection type:
+// collections_user_name_unique is scoped to the user across both types, so a system
+// collection such as Unsorted or a platform collection such as YouTube already
+// occupies the name, and that makes it the destination. Only when the insert
+// succeeds is a new user collection created.
+//
+// This is two statements on purpose. CreateUserCollection returns no row when the
+// name is already taken for this user, and the separate lookup that follows takes a
+// fresh snapshot under READ COMMITTED, so it also sees a collection that a
+// concurrent transaction committed while this one waited on the conflicting index
+// entry. The lookup has no type filter because a system collection is a valid
+// destination. A data-modifying CTE cannot be used instead: it shares one snapshot
+// with its own SELECT and would return nothing in that case. A single
+// ON CONFLICT DO UPDATE would return the row too, but collections has an updated_at
+// trigger, so it would write to a pre-existing collection purely to read it.
 //
 // A no-row lookup after a unique-name conflict means the conflicting row disappeared
 // between the two statements. That is a concurrent mutation, not a reserved-name
@@ -1198,6 +1230,57 @@ func createOrGetUserCollection(
 	}
 
 	return existing, false, nil
+}
+
+// createNewUserCollection creates the user collection the caller named, refusing a
+// name that is already held by one of their collections.
+//
+// The conflict is read from CreateUserCollection itself rather than from a
+// preceding existence check. That statement carries
+// ON CONFLICT (user_id, lower(btrim(name))) DO NOTHING, so a taken name comes back
+// as pgx.ErrNoRows instead of a 23505. It is still the unique index deciding, and it
+// is the only constraint this INSERT can conflict with: the row writes
+// system_key NULL and collections_system_key_unique is partial on non-null keys, so
+// collections_user_name_unique is the one that can suppress the row.
+//
+// The alternative, a SELECT followed by an INSERT, would race: two concurrent
+// requests for the same new name would both see nothing, one would lose at the
+// index, and the loser would have to be told something anyway. Doing it in one
+// statement means the loser is the one that gets the conflict, which is the answer
+// the caller asked for. A plain INSERT without ON CONFLICT would surface 23505 and
+// require mapping the constraint by name; suppressing the conflict and treating the
+// missing row as the conflict keeps the same meaning without reading driver detail
+// into the API.
+func createNewUserCollection(
+	ctx context.Context,
+	qtx *collectiondb.Queries,
+	userID uuid.UUID,
+	name string,
+) (
+	collectiondb.Collection,
+	bool,
+	error,
+) {
+	created, err := qtx.CreateUserCollection(
+		ctx,
+		collectiondb.CreateUserCollectionParams{
+			UserID: userID,
+			Name:   name,
+		},
+	)
+	if err == nil {
+		return created, true, nil
+	}
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return collectiondb.Collection{}, false, apperror.ConflictWith(
+			CodeCollectionNameAlreadyExists,
+			"collection name already exists",
+			err,
+		)
+	}
+
+	return collectiondb.Collection{}, false, apperror.Internal(err)
 }
 
 // internalError turns a driver error into an application error this repository

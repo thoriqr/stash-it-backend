@@ -2050,7 +2050,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "File one of the current user's saved items into one of their collections, identified by display name.\nAny existing collection owned by the user is a valid destination, including system collections such as \"Unsorted\" and automatically created platform collections such as \"YouTube\". Collection type does not restrict the destination.\nIf no collection with that name exists, a user collection is created as part of the same action. Collection names are unique per user across both types, so a matching collection is reused rather than duplicated. A user collection is never created empty, so this call always ends with the saved item inside it.\nNames are matched case-insensitively and with surrounding whitespace ignored, and the stored name is trimmed. There is no reserved-name error: a name held by a system collection is a destination, not a rejection.\nThis operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nPossible error codes:\n- INVALID_COLLECTION_NAME\n- BAD_REQUEST\n- SAVED_ITEM_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "File one of the current user's saved items into one of their collections, identified by display name.\nAny existing collection owned by the user is a valid destination, including system collections such as \"Unsorted\" and automatically created platform collections such as \"YouTube\". Collection type does not restrict the destination.\ncollection_intent states which operation the caller means, and it is required. \"existing\" selects a destination: a collection of either type that holds the name is reused, and if the name no longer resolves a user collection is created, preserving the endpoint's original create-or-get behaviour. \"create\" asks for a new collection: a name that is already held by one of the user's collections is refused, and nothing is created or moved. Collection names are unique per user across both types, compared case-insensitively with surrounding whitespace ignored, and the stored name is trimmed.\nThe two intents have opposite outcomes for the same taken name, so there is no default and a missing or unknown value is INVALID_COLLECTION_INTENT. Under \"existing\" a name held by a system collection is a destination, not a rejection; there is no reserved-name error on this endpoint.\nThis operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.\nThe saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.\nPossible error codes:\n- INVALID_COLLECTION_NAME\n- INVALID_COLLECTION_INTENT\n- BAD_REQUEST\n- SAVED_ITEM_NOT_FOUND\n- COLLECTION_NAME_ALREADY_EXISTS\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -2088,7 +2088,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid collection name or saved item ID",
+                        "description": "Invalid collection name or intent, or saved item ID",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -2101,6 +2101,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Saved item not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Collection name already exists",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -2421,6 +2427,17 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "collection.CollectionIntent": {
+            "type": "string",
+            "enum": [
+                "existing",
+                "create"
+            ],
+            "x-enum-varnames": [
+                "CollectionIntentExisting",
+                "CollectionIntentCreate"
+            ]
+        },
         "collection.CollectionResponse": {
             "type": "object",
             "properties": {
@@ -2689,8 +2706,21 @@ const docTemplate = `{
         "collection.PutSavedItemIntoCollectionRequest": {
             "type": "object",
             "properties": {
+                "collection_intent": {
+                    "description": "CollectionIntent says which of the two operations the caller means.\n\n\"existing\" selects a destination: a collection of either type that holds\nthe name is reused, and the move succeeds. \"create\" asks for a new\ncollection: a name that is already held by one of the user's collections\nis refused with COLLECTION_NAME_ALREADY_EXISTS, and nothing is created or\nmoved.\n\nThere is no default. The same name means opposite things under the two\nintents, so an absent value is an error rather than a guess. Like\nCollectionName, this field carries no ` + "`" + `validate` + "`" + ` constraint because the\nservice owns the rule and answers with INVALID_COLLECTION_INTENT.",
+                    "enum": [
+                        "existing",
+                        "create"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/collection.CollectionIntent"
+                        }
+                    ],
+                    "example": "create"
+                },
                 "collection_name": {
-                    "description": "CollectionName is the display name of the collection to file the saved item\nunder. Any existing collection owned by the user is a valid destination,\nincluding a system collection such as Unsorted or an automatically created\nplatform collection. If no collection with that name exists, a user collection\nis created. Names are matched case-insensitively with surrounding whitespace\nignored, and an existing name is reused rather than duplicated.\n\nThis field carries no ` + "`" + `validate` + "`" + ` constraint on purpose. The service owns\ncollection name rules and answers with the INVALID_COLLECTION_NAME code, so\na constraint here would pre-empt that and collapse both failure cases into a\ngeneric VALIDATION_ERROR.",
+                    "description": "CollectionName is the display name of the collection to file the saved item\nunder. Any existing collection owned by the user is a valid destination,\nincluding a system collection such as Unsorted or an automatically created\nplatform collection. Names are matched case-insensitively with surrounding\nwhitespace ignored, and the stored name is trimmed.\n\nWhat happens when the name is already taken depends on CollectionIntent,\nnever on the name itself.\n\nThis field carries no ` + "`" + `validate` + "`" + ` constraint on purpose. The service owns\ncollection name rules and answers with the INVALID_COLLECTION_NAME code, so\na constraint here would pre-empt that and collapse both failure cases into a\ngeneric VALIDATION_ERROR.",
                     "type": "string",
                     "example": "Wishlist"
                 }

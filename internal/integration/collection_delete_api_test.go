@@ -1279,6 +1279,7 @@ func TestCollectionAPI_DeleteCollection_Concurrency(t *testing.T) {
 				userID,
 				moving,
 				"Wishlist",
+				collection.CollectionIntentExisting,
 			)
 		}()
 
