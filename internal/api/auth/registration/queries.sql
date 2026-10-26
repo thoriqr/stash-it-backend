@@ -186,7 +186,8 @@ SELECT
     pr.registration_type,
     pr.expires_at,
     pr.expires_at <= NOW() AS is_expired,
-    vr.id AS verification_id
+    vr.id AS verification_id,
+    vr.status AS verification_status
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
@@ -195,6 +196,23 @@ JOIN verification_requests vr
 WHERE pr.email = sqlc.arg(email)
   AND pr.status = 'pending'
 FOR UPDATE;
+
+-- name: HasUsableRegistrationContinuation :one
+-- Whether the registration still holds the only capability that can finish it.
+--
+-- This is deliberately a plain read with no locking clause. Finalization consumes
+-- the continuation and then completes the registration, so a locking read here
+-- would acquire the two rows in the opposite order to that transaction and could
+-- deadlock with it. An uncommitted consumption is invisible to this statement,
+-- and a committed one means the parent registration is no longer pending, which
+-- the caller has already excluded by locking that row.
+SELECT EXISTS (
+    SELECT 1
+    FROM registration_continuations rc
+    WHERE rc.pending_registration_id = sqlc.arg(pending_registration_id)
+      AND rc.consumed_at IS NULL
+      AND rc.expires_at > NOW()
+) AS has_usable_continuation;
 
 -- name: ForceExpireSocialPendingRegistration :execrows
 UPDATE pending_registrations

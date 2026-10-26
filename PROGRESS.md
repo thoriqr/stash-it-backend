@@ -7,6 +7,230 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-27 — Manual registration recovery signal
+
+`POST /auth/register/manual` now reports `verification_status` alongside
+`verification_id`. The field is additive; the status code, message, error codes
+and existing `verification_id` are unchanged.
+
+- `pending` — request a PIN as before. This covers a new registration, a reused
+  pending verification, an expired-registration replacement, and the
+  manual-supersedes-social path.
+- `verified` — PIN verification has already completed and a usable registration
+  continuation exists. The client must **not** request or submit another PIN. It
+  uses the raw continuation token it stored after `/verify` with
+  `GET /auth/register/continuation`, then runs the existing finalization flow.
+  The token is never returned by this endpoint; only its hash exists server-side.
+- No usable continuation (expired, consumed, or absent) still takes the existing
+  recovery: the old registration is expired (not completed) and a replacement
+  registration plus pending verification request is created; the response is
+  `pending` with a new `verification_id`.
+
+This is the signal the 2026-10-26 entry's manual recovery was missing. That
+entry's live-continuation reuse was correct but indistinguishable from a pending
+registration, so a client that followed the normal PIN flow still saw
+`VERIFICATION_NOT_PENDING`. This entry supersedes its “No API contract change and
+no Swagger change” sentence: the response is additively extended and Swagger is
+regenerated.
+
+Threading: `createManualRegistrationOnce` populates the existing
+`VerificationRequest.Status` on both manual reuse returns;
+`RegisterManualResult.VerificationStatus` carries it through the service; the
+handler maps it into `RegisterResponse.VerificationStatus`. The A/B/C decision
+logic, the `HasUsableRegistrationContinuation` plain read, the partial unique
+index handling and the single retry are unchanged.
+
+Social registration is **unchanged**. `RegisterResponse` is manual-only;
+`LoginGoogleResponse`/`mapLoginGoogleResponse` are separate, and
+`CreateSocialRegistration` still returns only a verification id. Identity
+mismatch is still refused first, and the existing social recovery is unchanged.
+A regression assertion in `TestLoginGoogle_RegistrationRequired` checks the
+Google response does not contain `verification_status`.
+
+Files changed:
+
+- `internal/api/auth/registration/repository.go` — populate
+  `VerificationRequest.Status` on manual reuse.
+- `internal/api/auth/registration/service.go` — add/map
+  `RegisterManualResult.VerificationStatus`.
+- `internal/api/auth/registration/handler.go` — map the field; document both
+  states in Swagger.
+- `internal/api/auth/registration/response.go` — add `verification_status`
+  (`pending`/`verified`). Gofmt also normalized the file's pre-existing spaces
+  to tabs and added its missing trailing newline.
+- `docs/docs.go`, `docs/swagger.json`, `docs/swagger.yaml` — regenerated;
+  additive.
+- `internal/api/auth/registration/register_manual_service_test.go` — mapping and
+  verified-reuse unit coverage.
+- `internal/integration/auth_register_test.go` — first-registration,
+  pending-reuse and expired-reconciliation response assertions.
+- `internal/integration/auth_registration_lifecycle_recovery_test.go` — verified
+  reuse, no-token-leak, replacement and concurrency response assertions; new
+  concurrent verified-reuse case.
+- `internal/integration/auth_login_social_test.go` — social response isolation
+  assertion.
+- `PROGRESS.md` — this entry.
+
+No migration, baseline change, `sqlc generate`, password-reset change, social
+behavior change, rate-limit change or error-code change.
+
+Verification (2026-10-27), all run on Windows with Docker and the MSYS2/MinGW
+toolchain (`CGO_ENABLED=1`, `CC=C:\msys64\ucrt64\bin\gcc.exe`):
+
+```sh
+swag init -g cmd/api/main.go -parseInternal       # exit 0; additive schema diff
+gofmt -w <changed .go files>                      # clean
+go build ./...                                    # exit 0
+go vet ./...                                      # exit 0
+go test ./... -count=1 -timeout 30m               # exit 0, every package
+go test ./internal/integration -run 'TestRegisterManual_|TestCreateSocialRegistration_|TestFinalizeSocialRegistration_|TestPasswordReset_|TestLoginGoogle_' -count=1 -v -timeout 20m
+                                                  # exit 0, all cases
+go test -race ./internal/api/auth/registration ./internal/api/auth/login -count=1 -timeout 20m
+                                                  # exit 0
+go test -race ./internal/integration -run 'TestRegisterManual_|TestCreateSocialRegistration_|TestFinalizeSocialRegistration_' -count=1 -timeout 30m
+                                                  # exit 0
+go test -race ./internal/integration -run 'TestRegisterManual_Concurrent|TestCreateSocialRegistration_Concurrent|TestFinalizeSocialRegistration_Concurrent' -count=5 -timeout 30m
+                                                  # exit 0, no flakes
+```
+
+`swag init` prints a non-fatal warning about `go list` on the repository root
+(no Go files there); it still generated `docs.go`, `swagger.json` and
+`swagger.yaml`, and the new schema was verified to contain
+`registration.RegisterResponse.verification_status` with enum
+`pending`/`verified`.
+
+Remaining limitation: a client that sees `verified` but no longer has the raw
+continuation token cannot recover immediately. The backend stores only the hash
+and cannot reissue it, and an unauthenticated force-restart would let anyone
+cancel a live registration. The supported recovery is to retry `RegisterManual`
+after the 15-minute continuation lifetime, when it returns `pending` with a new
+verification id. Immediate recovery needs a separate proof-of-mailbox-control
+design. Client implementation (persisting the token immediately after
+verification, branching on `verification_status`) is out of scope for this
+change.
+
+Nothing was committed.
+
+### 2026-10-26 — Registration lifecycle recovery after verification
+
+A manual or social registration whose verification request had reached `verified`
+while the registration was still `pending` was reused instead of recovered. The
+reuse branch consulted only the registration's own status, so it returned a
+verification id that every verification route refuses with **409
+`VERIFICATION_NOT_PENDING`**. The only remaining capability was the continuation,
+which is stored hashed and is never reissued. Manual and social registrations live
+seven days, so the address stayed unusable for the rest of that window.
+
+#### Manual registration
+
+Reuse now requires `verification_status = 'pending'`. When the verification is
+terminal, `HasUsableRegistrationContinuation` decides:
+
+| Continuation | Behaviour |
+| --- | --- |
+| unconsumed and unexpired | registration and verification id retained; the continuation keeps working |
+| consumed, expired, or absent | old registration expired, replacement registration and verification request created |
+
+The liveness check is a **plain read** (`SELECT EXISTS`), not a locking join.
+Finalization consumes the continuation and then completes the registration, so
+locking both in the lookup could invert the lock order and deadlock with it. An
+uncommitted consumption is invisible to the read, and a committed one means the
+parent is no longer pending, which the lookup has already excluded by locking the
+registration row.
+
+A live continuation is **not** replaced because `/auth/register/manual` is
+unauthenticated and has no rate limiter: replacing it would let anyone who knows
+an address cancel a registration another person is about to finalize. A caller
+who lost the token waits out the 15-minute continuation lifetime, then
+re-registers and receives a fresh flow. Expired-registration reconciliation is
+unchanged and still uses `ExpirePendingRegistration`, whose `expires_at <= NOW()`
+guard remains.
+
+#### Social registration
+
+The same verification-status check now applies. The identity-mismatch refusal
+still runs **first**, so a different Google identity is still refused while the
+registration is unexpired. For the same verified Google identity, a terminal
+verification request force-expires the old registration and creates a replacement
+with a fresh verification request and pending social identity. No
+continuation-liveness gate is needed there: the caller is the Google-verified
+identity that opened the registration (`email_verified` is enforced by
+`login/google_token_verifier.go`), so replacement is the owner restarting, not a
+third party cancelling. The existing `ExpirePendingRegistration` path still
+handles registrations past their deadline.
+
+#### Password reset — unchanged, and now pinned
+
+Password reset is **deliberately not changed**. Its reset and its continuation
+expire together at fifteen minutes, so the only window in which the request route
+returns a terminal verification id is a window with a live continuation.
+Replacing it there would let an unauthenticated caller cancel the owner's reset,
+and once the reset expires the existing `ExpirePendingPasswordReset` path already
+recovers. Returning an error instead would break the non-enumerating `201 + id`
+response.
+
+`TestPasswordReset_VerifiedWithLiveContinuationIsReusedAndRemainsUsable` protects
+that decision against a future blanket application of the registration fix. It
+verifies a reset, requests the reset again, asserts the **same** verification id
+and a single pending reset/verification pair, then asserts the original
+continuation still validates and still finalizes.
+
+#### Files changed
+
+- `internal/api/auth/registration/queries.sql` — `GetPendingRegistrationByEmailForUpdate`
+  now selects `vr.status AS verification_status`; new
+  `HasUsableRegistrationContinuation`.
+- `internal/api/auth/registration/generated/queries.sql.go` — regenerated with
+  `sqlc generate`; not hand-edited.
+- `internal/api/auth/registration/repository.go` — `createManualRegistrationOnce`
+  and `createSocialRegistrationOnce`.
+- `internal/integration/auth_registration_lifecycle_recovery_test.go` — new manual
+  and social lifecycle/recovery cases.
+- `internal/integration/auth_password_reset_lifecycle_reuse_test.go` — the
+  password-reset no-change regression.
+
+No migration, no baseline change, no API contract change and no Swagger change.
+
+#### Verification
+
+All commands below were executed on Windows with Docker and the MSYS2/MinGW
+toolchain (`CGO_ENABLED=1`, `CC=C:\msys64\ucrt64\bin\gcc.exe`).
+
+```sh
+sqlc generate                                     # exit 0
+gofmt -w <changed .go files>                      # clean
+go build ./...                                    # exit 0
+go vet ./...                                      # exit 0
+go test ./... -count=1 -timeout 30m               # exit 0, every package
+go test ./internal/integration -run 'TestRegisterManual_|TestCreateSocialRegistration_|TestFinalizeSocialRegistration_|TestPasswordReset_' -count=1 -v -timeout 20m
+                                                  # exit 0
+go test -race ./internal/api/auth/registration ./internal/api/auth/password_reset ./internal/api/auth/login -count=1 -timeout 20m
+                                                  # exit 0
+go test -race ./internal/integration -run 'TestRegisterManual_|TestCreateSocialRegistration_|TestFinalizeSocialRegistration_|TestPasswordReset_' -count=1 -timeout 30m
+                                                  # exit 0
+go test -race ./internal/integration -run '<the five new concurrency cases>' -count=5 -timeout 30m
+                                                  # exit 0, no flakes
+```
+
+The new integration cases assert persisted state, not just status codes: the
+continuation liveness gate (a live continuation survives a re-register and still
+finalizes), the expired-continuation replacement, the old verification id being
+unable to issue a PIN after replacement, concurrent replacement converging on one
+new verification id, and concurrent finalization/replacement leaving no orphaned
+user, credential, collection, identity or session.
+
+#### Remaining limitation
+
+An immediate retry after abandoning a **manual** flow with a live continuation
+still receives the verified verification id and the client sees
+`VERIFICATION_NOT_PENDING` until the 15-minute continuation expires. That is the
+deliberate cost of not letting an unauthenticated request cancel a live
+capability. Password reset keeps its existing bounded window for the same reason.
+The Flutter client should treat that code on a just-returned registration id as
+"already verified; use the stored continuation or retry shortly."
+
+Nothing was committed.
+
 ### 2026-10-23 — Explicit collection intent and `COLLECTION_NAME_ALREADY_EXISTS`
 
 `PUT /saved-items/:id/collection` now requires `collection_intent`, with values
@@ -774,6 +998,27 @@ the reference document's "What they bound" section.
 migration was created or applied**, and nothing was committed.
 
 ## Current Status
+
+### Registration lifecycle
+
+Pending manual and social registrations are no longer reused after their
+verification request has completed. Manual registrations are replaced only once
+no usable continuation remains; social registrations are replaced for the same
+verified Google identity, after the identity-mismatch refusal. Password reset is
+unchanged: its reset and continuation expire together, so the existing
+expiry-based recovery is the safe one and the request path must keep returning
+the existing verification id while the continuation is live.
+
+`POST /auth/register/manual` now reports `verification_status`. `pending` means
+request a PIN; `verified` means the PIN step is already complete and the client
+must use its stored continuation token instead. The backend cannot reissue a lost
+token: retrying after the 15-minute continuation lifetime replaces the
+registration and returns `pending`.
+
+Remaining client-side work: decode `verification_status` (default to `pending`
+when talking to an older backend), persist the raw continuation token immediately
+after `/verify`, and branch to the continuation/finalization flow on `verified`.
+No backend work remains for these fixes.
 
 ### Saved Item lifecycle — end to end
 

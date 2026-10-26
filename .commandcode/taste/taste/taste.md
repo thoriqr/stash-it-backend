@@ -1,0 +1,19 @@
+# Taste
+- Wants `AGENTS.md` read first and the repository's existing conventions/documentation followed before touching code. Confidence: 0.8
+- Prefers work staged: an investigation/recommendation (report) first, with implementation only after explicit go-ahead; often explicitly says to stop after findings and not modify code. Confidence: 0.85
+- Values smallest correct fix over broader refactors; scoped changes with out-of-scope findings merely reported, not applied. Confidence: 0.75
+- Avoids changing the public API contract or introducing schema migrations unless the current design makes it unavoidable; prefers working within existing constraints, indexes, transactions and locking patterns. Confidence: 0.75
+- Wants recommendations grounded in the current implementation, with a traced exact code path and an explicit "verified vs. assumed" separation. Confidence: 0.75
+- Appreciates structured reports with numbered sections (root cause, recovery condition, concurrency, exact files/queries to change, regression tests). Confidence: 0.6
+- When similar defects appear in several sibling flows, expects each flow evaluated independently with its own recommendation; explicitly rejects assuming one fix can be copied unchanged elsewhere or collapsed into a shared abstraction. Confidence: 0.75
+- Wants the underlying root cause separated from shared symptoms, and decisions justified on correctness, security, API compatibility and regression risk rather than implementation convenience. Confidence: 0.7
+- Prefers settling remaining backend correctness/security questions before dependent client work (e.g. Flutter integration) begins, rather than revisiting them later. Confidence: 0.6
+- Once the approach is approved, expects the work actually implemented and validated in the same pass — explicitly rejects stopping at another investigation-only recommendation. Confidence: 0.85
+- Expects validation genuinely executed, not assumed: formatting, code generation, build, vet, unit tests, integration tests and race tests. Environment capabilities (Docker/DB, a working `-race` toolchain) must be used rather than pre-emptively declaring the platform unsupported, and any command that could not be completed must be reported with its actual reason. Confidence: 0.85
+- Generated code (e.g. sqlc output) must be regenerated with the repository's configured workflow, never hand-edited. Confidence: 0.8
+- Wants progress/changelog documentation (`PROGRESS.md`) updated as part of the task, not as an optional follow-up: read the existing structure first, preserve its organization and conventions, record only verified outcomes, and leave unrelated entries alone. Confidence: 0.8
+- Integration tests should assert persisted database state and externally observable API behavior rather than only internal implementation details, reusing existing test helpers and patterns. Confidence: 0.8
+- When a flow is deliberately left unchanged, expects a regression test that pins the current safe behavior so a future blanket application of a fix elsewhere cannot silently break it. Confidence: 0.7
+- Before designing or changing anything, expects the actual current working tree inspected, including uncommitted in-progress changes, rather than assuming the code matches the last described state; existing uncommitted work must be built on and preserved, not overwritten or reverted. Confidence: 0.6
+- Leaves changes uncommitted for review: expects the work left in the working tree, with no commit made unless explicitly asked. Confidence: 0.65
+- Completion reports should be numbered and cover: root cause per flow, files/queries changed, behavior implemented, tests added and what they protect, commands executed with actual results, and remaining limitations/risks. Confidence: 0.7

@@ -198,15 +198,67 @@ func (r *repository) createManualRegistrationOnce(
 					nil,
 				)
 			}
-		} else if !existing.IsExpired {
+		} else if existing.IsExpired {
+			rowsAffected, err := qtx.ExpirePendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateManualRegistrationResult{}, apperror.Internal(err)
+			}
+
+			if rowsAffected != 1 {
+				return CreateManualRegistrationResult{}, apperror.ConflictWith(
+					"",
+					"registration is no longer pending",
+					nil,
+				)
+			}
+		} else if existing.VerificationStatus == string(VerificationRequestPending) {
+			// The status travels with the id so the caller can tell whether a
+			// PIN is still required. The raw continuation token is never
+			// returned by this path.
 			return CreateManualRegistrationResult{
 				VerificationRequest: registrationdb.VerificationRequest{
-					ID: existing.VerificationID,
+					ID:     existing.VerificationID,
+					Status: existing.VerificationStatus,
 				},
 				AlreadyPending: true,
 			}, nil
 		} else {
-			rowsAffected, err := qtx.ExpirePendingRegistration(
+			// The verification request is terminal, so the verification id alone
+			// cannot advance this registration any more. Whether it may be
+			// replaced depends on the continuation, which is the only remaining
+			// capability and is stored hashed rather than handed back.
+			hasUsableContinuation, err := qtx.HasUsableRegistrationContinuation(
+				ctx,
+				existing.ID,
+			)
+			if err != nil {
+				return CreateManualRegistrationResult{}, apperror.Internal(err)
+			}
+
+			// A live continuation is the only way this registration can still be
+			// finished. Replacing it here would let anyone who can post an
+			// address cancel it — this route is unauthenticated — so the
+			// registration is retained and the caller keeps the verification id
+			// it was opened with. The verified status is what tells the client
+			// to use its stored continuation instead of requesting a PIN.
+			if hasUsableContinuation {
+				return CreateManualRegistrationResult{
+					VerificationRequest: registrationdb.VerificationRequest{
+						ID:     existing.VerificationID,
+						Status: existing.VerificationStatus,
+					},
+					AlreadyPending: true,
+				}, nil
+			}
+
+			// The verification is terminal and its continuation can no longer be
+			// used, so the registration holds no capability. Expiring it frees
+			// the address: the expired row leaves the partial unique index, and
+			// the replacement below can take it.
+			rowsAffected, err := qtx.ForceExpireManualPendingRegistration(
 				ctx,
 				existing.ID,
 			)
@@ -385,7 +437,8 @@ func (r *repository) createSocialRegistrationOnce(
 				)
 			}
 
-			if !existing.IsExpired {
+			if !existing.IsExpired &&
+				existing.VerificationStatus == string(VerificationRequestPending) {
 				return CreateSocialRegistrationResult{
 					VerificationRequest: registrationdb.VerificationRequest{
 						ID: existing.VerificationID,
@@ -400,20 +453,46 @@ func (r *repository) createSocialRegistrationOnce(
 			// passage of time had not already granted. The original row is left
 			// expired and its pending social identity is left attached to it and
 			// never reused, so this is a replacement and not a transfer.
-			rowsAffected, err := qtx.ExpirePendingRegistration(
-				ctx,
-				existing.ID,
-			)
-			if err != nil {
-				return CreateSocialRegistrationResult{}, apperror.Internal(err)
-			}
-
-			if rowsAffected != 1 {
-				return CreateSocialRegistrationResult{}, apperror.ConflictWith(
-					"",
-					"registration is no longer pending",
-					nil,
+			if existing.IsExpired {
+				rowsAffected, err := qtx.ExpirePendingRegistration(
+					ctx,
+					existing.ID,
 				)
+				if err != nil {
+					return CreateSocialRegistrationResult{}, apperror.Internal(err)
+				}
+
+				if rowsAffected != 1 {
+					return CreateSocialRegistrationResult{}, apperror.ConflictWith(
+						"",
+						"registration is no longer pending",
+						nil,
+					)
+				}
+			} else {
+				// The registration is still inside its deadline but its
+				// verification request is terminal, so the verification id alone
+				// cannot advance it any more. The identity-mismatch refusal above
+				// has already run, so the caller here is the same verified
+				// provider identity that opened the registration; replacing it
+				// is that identity choosing to restart, not another caller
+				// cancelling it. Force the expiry because the row has not reached
+				// its deadline.
+				rowsAffected, err := qtx.ForceExpireSocialPendingRegistration(
+					ctx,
+					existing.ID,
+				)
+				if err != nil {
+					return CreateSocialRegistrationResult{}, apperror.Internal(err)
+				}
+
+				if rowsAffected != 1 {
+					return CreateSocialRegistrationResult{}, apperror.ConflictWith(
+						"",
+						"registration is no longer pending",
+						nil,
+					)
+				}
 			}
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -471,7 +550,6 @@ func (r *repository) createSocialRegistrationOnce(
 		VerificationRequest: verificationRequest,
 	}, nil
 }
-
 
 type IssueVerificationCodeParams struct {
 	VerificationID uuid.UUID
@@ -541,7 +619,6 @@ func (r *repository) GetVerification(
 
 	return verification, nil
 }
-
 
 func (r *repository) GetActiveVerificationCode(
 	ctx context.Context,

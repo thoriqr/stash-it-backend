@@ -40,13 +40,19 @@ func TestRegisterManual_Success(t *testing.T) {
 
 	var body struct {
 		Data struct {
-			VerificationID uuid.UUID `json:"verification_id"`
+			VerificationID     uuid.UUID `json:"verification_id"`
+			VerificationStatus string    `json:"verification_status"`
 		} `json:"data"`
 	}
 
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	require.NotEqual(t, uuid.Nil, body.Data.VerificationID)
+	require.Equal(
+		t,
+		string(registration.VerificationRequestPending),
+		body.Data.VerificationStatus,
+	)
 
 	state, err := db.GetRegistrationState(ctx, email)
 	require.NoError(t, err)
@@ -90,12 +96,18 @@ func TestRegisterManual_AlreadyPending(t *testing.T) {
 
 	var firstBody struct {
 		Data struct {
-			VerificationID uuid.UUID `json:"verification_id"`
+			VerificationID     uuid.UUID `json:"verification_id"`
+			VerificationStatus string    `json:"verification_status"`
 		} `json:"data"`
 	}
 
 	require.NoError(t, json.NewDecoder(firstResp.Body).Decode(&firstBody))
 	require.NotEqual(t, uuid.Nil, firstBody.Data.VerificationID)
+	require.Equal(
+		t,
+		string(registration.VerificationRequestPending),
+		firstBody.Data.VerificationStatus,
+	)
 
 	secondReq := httptest.NewRequest(
 		http.MethodPost,
@@ -110,13 +122,19 @@ func TestRegisterManual_AlreadyPending(t *testing.T) {
 
 	var secondBody struct {
 		Data struct {
-			VerificationID uuid.UUID `json:"verification_id"`
+			VerificationID     uuid.UUID `json:"verification_id"`
+			VerificationStatus string    `json:"verification_status"`
 		} `json:"data"`
 	}
 
 	require.NoError(t, json.NewDecoder(secondResp.Body).Decode(&secondBody))
 
 	require.Equal(t, firstBody.Data.VerificationID, secondBody.Data.VerificationID)
+	require.Equal(
+		t,
+		string(registration.VerificationRequestPending),
+		secondBody.Data.VerificationStatus,
+	)
 }
 
 func TestRegisterManual_AlreadyCompleted(t *testing.T) {
@@ -1143,11 +1161,17 @@ func TestRegisterManual_ExpiredPendingIsReconciled(t *testing.T) {
 
 	var body struct {
 		Data struct {
-			VerificationID uuid.UUID `json:"verification_id"`
+			VerificationID     uuid.UUID `json:"verification_id"`
+			VerificationStatus string    `json:"verification_status"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.NotEqual(t, oldVerificationID, body.Data.VerificationID)
+	require.Equal(
+		t,
+		string(registration.VerificationRequestPending),
+		body.Data.VerificationStatus,
+	)
 
 	history, err := db.GetRegistrationHistory(ctx, email)
 	require.NoError(t, err)

@@ -99,6 +99,14 @@ func NewService(
 
 type RegisterManualResult struct {
 	VerificationID uuid.UUID
+
+	// VerificationStatus is the state of the verification request the returned
+	// id names. "verified" means PIN verification is already complete and a
+	// usable registration continuation exists: the caller must use the token it
+	// stored after verification and must not request another PIN. The raw token
+	// is never returned by this endpoint.
+	VerificationStatus VerificationRequestStatus
+
 	AlreadyPending bool
 }
 
@@ -161,8 +169,9 @@ func (s *service) RegisterManual(
 	}
 
 	return RegisterManualResult{
-		VerificationID: result.VerificationRequest.ID,
-		AlreadyPending: result.AlreadyPending,
+		VerificationID:     result.VerificationRequest.ID,
+		VerificationStatus: VerificationRequestStatus(result.VerificationRequest.Status),
+		AlreadyPending:     result.AlreadyPending,
 	}, nil
 }
 

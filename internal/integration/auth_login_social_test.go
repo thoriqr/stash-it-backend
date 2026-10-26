@@ -183,6 +183,9 @@ func TestLoginGoogle_RegistrationRequired(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
+	rawBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
 	var body struct {
 		Data struct {
 			Outcome        login.LoginOutcome `json:"outcome"`
@@ -190,7 +193,14 @@ func TestLoginGoogle_RegistrationRequired(t *testing.T) {
 		} `json:"data"`
 	}
 
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.NoError(t, json.Unmarshal(rawBody, &body))
+
+	require.NotContains(
+		t,
+		string(rawBody),
+		"verification_status",
+		"the manual registration recovery field must not leak into the Google response",
+	)
 
 	require.Equal(
 		t,

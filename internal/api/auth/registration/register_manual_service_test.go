@@ -70,7 +70,8 @@ func TestService_RegisterManual(t *testing.T) {
 
 			return registration.CreateManualRegistrationResult{
 				VerificationRequest: registrationdb.VerificationRequest{
-					ID: verificationID,
+					ID:     verificationID,
+					Status: string(registration.VerificationRequestPending),
 				},
 			}, nil
 		})
@@ -88,6 +89,14 @@ func TestService_RegisterManual(t *testing.T) {
 			"expected verification ID %s, got %s",
 			verificationID,
 			result.VerificationID,
+		)
+	}
+
+	if result.VerificationStatus != registration.VerificationRequestPending {
+		t.Errorf(
+			"expected verification status %q, got %q",
+			registration.VerificationRequestPending,
+			result.VerificationStatus,
 		)
 	}
 
@@ -122,7 +131,8 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 		Return(
 			registration.CreateManualRegistrationResult{
 				VerificationRequest: registrationdb.VerificationRequest{
-					ID: verificationID,
+					ID:     verificationID,
+					Status: string(registration.VerificationRequestPending),
 				},
 				AlreadyPending: true,
 			},
@@ -142,6 +152,77 @@ func TestService_RegisterManual_AlreadyPending(t *testing.T) {
 			"expected verification ID %s, got %s",
 			verificationID,
 			result.VerificationID,
+		)
+	}
+
+	if result.VerificationStatus != registration.VerificationRequestPending {
+		t.Errorf(
+			"expected verification status %q, got %q",
+			registration.VerificationRequestPending,
+			result.VerificationStatus,
+		)
+	}
+
+	if !result.AlreadyPending {
+		t.Error("expected AlreadyPending to be true")
+	}
+}
+
+func TestService_RegisterManual_VerifiedWithUsableContinuation(t *testing.T) {
+	test := newTestService(t)
+
+	ctx := context.Background()
+	verificationID := uuid.New()
+
+	test.repository.
+		EXPECT().
+		GetCompletedRegistrationByEmail(
+			ctx,
+			"test@example.com",
+		).
+		Return(
+			uuid.Nil,
+			nil,
+		)
+
+	test.repository.
+		EXPECT().
+		CreateManualRegistration(
+			ctx,
+			gomock.Any(),
+		).
+		Return(
+			registration.CreateManualRegistrationResult{
+				VerificationRequest: registrationdb.VerificationRequest{
+					ID:     verificationID,
+					Status: string(registration.VerificationRequestVerified),
+				},
+				AlreadyPending: true,
+			},
+			nil,
+		)
+
+	result, err := test.registrationService.RegisterManual(
+		ctx,
+		"test@example.com",
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if result.VerificationID != verificationID {
+		t.Errorf(
+			"expected verification ID %s, got %s",
+			verificationID,
+			result.VerificationID,
+		)
+	}
+
+	if result.VerificationStatus != registration.VerificationRequestVerified {
+		t.Errorf(
+			"expected verification status %q, got %q",
+			registration.VerificationRequestVerified,
+			result.VerificationStatus,
 		)
 	}
 
@@ -254,7 +335,8 @@ func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.
 		Return(
 			registration.CreateManualRegistrationResult{
 				VerificationRequest: registrationdb.VerificationRequest{
-					ID: verificationID,
+					ID:     verificationID,
+					Status: string(registration.VerificationRequestPending),
 				},
 				AlreadyPending: false,
 			},
@@ -274,6 +356,14 @@ func TestService_RegisterManual_ExpiredPendingCreatesNewRegistration(t *testing.
 			"expected verification ID %s, got %s",
 			verificationID,
 			result.VerificationID,
+		)
+	}
+
+	if result.VerificationStatus != registration.VerificationRequestPending {
+		t.Errorf(
+			"expected verification status %q, got %q",
+			registration.VerificationRequestPending,
+			result.VerificationStatus,
 		)
 	}
 

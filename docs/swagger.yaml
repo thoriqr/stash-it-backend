@@ -772,6 +772,12 @@ definitions:
       verification_id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
+      verification_status:
+        enum:
+        - pending
+        - verified
+        example: pending
+        type: string
     type: object
   registration.ResendVerificationAPIResponse:
     properties:
@@ -2288,6 +2294,11 @@ paths:
       - application/json
       description: |-
         Start a manual registration flow using an email address.
+        `verification_status` reports the state of the returned verification id.
+        `pending` means a PIN must be requested. `verified` means PIN verification has
+        already completed and a usable registration continuation exists: do not request
+        another PIN, use the continuation token the client stored after verification with
+        GET /auth/register/continuation. The raw continuation token is never returned here.
         Possible error codes:
         - VALIDATION_ERROR
         - REGISTRATION_ALREADY_COMPLETED

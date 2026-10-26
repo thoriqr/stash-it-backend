@@ -593,7 +593,8 @@ SELECT
     pr.registration_type,
     pr.expires_at,
     pr.expires_at <= NOW() AS is_expired,
-    vr.id AS verification_id
+    vr.id AS verification_id,
+    vr.status AS verification_status
 FROM pending_registrations pr
 JOIN verification_requests vr
     ON vr.subject_type = 'pending_registration'
@@ -605,11 +606,12 @@ FOR UPDATE
 `
 
 type GetPendingRegistrationByEmailForUpdateRow struct {
-	ID               uuid.UUID
-	RegistrationType string
-	ExpiresAt        pgtype.Timestamptz
-	IsExpired        bool
-	VerificationID   uuid.UUID
+	ID                 uuid.UUID
+	RegistrationType   string
+	ExpiresAt          pgtype.Timestamptz
+	IsExpired          bool
+	VerificationID     uuid.UUID
+	VerificationStatus string
 }
 
 func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, email string) (GetPendingRegistrationByEmailForUpdateRow, error) {
@@ -621,6 +623,7 @@ func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, em
 		&i.ExpiresAt,
 		&i.IsExpired,
 		&i.VerificationID,
+		&i.VerificationStatus,
 	)
 	return i, err
 }
@@ -764,6 +767,31 @@ func (q *Queries) GetVerification(ctx context.Context, id uuid.UUID) (GetVerific
 		&i.RegistrationExpiresAt,
 	)
 	return i, err
+}
+
+const hasUsableRegistrationContinuation = `-- name: HasUsableRegistrationContinuation :one
+SELECT EXISTS (
+    SELECT 1
+    FROM registration_continuations rc
+    WHERE rc.pending_registration_id = $1
+      AND rc.consumed_at IS NULL
+      AND rc.expires_at > NOW()
+) AS has_usable_continuation
+`
+
+// Whether the registration still holds the only capability that can finish it.
+//
+// This is deliberately a plain read with no locking clause. Finalization consumes
+// the continuation and then completes the registration, so a locking read here
+// would acquire the two rows in the opposite order to that transaction and could
+// deadlock with it. An uncommitted consumption is invisible to this statement,
+// and a committed one means the parent registration is no longer pending, which
+// the caller has already excluded by locking that row.
+func (q *Queries) HasUsableRegistrationContinuation(ctx context.Context, pendingRegistrationID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasUsableRegistrationContinuation, pendingRegistrationID)
+	var has_usable_continuation bool
+	err := row.Scan(&has_usable_continuation)
+	return has_usable_continuation, err
 }
 
 const incrementVerificationCodeAttempts = `-- name: IncrementVerificationCodeAttempts :one

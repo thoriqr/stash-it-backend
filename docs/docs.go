@@ -1091,7 +1091,7 @@ const docTemplate = `{
         },
         "/auth/register/manual": {
             "post": {
-                "description": "Start a manual registration flow using an email address.\nPossible error codes:\n- VALIDATION_ERROR\n- REGISTRATION_ALREADY_COMPLETED\n- REGISTRATION_ALREADY_EXISTS\n- INTERNAL_SERVER_ERROR",
+                "description": "Start a manual registration flow using an email address.\n` + "`" + `verification_status` + "`" + ` reports the state of the returned verification id.\n` + "`" + `pending` + "`" + ` means a PIN must be requested. ` + "`" + `verified` + "`" + ` means PIN verification has\nalready completed and a usable registration continuation exists: do not request\nanother PIN, use the continuation token the client stored after verification with\nGET /auth/register/continuation. The raw continuation token is never returned here.\nPossible error codes:\n- VALIDATION_ERROR\n- REGISTRATION_ALREADY_COMPLETED\n- REGISTRATION_ALREADY_EXISTS\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -3422,6 +3422,14 @@ const docTemplate = `{
                 "verification_id": {
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
+                },
+                "verification_status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "verified"
+                    ],
+                    "example": "pending"
                 }
             }
         },
