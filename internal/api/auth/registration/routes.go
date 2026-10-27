@@ -48,6 +48,15 @@ func Routes(
 		},
 	)
 
+	// Recovery initiation starts the same PIN flow as the two issuance routes
+	// and spends the same per-client-address budget. It sends no message
+	// itself, so the per-address email budget is charged when /pin is called.
+	router.Post(
+		"/register/recovery/manual",
+		pinIPLimit,
+		h.InitiateManualRecovery,
+	)
+
 	router.Post(
 		"/register/verification/:verification_id/pin",
 		pinIPLimit,

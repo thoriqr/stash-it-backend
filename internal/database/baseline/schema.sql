@@ -319,7 +319,8 @@ CREATE TABLE verification_requests (
         CHECK (
             purpose IN (
                 'registration',
-                'password_reset'
+                'password_reset',
+                'registration_recovery'
             )
         ),
 

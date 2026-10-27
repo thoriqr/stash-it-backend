@@ -1141,6 +1141,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/register/recovery/manual": {
+            "post": {
+                "description": "Start a recovery verification for a manual registration whose normal registration verification has\ncompleted (` + "`" + `verified` + "`" + `) and whose continuation is no longer usable.\nThe existing registration is not expired or replaced until the recovery PIN is verified.\nThe response reports ` + "`" + `verification_status: pending` + "`" + `; request a PIN and verify it through the existing registration verification routes.\nPossible error codes:\n- VALIDATION_ERROR\n- REGISTRATION_ALREADY_PENDING: the registration's normal verification has not reached ` + "`" + `verified` + "`" + `; continue the normal registration flow instead, which returns the existing verification id\n- REGISTRATION_NOT_PENDING\n- REGISTRATION_ALREADY_COMPLETED\n- REGISTRATION_EXPIRED\n- INVALID_REGISTRATION_TYPE\n- IP_RATE_LIMIT_EXCEEDED\n- IP_RATE_LIMIT_UNAVAILABLE\n- CLIENT_IP_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Start manual registration recovery",
+                "parameters": [
+                    {
+                        "description": "Registration recovery request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/registration.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/registration.RegisterAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Registration cannot be recovered",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests from this client address; Retry-After reports when to try again",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting or client address resolution is unavailable, so no recovery was started",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/register/verification/{verification_id}": {
             "get": {
                 "description": "Get the current status of a registration verification request.\nPossible error codes:\n- BAD_REQUEST\n- RESOURCE_NOT_FOUND\n- CONFLICT\n- INTERNAL_SERVER_ERROR",

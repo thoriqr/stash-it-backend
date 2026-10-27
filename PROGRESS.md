@@ -7,6 +7,128 @@ This is a handoff, not a diary. Keep it accurate and short.
 
 ## Latest change
 
+### 2026-10-27 — Manual registration recovery eligibility tightened
+
+`POST /auth/register/recovery/manual` now starts recovery only for a manual
+registration that has passed every eligibility check. It previously returned
+`201` with the registration's normal verification id while that verification was
+still `pending`, which reported a recovery that had not happened and handed the
+caller an id belonging to the normal flow.
+
+The registration, its type, its deadline and its normal verification status are
+re-read and re-checked inside `InitiateManualRecovery` from the row locked by
+`GetPendingRegistrationByEmailForUpdate`, so all of them are the database state
+at the moment of the decision rather than the request or a value read earlier.
+The completed-registration pre-check runs before the transaction and only refines
+the refusal; the locked lookup is what actually excludes a completed, expired or
+replaced registration.
+
+| Condition                                                  | Result                                              |
+| ---------------------------------------------------------- | --------------------------------------------------- |
+| no completed registration and no pending row               | **409** `REGISTRATION_NOT_PENDING`                  |
+| a completed registration for the address                   | **409** `REGISTRATION_ALREADY_COMPLETED`            |
+| registration is not manual                                 | **409** `INVALID_REGISTRATION_TYPE`                 |
+| registration has expired                                   | **409** `REGISTRATION_EXPIRED`                      |
+| normal verification has not reached `verified`             | **409** `REGISTRATION_ALREADY_PENDING`              |
+| all of the above pass                                      | **201**, reuse the open recovery request or create one |
+
+- **`REGISTRATION_ALREADY_PENDING` is an existing constant, not a new code.** It
+  was declared but never emitted; this endpoint is its first user. It is the
+  accurate code for the condition — the registration *is* pending, which is why
+  recovery cannot start — where `REGISTRATION_NOT_PENDING` would say the
+  opposite. No other error mapping changed.
+- **`verification_requests_status_check` permits only `pending` and `verified`,
+  so "not verified" has exactly one reachable value.** The guard is still
+  written as `!= verified`, so a future status cannot silently become eligible.
+  An integration test asserts the schema domain rather than pretending a third
+  fixture exists.
+- **Nothing is created or reused before every check passes.** The open-recovery
+  lookup runs after the checks, so an ineligible registration cannot have its
+  still-open recovery request handed back.
+- **No state is touched on refusal.** Initiation still does not expire or replace
+  the registration and does not invalidate its continuation; replacement happens
+  only in `CompleteRecoveryVerification` after the recovery PIN verifies.
+- **Concurrency is unchanged.** The registration row lock still serializes
+  initiations, normal registration and finalization; the eligibility re-checks
+  run under that lock; concurrent initiations still converge on one open
+  recovery request.
+
+Contract impact: the recovery endpoint now answers **409
+`REGISTRATION_ALREADY_PENDING`** for a state that used to be `201`. A client
+receiving it should continue through `POST /auth/register/manual`, which returns
+the same normal verification id with `verification_status: pending`; the
+recovery endpoint no longer returns a verification id for that case. The Flutter
+client must map the code (or treat this 409 as "use the normal registration
+flow"). No new error code was introduced.
+
+Files changed:
+
+- `internal/api/auth/registration/repository.go` — pending verification is now a
+  refusal; doc comment states the verified precondition.
+- `internal/api/auth/registration/service.go` — doc comment records the
+  eligibility rule and the refusal code.
+- `internal/api/auth/registration/error_codes.go` — comment for the first real
+  use of `REGISTRATION_ALREADY_PENDING`.
+- `internal/api/auth/registration/handler.go` — Swagger description and error
+  list.
+- `docs/docs.go`, `docs/swagger.json`, `docs/swagger.yaml` — regenerated; the
+  recovery description updated.
+- `internal/api/auth/registration/recovery_service_test.go` — service-level
+  pass-through of the 409 refusal, asserting no verification id is returned.
+- `internal/integration/auth_register_recovery_test.go` — pending verification
+  rejected, expired registration rejected, non-pending registration rejected,
+  rejected initiation preserves registration/continuation/verification state,
+  open recovery reused only when eligible, completed rejection now asserts no
+  recovery request, and the verification-status domain assertion.
+- `PROGRESS.md` — this entry.
+
+No schema change and no new migration. Migration **000029**
+(`add_registration_recovery_purpose`) belongs to the uncommitted recovery work
+this tightens; it was not created or applied by this change. No `sqlc generate`
+was needed because no query changed.
+
+Verification (2026-10-27, Windows, Docker running; race runs used the
+MSYS2/MinGW toolchain with `CGO_ENABLED=1` and
+`CC=C:\msys64\ucrt64\bin\gcc.exe`):
+
+```sh
+gofmt -w <changed .go files>                      # clean
+swag init -g cmd/api/main.go -parseInternal       # exit 0; recovery description updated
+go build ./...                                    # exit 0
+go vet ./...                                      # exit 0
+go test ./internal/api/auth/registration/... -count=1
+                                                  # exit 0
+go test ./internal/integration -run 'TestRegisterManualRecovery_' -count=1 -v -timeout 20m
+                                                  # exit 0, all cases
+go test ./internal/integration -run 'TestRegisterManual_|TestCreateSocialRegistration_|TestFinalizeSocialRegistration_|TestPasswordReset_|TestLoginGoogle_' -count=1 -timeout 20m
+                                                  # exit 0
+go test -race ./internal/api/auth/registration/... -count=1 -timeout 20m
+                                                  # exit 0
+go test -race ./internal/integration -run 'TestRegisterManualRecovery_' -count=1 -timeout 30m
+                                                  # exit 0
+go test -race ./internal/integration -run 'TestRegisterManualRecovery_Concurrent|TestRegisterManualRecovery_RaceWithFinalization|TestRegisterManualRecovery_NormalRegistrationDoesNotReplaceOpenRecovery|TestRegisterManualRecovery_InitiationRacesWithNormalRegistration' -count=5 -timeout 30m
+                                                  # exit 0, no flakes
+go test ./... -count=1 -timeout 30m               # exit 0, every package
+```
+
+Remaining limitations:
+
+- **The Flutter client is not updated.** Until it maps
+  `REGISTRATION_ALREADY_PENDING`, a user calling recovery before verifying the
+  normal registration sees a 409 it may not recognize. The corrective call is
+  `POST /auth/register/manual`, whose response already carries
+  `verification_status: pending`.
+- **The "other ineligible verification status" case has no reachable fixture.**
+  The schema permits exactly `pending` and `verified`; the `pending` refusal is
+  the whole branch, and the guard is `!= verified` so a future value is refused
+  by default.
+- **A registration with no `purpose = 'registration'` verification row is not
+  visible to the locked lookup** and is refused as `REGISTRATION_NOT_PENDING`,
+  the same answer an address with no registration receives.
+- No migration was executed.
+
+Nothing was committed.
+
 ### 2026-10-27 — Manual registration recovery signal
 
 `POST /auth/register/manual` now reports `verification_status` alongside

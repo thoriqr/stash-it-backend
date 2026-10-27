@@ -395,6 +395,26 @@ WHERE user_id = sqlc.arg(user_id)
 SELECT COUNT(*) AS count
 FROM collections;
 
+-- name: GetVerificationRequestsForEmail :many
+SELECT
+    vr.id,
+    vr.subject_id,
+    vr.subject_type,
+    vr.purpose,
+    vr.status,
+    vr.pin_issued_count,
+    pr.status AS registration_status
+FROM verification_requests vr
+JOIN pending_registrations pr
+    ON pr.id = vr.subject_id
+WHERE pr.email = sqlc.arg(email)
+ORDER BY vr.created_at, vr.id;
+
+-- name: CountContinuationsForPendingRegistration :one
+SELECT COUNT(*) AS count
+FROM registration_continuations
+WHERE pending_registration_id = sqlc.arg(pending_registration_id);
+
 -- name: CreateExistingAuthIdentity :exec
 INSERT INTO auth_identities (
     user_id,

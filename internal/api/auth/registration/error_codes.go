@@ -1,6 +1,14 @@
 package registration
 
 const (
+	// CodeRegistrationAlreadyPending reports that a manual registration exists but
+	// its normal registration verification is still pending.
+	//
+	// It is the recovery endpoint's refusal for that state: the normal PIN flow is
+	// what advances the registration, and recovery is only available once that
+	// verification has reached verified. It is deliberately not
+	// CodeRegistrationNotPending — the registration is pending, which is exactly
+	// why recovery cannot start.
 	CodeRegistrationAlreadyPending       = "REGISTRATION_ALREADY_PENDING"
 	CodeRegistrationAlreadyCompleted     = "REGISTRATION_ALREADY_COMPLETED"
 	CodeRegistrationAlreadyExists        = "REGISTRATION_ALREADY_EXISTS"

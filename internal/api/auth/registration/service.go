@@ -29,6 +29,11 @@ type RegistrationService interface {
 		email string,
 	) (RegisterManualResult, error)
 
+	InitiateManualRecovery(
+		ctx context.Context,
+		email string,
+	) (RegisterManualResult, error)
+
 	CreatePIN(
 		ctx context.Context,
 		verificationID uuid.UUID,
@@ -162,6 +167,61 @@ func (s *service) RegisterManual(
 		CreateManualRegistrationParams{
 			Email:                 email,
 			RegistrationExpiresAt: registrationExpiresAt,
+		},
+	)
+	if err != nil {
+		return RegisterManualResult{}, err
+	}
+
+	return RegisterManualResult{
+		VerificationID:     result.VerificationRequest.ID,
+		VerificationStatus: VerificationRequestStatus(result.VerificationRequest.Status),
+		AlreadyPending:     result.AlreadyPending,
+	}, nil
+}
+
+// InitiateManualRecovery starts a recovery verification for a manual
+// registration whose normal registration verification has completed and whose
+// continuation is no longer usable.
+//
+// Eligibility is decided by the repository while the registration row is
+// locked: a registration that is not pending, is not manual, has expired, or
+// whose normal verification has not reached verified is refused. In particular,
+// a registration whose normal verification is still pending is rejected with
+// CodeRegistrationAlreadyPending and is not handed its verification id; the
+// normal PIN flow is the way to continue that registration.
+//
+// The email alone does not authorize replacement. This method only opens a
+// verification request; the registration is retired and replaced in the same
+// transaction that accepts the verified recovery PIN. The response therefore
+// always reports a pending verification, whether it reused an already-open
+// recovery request or created one.
+func (s *service) InitiateManualRecovery(
+	ctx context.Context,
+	email string,
+) (RegisterManualResult, error) {
+	email = NormalizeEmail(email)
+
+	registrationID, err := s.repository.GetCompletedRegistrationByEmail(
+		ctx,
+		email,
+	)
+	if err != nil {
+		return RegisterManualResult{}, err
+	}
+
+	if registrationID != uuid.Nil {
+		return RegisterManualResult{}, apperror.ConflictWith(
+			CodeRegistrationAlreadyCompleted,
+			"registration has already been completed",
+			nil,
+		)
+	}
+
+	result, err := s.repository.InitiateManualRecovery(
+		ctx,
+		InitiateManualRecoveryParams{
+			Email: email,
 		},
 	)
 	if err != nil {
@@ -484,16 +544,37 @@ func (s *service) VerifyRegistration(
 		Valid: true,
 	}
 
-	_, err = s.repository.CompleteVerification(
-		ctx,
-		CompleteVerificationParams{
-			VerificationCodeID:    code.ID,
-			VerificationRequestID: verificationID,
-			PendingRegistrationID: verification.SubjectID,
-			TokenHash:             tokenHash,
-			ExpiresAt:             continuationExpiresAt,
-		},
-	)
+	if verification.Purpose == string(VerificationPurposeRegistrationRecovery) {
+		// A recovery verification does not create a continuation for the old
+		// registration. It replaces that registration and creates the
+		// continuation for the replacement, in one transaction.
+		_, err = s.repository.CompleteRecoveryVerification(
+			ctx,
+			CompleteRecoveryVerificationParams{
+				VerificationCodeID:       code.ID,
+				VerificationRequestID:    verificationID,
+				OldPendingRegistrationID: verification.SubjectID,
+				TokenHash:                tokenHash,
+				ContinuationExpiresAt:    continuationExpiresAt,
+				NewRegistrationExpiresAt: pgtype.Timestamptz{
+					Time:  time.Now().Add(registrationExpiresIn),
+					Valid: true,
+				},
+			},
+		)
+	} else {
+		_, err = s.repository.CompleteVerification(
+			ctx,
+			CompleteVerificationParams{
+				VerificationCodeID:    code.ID,
+				VerificationRequestID: verificationID,
+				PendingRegistrationID: verification.SubjectID,
+				TokenHash:             tokenHash,
+				ExpiresAt:             continuationExpiresAt,
+			},
+		)
+	}
+
 	if err != nil {
 		return VerifyRegistrationResult{}, err
 	}

@@ -68,6 +68,61 @@ func (h *Handler) RegisterManual(c fiber.Ctx) error {
 	)
 }
 
+// InitiateManualRecovery godoc
+// @Summary Start manual registration recovery
+// @Description Start a recovery verification for a manual registration whose normal registration verification has
+// @Description completed (`verified`) and whose continuation is no longer usable.
+// @Description The existing registration is not expired or replaced until the recovery PIN is verified.
+// @Description The response reports `verification_status: pending`; request a PIN and verify it through the existing registration verification routes.
+// @Description Possible error codes:
+// @Description - VALIDATION_ERROR
+// @Description - REGISTRATION_ALREADY_PENDING: the registration's normal verification has not reached `verified`; continue the normal registration flow instead, which returns the existing verification id
+// @Description - REGISTRATION_NOT_PENDING
+// @Description - REGISTRATION_ALREADY_COMPLETED
+// @Description - REGISTRATION_EXPIRED
+// @Description - INVALID_REGISTRATION_TYPE
+// @Description - IP_RATE_LIMIT_EXCEEDED
+// @Description - IP_RATE_LIMIT_UNAVAILABLE
+// @Description - CLIENT_IP_UNAVAILABLE
+// @Description - INTERNAL_SERVER_ERROR
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Param request body RegisterRequest true "Registration recovery request"
+// @Success 201 {object} RegisterAPIResponse
+// @Failure 400 {object} swagger.ValidationErrorResponse "Validation error"
+// @Failure 409 {object} swagger.APIErrorResponse "Registration cannot be recovered"
+// @Failure 429 {object} swagger.APIErrorResponse "Too many requests from this client address; Retry-After reports when to try again"
+// @Failure 500 {object} swagger.APIErrorResponse "Internal server error"
+// @Failure 503 {object} swagger.APIErrorResponse "Rate limiting or client address resolution is unavailable, so no recovery was started"
+// @Router /auth/register/recovery/manual [post]
+func (h *Handler) InitiateManualRecovery(c fiber.Ctx) error {
+	var req RegisterRequest
+
+	if err := httpx.BindBody(c, &req); err != nil {
+		return err
+	}
+
+	result, err := h.service.InitiateManualRecovery(
+		c.Context(),
+		req.Email,
+	)
+	if err != nil {
+		return err
+	}
+
+	response := RegisterResponse{
+		VerificationID:     result.VerificationID,
+		VerificationStatus: string(result.VerificationStatus),
+	}
+
+	return httpx.Created(
+		c,
+		"registration recovery started",
+		&response,
+	)
+}
+
 // GetVerification godoc
 // @Summary Get registration verification
 // @Description Get the current status of a registration verification request.

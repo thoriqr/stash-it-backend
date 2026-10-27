@@ -24,6 +24,19 @@ func (q *Queries) CountAllCollections(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countContinuationsForPendingRegistration = `-- name: CountContinuationsForPendingRegistration :one
+SELECT COUNT(*) AS count
+FROM registration_continuations
+WHERE pending_registration_id = $1
+`
+
+func (q *Queries) CountContinuationsForPendingRegistration(ctx context.Context, pendingRegistrationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countContinuationsForPendingRegistration, pendingRegistrationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserSessions = `-- name: CountUserSessions :one
 SELECT COUNT(*) AS count
 FROM sessions
@@ -748,6 +761,60 @@ func (q *Queries) GetUnsortedCollectionsForUser(ctx context.Context, userID uuid
 			&i.Name,
 			&i.Type,
 			&i.SystemKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getVerificationRequestsForEmail = `-- name: GetVerificationRequestsForEmail :many
+SELECT
+    vr.id,
+    vr.subject_id,
+    vr.subject_type,
+    vr.purpose,
+    vr.status,
+    vr.pin_issued_count,
+    pr.status AS registration_status
+FROM verification_requests vr
+JOIN pending_registrations pr
+    ON pr.id = vr.subject_id
+WHERE pr.email = $1
+ORDER BY vr.created_at, vr.id
+`
+
+type GetVerificationRequestsForEmailRow struct {
+	ID                 uuid.UUID
+	SubjectID          uuid.UUID
+	SubjectType        string
+	Purpose            string
+	Status             string
+	PinIssuedCount     int32
+	RegistrationStatus string
+}
+
+func (q *Queries) GetVerificationRequestsForEmail(ctx context.Context, email string) ([]GetVerificationRequestsForEmailRow, error) {
+	rows, err := q.db.Query(ctx, getVerificationRequestsForEmail, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetVerificationRequestsForEmailRow
+	for rows.Next() {
+		var i GetVerificationRequestsForEmailRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubjectID,
+			&i.SubjectType,
+			&i.Purpose,
+			&i.Status,
+			&i.PinIssuedCount,
+			&i.RegistrationStatus,
 		); err != nil {
 			return nil, err
 		}

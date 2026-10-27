@@ -60,7 +60,8 @@ const (
 type VerificationPurpose string
 
 const (
-	VerificationPurposeRegistration VerificationPurpose = "registration"
+	VerificationPurposeRegistration         VerificationPurpose = "registration"
+	VerificationPurposeRegistrationRecovery VerificationPurpose = "registration_recovery"
 )
 
 type VerificationRequestStatus string

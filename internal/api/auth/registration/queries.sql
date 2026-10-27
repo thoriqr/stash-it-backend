@@ -197,6 +197,54 @@ WHERE pr.email = sqlc.arg(email)
   AND pr.status = 'pending'
 FOR UPDATE;
 
+-- name: GetPendingRegistrationByIDForUpdate :one
+-- Reads the registration even when it is no longer pending, so recovery can
+-- distinguish completed from expired from pending while holding the row lock.
+SELECT
+    id,
+    email,
+    registration_type,
+    status,
+    expires_at,
+    expires_at <= NOW() AS is_expired
+FROM pending_registrations
+WHERE id = sqlc.arg(id)
+FOR UPDATE;
+
+-- name: GetPendingRecoveryVerificationByPendingRegistration :one
+-- The one recovery request that may be open for a registration.
+--
+-- This is deliberately a plain read. Recovery verification marks the request
+-- and then locks the registration, so taking a lock on the request here would
+-- invert that order. The registration row lock serializes initiations.
+SELECT
+    id,
+    subject_type,
+    subject_id,
+    purpose,
+    status,
+    pin_issued_count,
+    last_sent_at,
+    created_at
+FROM verification_requests
+WHERE subject_id = sqlc.arg(pending_registration_id)
+  AND subject_type = 'pending_registration'
+  AND purpose = 'registration_recovery'
+  AND status = 'pending'
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
+-- name: ReassignVerificationRequestToPendingRegistration :execrows
+-- Makes a verified recovery request the new registration's normal one.
+UPDATE verification_requests
+SET
+    subject_id = sqlc.arg(subject_id),
+    purpose = 'registration'
+WHERE id = sqlc.arg(id)
+  AND subject_type = 'pending_registration'
+  AND purpose = 'registration_recovery'
+  AND status = 'verified';
+
 -- name: HasUsableRegistrationContinuation :one
 -- Whether the registration still holds the only capability that can finish it.
 --

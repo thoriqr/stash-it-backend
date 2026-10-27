@@ -20,6 +20,11 @@ type Repository interface {
 		params CreateManualRegistrationParams,
 	) (CreateManualRegistrationResult, error)
 
+	InitiateManualRecovery(
+		ctx context.Context,
+		params InitiateManualRecoveryParams,
+	) (InitiateManualRecoveryResult, error)
+
 	CreateSocialRegistration(
 		ctx context.Context,
 		params CreateSocialRegistrationParams,
@@ -50,6 +55,11 @@ type Repository interface {
 	CompleteVerification(
 		ctx context.Context,
 		params CompleteVerificationParams,
+	) (registrationdb.RegistrationContinuation, error)
+
+	CompleteRecoveryVerification(
+		ctx context.Context,
+		params CompleteRecoveryVerificationParams,
 	) (registrationdb.RegistrationContinuation, error)
 
 	GetCompletedRegistrationByEmail(
@@ -115,6 +125,24 @@ type CreateManualRegistrationResult struct {
 type CreateManualRegistrationParams struct {
 	Email                 string
 	RegistrationExpiresAt pgtype.Timestamptz
+}
+
+type InitiateManualRecoveryParams struct {
+	Email string
+}
+
+type InitiateManualRecoveryResult struct {
+	VerificationRequest registrationdb.VerificationRequest
+	AlreadyPending      bool
+}
+
+type CompleteRecoveryVerificationParams struct {
+	VerificationCodeID       uuid.UUID
+	VerificationRequestID    uuid.UUID
+	OldPendingRegistrationID uuid.UUID
+	TokenHash                string
+	ContinuationExpiresAt    pgtype.Timestamptz
+	NewRegistrationExpiresAt pgtype.Timestamptz
 }
 
 // pendingRegistrationEmailIndex is the partial unique index that guarantees at
@@ -226,6 +254,27 @@ func (r *repository) createManualRegistrationOnce(
 				AlreadyPending: true,
 			}, nil
 		} else {
+			// A recovery verification that is still open owns this registration
+			// until it is verified. Returning it keeps a normal registration
+			// request from replacing the registration underneath the recovery.
+			pendingRecovery, err := qtx.GetPendingRecoveryVerificationByPendingRegistration(
+				ctx,
+				existing.ID,
+			)
+			if err == nil {
+				return CreateManualRegistrationResult{
+					VerificationRequest: registrationdb.VerificationRequest{
+						ID:     pendingRecovery.ID,
+						Status: pendingRecovery.Status,
+					},
+					AlreadyPending: true,
+				}, nil
+			}
+
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return CreateManualRegistrationResult{}, apperror.Internal(err)
+			}
+
 			// The verification request is terminal, so the verification id alone
 			// cannot advance this registration any more. Whether it may be
 			// replaced depends on the continuation, which is the only remaining
@@ -310,6 +359,127 @@ func (r *repository) createManualRegistrationOnce(
 
 	return CreateManualRegistrationResult{
 		VerificationRequest: verificationRequest,
+	}, nil
+}
+
+// InitiateManualRecovery opens a recovery verification for a manual registration
+// whose normal registration verification has completed (status verified).
+//
+// Eligibility is read from the locked registration row, never from the request
+// or from a value the caller supplied. A registration whose normal verification
+// is still pending is refused rather than handed back its verification id: the
+// normal PIN flow is what that registration needs, and recovery exists only for
+// a registration that has already passed it.
+//
+// It deliberately changes nothing about the registration. The old continuation,
+// if any, stays valid until the recovery PIN is verified; the replacement and the
+// new continuation happen in CompleteRecoveryVerification. The registration row
+// is locked, so concurrent initiations and normal registration requests
+// serialize, and an already-open recovery request is reused rather than
+// duplicated — but only after every eligibility check above has passed.
+func (r *repository) InitiateManualRecovery(
+	ctx context.Context,
+	params InitiateManualRecoveryParams,
+) (InitiateManualRecoveryResult, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return InitiateManualRecoveryResult{}, apperror.Internal(err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	existing, err := qtx.GetPendingRegistrationByEmailForUpdate(
+		ctx,
+		params.Email,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return InitiateManualRecoveryResult{}, apperror.ConflictWith(
+				CodeRegistrationNotPending,
+				"registration is no longer pending",
+				err,
+			)
+		}
+
+		return InitiateManualRecoveryResult{}, apperror.Internal(err)
+	}
+
+	if existing.RegistrationType != string(RegistrationTypeManual) {
+		return InitiateManualRecoveryResult{}, apperror.ConflictWith(
+			CodeInvalidRegistrationType,
+			"registration is not a manual registration",
+			nil,
+		)
+	}
+
+	if existing.IsExpired {
+		return InitiateManualRecoveryResult{}, apperror.ConflictWith(
+			CodeRegistrationExpired,
+			"registration has expired",
+			nil,
+		)
+	}
+
+	// Recovery is only reachable after the normal registration verification has
+	// completed. While it is still pending, the normal PIN flow is the way
+	// forward, and this request is refused without creating or adopting
+	// anything. Returning the normal verification id here would report a
+	// recovery that never happened and would hand a caller a verification
+	// request it had not earned through this route.
+	//
+	// verification_requests_status_check permits only pending and verified, so
+	// this comparison has exactly one reachable alternative.
+	if existing.VerificationStatus != string(VerificationRequestVerified) {
+		return InitiateManualRecoveryResult{}, apperror.ConflictWith(
+			CodeRegistrationAlreadyPending,
+			"registration verification is still pending",
+			nil,
+		)
+	}
+
+	// Reuse an open recovery request. This read is not locked on purpose:
+	// recovery verification locks the request and then the registration, and a
+	// locking read here would invert that order. The registration lock above is
+	// what serializes initiations.
+	pendingRecovery, err := qtx.GetPendingRecoveryVerificationByPendingRegistration(
+		ctx,
+		existing.ID,
+	)
+	if err == nil {
+		return InitiateManualRecoveryResult{
+			VerificationRequest: registrationdb.VerificationRequest{
+				ID:     pendingRecovery.ID,
+				Status: pendingRecovery.Status,
+			},
+			AlreadyPending: true,
+		}, nil
+	}
+
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return InitiateManualRecoveryResult{}, apperror.Internal(err)
+	}
+
+	recovery, err := qtx.CreateVerificationRequest(
+		ctx,
+		registrationdb.CreateVerificationRequestParams{
+			SubjectType: string(VerificationSubjectPendingRegistration),
+			SubjectID:   existing.ID,
+			Purpose:     string(VerificationPurposeRegistrationRecovery),
+			Status:      string(VerificationRequestPending),
+		},
+	)
+	if err != nil {
+		return InitiateManualRecoveryResult{}, apperror.Internal(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return InitiateManualRecoveryResult{}, apperror.Internal(err)
+	}
+
+	return InitiateManualRecoveryResult{
+		VerificationRequest: recovery,
 	}, nil
 }
 
@@ -733,6 +903,175 @@ func (r *repository) CompleteVerification(
 			PendingRegistrationID: params.PendingRegistrationID,
 			TokenHash:             params.TokenHash,
 			ExpiresAt:             params.ExpiresAt,
+		},
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, mapRegistrationDBError(err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	return continuation, nil
+}
+
+// CompleteRecoveryVerification replaces an eligible pending registration after
+// its recovery PIN has been verified.
+//
+// The old registration row is the serialization point with finalization and
+// normal registration. It is locked and re-checked inside this transaction; a
+// registration that completed or expired while the PIN was being checked is
+// refused. The old continuation is left in place: expiring its parent makes it
+// unusable through the existing continuation validation, and deleting it would
+// lose history and could disturb its predecessor chain.
+func (r *repository) CompleteRecoveryVerification(
+	ctx context.Context,
+	params CompleteRecoveryVerificationParams,
+) (registrationdb.RegistrationContinuation, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	rowsAffected, err := qtx.ConsumeVerificationCode(
+		ctx,
+		params.VerificationCodeID,
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			"",
+			"verification code is no longer available",
+			nil,
+		)
+	}
+
+	rowsAffected, err = qtx.MarkVerificationRequestVerified(
+		ctx,
+		params.VerificationRequestID,
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			"",
+			"verification request is no longer pending",
+			nil,
+		)
+	}
+
+	old, err := qtx.GetPendingRegistrationByIDForUpdate(
+		ctx,
+		params.OldPendingRegistrationID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+				CodeRegistrationNotPending,
+				"registration is no longer pending",
+				err,
+			)
+		}
+
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	if old.Status == string(PendingRegistrationCompleted) {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			CodeRegistrationAlreadyCompleted,
+			"registration has already been completed",
+			nil,
+		)
+	}
+
+	if old.Status != string(PendingRegistrationPending) {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			CodeRegistrationExpired,
+			"registration has expired",
+			nil,
+		)
+	}
+
+	if old.RegistrationType != string(RegistrationTypeManual) {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			CodeInvalidRegistrationType,
+			"registration is not a manual registration",
+			nil,
+		)
+	}
+
+	if old.IsExpired {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			CodeRegistrationExpired,
+			"registration has expired",
+			nil,
+		)
+	}
+
+	rowsAffected, err = qtx.ForceExpireManualPendingRegistration(
+		ctx,
+		old.ID,
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			"",
+			"registration is no longer pending",
+			nil,
+		)
+	}
+
+	newRegistration, err := qtx.CreatePendingRegistration(
+		ctx,
+		registrationdb.CreatePendingRegistrationParams{
+			Email:            old.Email,
+			RegistrationType: string(RegistrationTypeManual),
+			Status:           string(PendingRegistrationPending),
+			ExpiresAt:        params.NewRegistrationExpiresAt,
+		},
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, mapRegistrationDBError(err)
+	}
+
+	rowsAffected, err = qtx.ReassignVerificationRequestToPendingRegistration(
+		ctx,
+		registrationdb.ReassignVerificationRequestToPendingRegistrationParams{
+			SubjectID: newRegistration.ID,
+			ID:        params.VerificationRequestID,
+		},
+	)
+	if err != nil {
+		return registrationdb.RegistrationContinuation{}, apperror.Internal(err)
+	}
+
+	if rowsAffected != 1 {
+		return registrationdb.RegistrationContinuation{}, apperror.ConflictWith(
+			"",
+			"verification request is no longer available",
+			nil,
+		)
+	}
+
+	continuation, err := qtx.CreateRegistrationContinuation(
+		ctx,
+		registrationdb.CreateRegistrationContinuationParams{
+			PendingRegistrationID: newRegistration.ID,
+			TokenHash:             params.TokenHash,
+			ExpiresAt:             params.ContinuationExpiresAt,
 		},
 	)
 	if err != nil {

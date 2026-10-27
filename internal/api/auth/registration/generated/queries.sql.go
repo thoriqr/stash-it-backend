@@ -587,6 +587,46 @@ func (q *Queries) GetCompletedRegistrationByEmail(ctx context.Context, email str
 	return id, err
 }
 
+const getPendingRecoveryVerificationByPendingRegistration = `-- name: GetPendingRecoveryVerificationByPendingRegistration :one
+SELECT
+    id,
+    subject_type,
+    subject_id,
+    purpose,
+    status,
+    pin_issued_count,
+    last_sent_at,
+    created_at
+FROM verification_requests
+WHERE subject_id = $1
+  AND subject_type = 'pending_registration'
+  AND purpose = 'registration_recovery'
+  AND status = 'pending'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+// The one recovery request that may be open for a registration.
+//
+// This is deliberately a plain read. Recovery verification marks the request
+// and then locks the registration, so taking a lock on the request here would
+// invert that order. The registration row lock serializes initiations.
+func (q *Queries) GetPendingRecoveryVerificationByPendingRegistration(ctx context.Context, pendingRegistrationID uuid.UUID) (VerificationRequest, error) {
+	row := q.db.QueryRow(ctx, getPendingRecoveryVerificationByPendingRegistration, pendingRegistrationID)
+	var i VerificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.Purpose,
+		&i.Status,
+		&i.PinIssuedCount,
+		&i.LastSentAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getPendingRegistrationByEmailForUpdate = `-- name: GetPendingRegistrationByEmailForUpdate :one
 SELECT
     pr.id,
@@ -624,6 +664,44 @@ func (q *Queries) GetPendingRegistrationByEmailForUpdate(ctx context.Context, em
 		&i.IsExpired,
 		&i.VerificationID,
 		&i.VerificationStatus,
+	)
+	return i, err
+}
+
+const getPendingRegistrationByIDForUpdate = `-- name: GetPendingRegistrationByIDForUpdate :one
+SELECT
+    id,
+    email,
+    registration_type,
+    status,
+    expires_at,
+    expires_at <= NOW() AS is_expired
+FROM pending_registrations
+WHERE id = $1
+FOR UPDATE
+`
+
+type GetPendingRegistrationByIDForUpdateRow struct {
+	ID               uuid.UUID
+	Email            string
+	RegistrationType string
+	Status           string
+	ExpiresAt        pgtype.Timestamptz
+	IsExpired        bool
+}
+
+// Reads the registration even when it is no longer pending, so recovery can
+// distinguish completed from expired from pending while holding the row lock.
+func (q *Queries) GetPendingRegistrationByIDForUpdate(ctx context.Context, id uuid.UUID) (GetPendingRegistrationByIDForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getPendingRegistrationByIDForUpdate, id)
+	var i GetPendingRegistrationByIDForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.RegistrationType,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.IsExpired,
 	)
 	return i, err
 }
@@ -842,6 +920,31 @@ WHERE id = $1
 
 func (q *Queries) MarkVerificationRequestVerified(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, markVerificationRequestVerified, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reassignVerificationRequestToPendingRegistration = `-- name: ReassignVerificationRequestToPendingRegistration :execrows
+UPDATE verification_requests
+SET
+    subject_id = $1,
+    purpose = 'registration'
+WHERE id = $2
+  AND subject_type = 'pending_registration'
+  AND purpose = 'registration_recovery'
+  AND status = 'verified'
+`
+
+type ReassignVerificationRequestToPendingRegistrationParams struct {
+	SubjectID uuid.UUID
+	ID        uuid.UUID
+}
+
+// Makes a verified recovery request the new registration's normal one.
+func (q *Queries) ReassignVerificationRequestToPendingRegistration(ctx context.Context, arg ReassignVerificationRequestToPendingRegistrationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reassignVerificationRequestToPendingRegistration, arg.SubjectID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
