@@ -57,13 +57,18 @@ const (
 	EnrichmentTaskTimeout = 30 * time.Second
 
 	// EnrichmentMaxRetry is how many times a retryable attempt is repeated after
-	// the first one, so an item is fetched at most six times in total.
+	// the first one, so an item is fetched at most three times in total.
+	//
+	// Three attempts is the product target. It is enough for a dropped
+	// connection, a timeout or an origin that is briefly unavailable, and it
+	// bounds what a permanently failing page can spend: two waits instead of
+	// five, and no queue slot held for a quarter of an hour.
 	//
 	// The bound exists because the worker is not guaranteed to be running when the
 	// work happens. Scale to zero means a task can wait hours before anything
 	// touches it, and a queue that is only ever growing must not be able to grow
 	// without limit either.
-	EnrichmentMaxRetry = 5
+	EnrichmentMaxRetry = 2
 
 	// EnrichmentRetryBaseDelay is the wait before the first retry.
 	EnrichmentRetryBaseDelay = 30 * time.Second

@@ -66,6 +66,16 @@ const (
 	// the returned body also bounds a compressed response and a compression bomb.
 	OutboundFetchMaxResponseBytes int64 = 2 << 20
 
+	// OutboundFetchMaxResponseHeaderBytes bounds the response header block.
+	//
+	// It is applied by the transport and has to exist separately from the body
+	// limit because headers are read first and are not covered by it. Go's
+	// default is ten megabytes, which no real page needs and which a broken or
+	// hostile origin could use to make every in-flight fetch hold memory it has
+	// no use for. Sixty four kilobytes is several times a normal header block,
+	// so ordinary pages are unaffected.
+	OutboundFetchMaxResponseHeaderBytes int64 = 64 << 10
+
 	// OutboundFetchDialTimeout bounds establishing one connection, resolution
 	// included.
 	OutboundFetchDialTimeout = 5 * time.Second
@@ -236,6 +246,11 @@ type OutboundFetchPolicy struct {
 	// MaxResponseBytes is how much of a response body may be read.
 	MaxResponseBytes int64
 
+	// MaxResponseHeaderBytes bounds the response header block. It is separate
+	// from MaxResponseBytes because the headers are read before the body limit
+	// can apply.
+	MaxResponseHeaderBytes int64
+
 	// DialTimeout bounds establishing one connection.
 	DialTimeout time.Duration
 
@@ -260,17 +275,18 @@ type OutboundFetchPolicy struct {
 // this file.
 func DefaultOutboundFetchPolicy() OutboundFetchPolicy {
 	return OutboundFetchPolicy{
-		UserAgent:             DefaultOutboundUserAgent,
-		Timeout:               OutboundFetchTimeout,
-		ResponseHeaderTimeout: OutboundFetchResponseHeaderTimeout,
-		MaxRedirects:          OutboundFetchMaxRedirects,
-		MaxResponseBytes:      OutboundFetchMaxResponseBytes,
-		DialTimeout:           OutboundFetchDialTimeout,
-		TLSHandshakeTimeout:   OutboundFetchTLSHandshakeTimeout,
-		KeepAlive:             OutboundFetchKeepAlive,
-		IdleConnTimeout:       OutboundFetchIdleConnTimeout,
-		MaxIdleConns:          OutboundFetchMaxIdleConns,
-		MaxIdleConnsPerHost:   OutboundFetchMaxIdlePerHost,
+		UserAgent:              DefaultOutboundUserAgent,
+		Timeout:                OutboundFetchTimeout,
+		ResponseHeaderTimeout:  OutboundFetchResponseHeaderTimeout,
+		MaxRedirects:           OutboundFetchMaxRedirects,
+		MaxResponseBytes:       OutboundFetchMaxResponseBytes,
+		MaxResponseHeaderBytes: OutboundFetchMaxResponseHeaderBytes,
+		DialTimeout:            OutboundFetchDialTimeout,
+		TLSHandshakeTimeout:    OutboundFetchTLSHandshakeTimeout,
+		KeepAlive:              OutboundFetchKeepAlive,
+		IdleConnTimeout:        OutboundFetchIdleConnTimeout,
+		MaxIdleConns:           OutboundFetchMaxIdleConns,
+		MaxIdleConnsPerHost:    OutboundFetchMaxIdlePerHost,
 	}
 }
 
@@ -311,10 +327,11 @@ func NewGuardedHTTPClient(policy OutboundFetchPolicy) *http.Client {
 		// into a bypass.
 		Proxy: nil,
 
-		DialContext:           dialer.DialContext,
-		TLSHandshakeTimeout:   policy.TLSHandshakeTimeout,
-		ResponseHeaderTimeout: policy.ResponseHeaderTimeout,
-		ExpectContinueTimeout: time.Second,
+		DialContext:            dialer.DialContext,
+		TLSHandshakeTimeout:    policy.TLSHandshakeTimeout,
+		ResponseHeaderTimeout:  policy.ResponseHeaderTimeout,
+		MaxResponseHeaderBytes: policy.MaxResponseHeaderBytes,
+		ExpectContinueTimeout:  time.Second,
 
 		MaxIdleConns:        policy.MaxIdleConns,
 		MaxIdleConnsPerHost: policy.MaxIdleConnsPerHost,

@@ -66,13 +66,6 @@ func contentFailure(cause error) error {
 	}
 }
 
-func parseFailure(cause error) error {
-	return &enrichmentcore.Failure{
-		Kind: enrichmentcore.FailureParse,
-		Err:  cause,
-	}
-}
-
 func savedItem(rawURL string) workerenrichment.SavedItem {
 	return workerenrichment.SavedItem{
 		ID:     uuid.New(),
@@ -231,10 +224,6 @@ func TestService_EnrichSavedItem_Failure(t *testing.T) {
 		{
 			name: "content failure",
 			err:  contentFailure(errors.New("status 404")),
-		},
-		{
-			name: "parse failure",
-			err:  parseFailure(errors.New("unreadable document")),
 		},
 	}
 

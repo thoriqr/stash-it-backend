@@ -19,8 +19,14 @@ var (
 	ErrInvalidURL = errors.New("url cannot be used")
 
 	// ErrFetchFailed is returned when the request itself failed: DNS, the
-	// connection, TLS, a timeout, too many redirects, or a refusal by the
-	// outbound fetch policy.
+	// connection, TLS, a timeout, or a read that failed before parsing began. It
+	// also covers a redirect chain that exceeded its limit and a destination the
+	// outbound fetch policy refused, because neither of those produces a
+	// response.
+	//
+	// The sentinel describes the event and not its classification. A redirect
+	// limit and a policy refusal are wrapped with this sentinel but carry
+	// FailureContent, because another attempt cannot change either one.
 	ErrFetchFailed = errors.New("fetching the page failed")
 
 	// ErrParseFailed is returned when the body could not be read as a document.
@@ -52,24 +58,26 @@ type FailureKind string
 const (
 	// FailureFetch is a failure to obtain a parseable page at all. Retrying may
 	// succeed, because the cause was the network or the origin at that moment:
-	// DNS, the connection, TLS, a timeout, too many redirects, a refusal by the
-	// outbound fetch policy, a body that could not be read, and the statuses an
-	// origin uses to say "not right now" (429 and 5xx).
+	// DNS, the connection, TLS, a timeout, a body that could not be read, and the
+	// statuses an origin uses to say "not right now" (429 and 5xx).
+	//
+	// A body that could not be read belongs here rather than with the content
+	// failures: it is a network event and not a statement about the page. The
+	// tokenizer has no failure of its own to report either, because the only
+	// error it can produce is one from the reader underneath it.
 	FailureFetch FailureKind = "fetch"
 
-	// FailureContent is a page that was reached and cannot be used, such as a
-	// non-HTML resource or a terminal client status such as 401, 403, 404 or
-	// 410. Retrying will not help.
+	// FailureContent is a request or page that cannot be used, and that another
+	// attempt will not change: a non-HTML resource, a terminal client status such
+	// as 401, 403, 404 or 410, a redirect chain beyond the limit, or a
+	// destination the outbound fetch policy refuses.
 	//
-	// The distinction from FailureFetch is the question a retry asks: whether
-	// the origin could plausibly answer differently. A page that was moved, is
-	// gone, or is not an HTML document cannot; a page whose origin was
-	// overloaded, rate limiting or temporarily broken can.
+	// The distinction from FailureFetch is the question a retry asks: whether the
+	// origin could plausibly answer differently. A page that was moved, is gone,
+	// or is not an HTML document cannot; a destination that is not publicly
+	// routable will not become so by being asked again; and a page whose origin
+	// was overloaded, rate limiting or temporarily broken can.
 	FailureContent FailureKind = "content"
-
-	// FailureParse is a page that was reached and is HTML, but could not be
-	// understood. Retrying will not change the response.
-	FailureParse FailureKind = "parse"
 )
 
 // Failure is an enrichment error carrying its classification.
@@ -80,7 +88,13 @@ const (
 // retry, and the sentinel to describe what went wrong in a log line.
 type Failure struct {
 	Kind FailureKind
-	Err  error
+
+	// StatusCode is the HTTP status the failure carried, or 0 when the failure
+	// happened before a response was read. It is kept as a field rather than
+	// only as text so a caller can log it without parsing the error string.
+	StatusCode int
+
+	Err error
 }
 
 func (f *Failure) Error() string {
@@ -136,4 +150,24 @@ func Kind(err error) FailureKind {
 	}
 
 	return FailureFetch
+}
+
+// Status reports the HTTP status code the failure carried, or 0 when no response
+// was read.
+//
+// It exists so a caller can log the status as its own field rather than parse it
+// back out of the error text. Transport failures, refusals by the outbound
+// policy and a body that could not be read all report 0, because none of them
+// saw a response.
+func Status(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.StatusCode
+	}
+
+	return 0
 }

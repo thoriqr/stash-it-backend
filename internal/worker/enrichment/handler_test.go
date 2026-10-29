@@ -14,6 +14,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/security"
 	workerenrichment "github.com/thoriqr/stash-it-backend/internal/worker/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/worker/enrichment/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/worker/queue"
@@ -148,9 +149,19 @@ func TestHandler_EnrichSavedItem_RetryClassification(t *testing.T) {
 			retryable: false,
 		},
 		{
-			name: "unreadable document is not retried",
-			err: parseFailure(
-				errors.New("reading the page failed"),
+			// A destination the outbound policy refuses is a statement about the
+			// URL, not about the network at that moment. It is permanent, and it
+			// arrives already classified as such.
+			name: "policy refusal is not retried",
+			err: contentFailure(
+				security.ErrOutboundAddressBlocked,
+			),
+			retryable: false,
+		},
+		{
+			name: "redirect limit is not retried",
+			err: contentFailure(
+				security.ErrTooManyRedirects,
 			),
 			retryable: false,
 		},

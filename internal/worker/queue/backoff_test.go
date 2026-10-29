@@ -37,7 +37,10 @@ func TestEnrichmentRetryDelay_GrowsAndStaysCapped(t *testing.T) {
 	previous := time.Duration(0)
 	sawCappedAttempt := false
 
-	for attempt := 0; attempt <= queue.EnrichmentMaxRetry+3; attempt++ {
+	// The bound is fixed rather than derived from the retry budget: this test is
+	// about the delay function reaching its ceiling, and the production budget is
+	// deliberately too small to reach a thirty minute wait.
+	for attempt := 0; attempt <= 10; attempt++ {
 		delay := queue.EnrichmentRetryDelay(attempt, nil, nil)
 
 		require.Positive(t, delay, "a retry must never be scheduled with no wait")
@@ -145,6 +148,19 @@ func TestEnrichmentTaskTimeout_LeavesRoomForTheDatabaseWrites(t *testing.T) {
 func TestEnrichmentMaxRetry_IsBounded(t *testing.T) {
 	require.Greater(t, queue.EnrichmentMaxRetry, 0)
 	require.LessOrEqual(t, queue.EnrichmentMaxRetry, 10)
+}
+
+// The product target is three attempts in total: one initial attempt and two
+// retries. It is pinned exactly rather than left to the range above, so changing
+// the number of fetches a save can cause is a deliberate edit with a failing test
+// in front of it.
+func TestEnrichmentMaxRetry_TargetsThreeAttempts(t *testing.T) {
+	require.Equal(
+		t,
+		2,
+		queue.EnrichmentMaxRetry,
+		"one initial attempt plus two retries is three attempts in total",
+	)
 }
 
 // The queue name is a contract between the producer and the worker, and it is

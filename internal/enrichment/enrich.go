@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 
+	"golang.org/x/net/html/charset"
+
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
 
@@ -113,8 +115,12 @@ func (e *enricher) Enrich(
 
 	doc, err := extract(body, finalURL)
 	if err != nil {
+		// The tokenizer has no failure of its own to report: the only error it
+		// returns is one from the reader underneath it. A body that stopped
+		// arriving is a network event, so it stays retryable rather than being
+		// recorded as a permanent statement about the page.
 		return Metadata{}, newFailure(
-			FailureParse,
+			FailureFetch,
 			fmt.Errorf("%w: %w", ErrParseFailed, err),
 		)
 	}
@@ -153,7 +159,7 @@ func (e *enricher) do(
 	response, err := e.client.Do(request)
 	if err != nil {
 		return nil, newFailure(
-			FailureFetch,
+			requestFailureKind(err),
 			fmt.Errorf("%w: %w", ErrFetchFailed, err),
 		)
 	}
@@ -161,12 +167,31 @@ func (e *enricher) do(
 	return response, nil
 }
 
+// requestFailureKind classifies a failed request by whether another attempt could
+// produce a different answer.
+//
+// A refusal by the outbound policy and a redirect chain that exceeded its limit
+// are statements about the request itself: the same URL resolves to the same
+// blocked destination, and the same chain has the same hops. Asking again spends
+// queue time and network on a certainty, so both are permanent.
+//
+// Everything else the transport reports describes the network at that moment —
+// DNS, the connection, TLS, a timeout, a stream reset — and stays retryable.
+func requestFailureKind(err error) FailureKind {
+	if errors.Is(err, security.ErrOutboundAddressBlocked) ||
+		errors.Is(err, security.ErrTooManyRedirects) {
+		return FailureContent
+	}
+
+	return FailureFetch
+}
+
 // reader validates the response and returns a reader positioned at the start of
 // the document body.
 //
-// The body is bounded by the policy's response size limit and never fully
-// buffered, so a large page costs a bounded amount of memory rather than whatever
-// the origin decides to send.
+// The body is bounded by the policy's response size limit, before and after any
+// transcoding, and is never fully buffered, so a large page costs a bounded
+// amount of memory rather than whatever the origin decides to send.
 func (e *enricher) reader(
 	response *http.Response,
 ) (
@@ -174,13 +199,15 @@ func (e *enricher) reader(
 	*url.URL,
 	error,
 ) {
+	contentType := response.Header.Get("Content-Type")
+
 	// A non-success status is a real answer from the origin. It is not a page to
 	// parse, so it is a failure rather than an empty result. Whether that failure
 	// is worth another attempt depends on which status it is, not on the fact
 	// that a status came back at all.
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
-		return nil, nil, newFailure(
+		failure := newFailure(
 			statusFailureKind(response.StatusCode),
 			fmt.Errorf(
 				"%w: status %d",
@@ -188,14 +215,17 @@ func (e *enricher) reader(
 				response.StatusCode,
 			),
 		)
+
+		// Kept as a field as well as in the message, so a caller can log the
+		// status without reading the text.
+		failure.StatusCode = response.StatusCode
+
+		return nil, nil, failure
 	}
 
 	limited := e.policy.LimitOutboundBody(response.Body)
 
-	body, err := prepareHTMLBody(
-		limited,
-		response.Header.Get("Content-Type"),
-	)
+	body, err := prepareHTMLBody(limited, contentType)
 	if err != nil {
 		// A refused content type is a permanent content failure, but a body that
 		// could not be read has already been classified as a fetch failure by
@@ -203,7 +233,35 @@ func (e *enricher) reader(
 		return nil, nil, wrapFailure(FailureContent, err)
 	}
 
-	return body, responseURL(response), nil
+	// The tokenizer assumes UTF-8. A page that declares another encoding, or that
+	// prescans as one, is transcoded first so its metadata is read as text rather
+	// than as mojibake.
+	//
+	// DetermineEncoding passes valid UTF-8 through unchanged, including a page
+	// that never declared a charset, so this does not alter pages that were
+	// already correct.
+	decoded, err := charset.NewReader(body, contentType)
+	if err != nil {
+		// NewReader reports io.EOF only when its preview read received no bytes
+		// at all, which is an empty response body rather than a failed read. An
+		// empty document is a successful enrichment that found nothing, so it
+		// keeps the meaning it had before transcoding was added.
+		if errors.Is(err, io.EOF) {
+			return bytes.NewReader(nil), responseURL(response), nil
+		}
+
+		// Any other error is the preview read failing, which is the same network
+		// failure as any other body read.
+		return nil, nil, newFailure(
+			FailureFetch,
+			fmt.Errorf("%w: %w", ErrFetchFailed, err),
+		)
+	}
+
+	// A legacy 8-bit encoding can expand when transcoded, so the decoded stream
+	// is bounded again. For UTF-8 this is a no-op: the decoded stream is exactly
+	// what the body limit above already applied to.
+	return e.policy.LimitOutboundBody(decoded), responseURL(response), nil
 }
 
 // statusFailureKind classifies a non-success status by whether the origin could

@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -88,16 +89,40 @@ func (s *service) EnrichSavedItem(
 		return err
 	}
 
+	started := time.Now()
+
 	metadata, enrichErr := s.enricher.Enrich(ctx, savedItem.Url)
+
+	elapsed := time.Since(started)
+
 	if enrichErr != nil {
-		s.log.Warn(
-			"background enrichment failed",
+		fields := []zap.Field{
 			zap.String("saved_item_id", savedItemID.String()),
 			zap.String("user_id", savedItem.UserID.String()),
-			zap.String("url", savedItem.Url),
+
+			// The URL's query string and fragment are dropped: they routinely
+			// carry tracking parameters and signed tokens, and neither is what
+			// diagnosing a failed fetch needs.
+			zap.String("url", enrichment.SanitizedURL(savedItem.Url)),
 			zap.String("kind", string(enrichment.Kind(enrichErr))),
-			zap.Error(enrichErr),
+			zap.Int64("elapsed_ms", elapsed.Milliseconds()),
+		}
+
+		// Only a status failure has one, so the field is omitted rather than
+		// logged as a zero that would look like a real status.
+		if status := enrichment.Status(enrichErr); status != 0 {
+			fields = append(fields, zap.Int("http_status", status))
+		}
+
+		// The error is rendered through SafeErrorMessage because a transport
+		// failure carries the request URL in its text, including the query string
+		// and fragment. The sanitized URL field above is not enough on its own.
+		fields = append(
+			fields,
+			zap.String("error", enrichment.SafeErrorMessage(enrichErr)),
 		)
+
+		s.log.Warn("background enrichment failed", fields...)
 
 		// Recording the failure is the response to a failed enrichment, and it is
 		// recorded the same way whether the queue will try again or not. The row
@@ -139,6 +164,21 @@ func (s *service) EnrichSavedItem(
 	if err != nil {
 		return err
 	}
+
+	// Which fields the page actually exposed, recorded as presence and never as
+	// values. Without this, a page that was read successfully and said nothing
+	// looks identical in the log to one that produced a full preview, and the two
+	// are different product outcomes even though both are `completed`.
+	s.log.Info(
+		"background enrichment stored metadata",
+		zap.String("saved_item_id", savedItemID.String()),
+		zap.String("user_id", savedItem.UserID.String()),
+		zap.Int64("elapsed_ms", elapsed.Milliseconds()),
+		zap.Bool("has_title", metadata.Title != nil),
+		zap.Bool("has_platform", metadata.Platform != nil),
+		zap.Bool("has_description", metadata.Description != nil),
+		zap.Bool("has_image", metadata.ImageURL != nil),
+	)
 
 	// Organization is scheduled from here, after the write has returned.
 	//

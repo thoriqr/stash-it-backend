@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -219,6 +220,10 @@ func TestEnrich_NonSuccessStatus(t *testing.T) {
 
 			require.ErrorIs(t, err, ErrUnexpectedStatus)
 			require.Equal(t, tc.kind, Kind(err))
+
+			// The status is carried as a field as well as in the message, so a
+			// caller can log it without reading the text.
+			require.Equal(t, tc.status, Status(err))
 
 			// A non-success status is a failure, not an empty result. Returning
 			// the parsed body here would report an unenrichable page as enriched.
@@ -501,7 +506,11 @@ func TestEnrich_WithGuardedClientRefusesInternalTargets(t *testing.T) {
 			// Every one of these is refused by the dialer, so the sentinel is
 			// the security one rather than anything enrichment invented.
 			require.ErrorIs(t, err, security.ErrOutboundAddressBlocked)
-			require.Equal(t, FailureFetch, Kind(err))
+
+			// A destination the policy refuses is permanent. The same URL
+			// resolves to the same blocked address on the next attempt, so
+			// retrying only spends queue time on a certainty.
+			require.Equal(t, FailureContent, Kind(err))
 			require.True(t, metadata.IsEmpty())
 		})
 	}
@@ -573,7 +582,10 @@ func TestEnrich_Redirect(t *testing.T) {
 
 		require.ErrorIs(t, err, ErrFetchFailed)
 		require.ErrorIs(t, err, security.ErrTooManyRedirects)
-		require.Equal(t, FailureFetch, Kind(err))
+
+		// The chain is a property of the URL and does not change on another
+		// attempt, so the failure is permanent.
+		require.Equal(t, FailureContent, Kind(err))
 	})
 }
 
@@ -676,6 +688,202 @@ func TestEnrich_MalformedJSONLDOverHTTP(t *testing.T) {
 	requireMetadata(t, metadata, "title", "Survives")
 }
 
+// A body that was being read when the connection failed is a network failure at
+// that moment, not a statement about the page. It has to stay retryable: the same
+// read can succeed on the next attempt, and treating it as permanent is what
+// leaves an intermittently slow origin's items failed forever.
+func TestEnrich_BodyReadFailureIsRetryable(t *testing.T) {
+	// The content type is HTML, so nothing sniffs the body first. The encoding
+	// preview is the first read, and it fails.
+	body := &trackedBody{
+		Reader: erroringReader{err: errors.New("connection reset by peer")},
+	}
+
+	enricher := NewEnricher(
+		&http.Client{
+			Transport: &recordingTransport{body: body},
+		},
+		security.DefaultOutboundFetchPolicy(),
+	)
+
+	metadata, err := enricher.Enrich(
+		context.Background(),
+		"https://example.com/articles/1",
+	)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrFetchFailed)
+	require.Equal(
+		t,
+		FailureFetch,
+		Kind(err),
+		"a body that could not be read must stay retryable",
+	)
+	require.True(t, metadata.IsEmpty())
+	require.True(t, body.closed)
+}
+
+// The same failure after the encoding preview has been read surfaces from the
+// tokenizer instead. It is still a network failure, and this is the path that
+// used to be classified as a permanent parse failure.
+func TestEnrich_BodyReadFailureAfterThePreviewIsRetryable(t *testing.T) {
+	// The prefix is longer than the 1024 bytes the encoding preview consumes, so
+	// the failure happens while the document is being tokenized.
+	prefix := []byte(
+		"<!doctype html><html><head>" +
+			strings.Repeat("<!-- padding -->", 100),
+	)
+
+	body := &trackedBody{
+		Reader: &prefixThenErrorReader{
+			prefix: prefix,
+			err:    errors.New("connection reset by peer"),
+		},
+	}
+
+	enricher := NewEnricher(
+		&http.Client{
+			Transport: &recordingTransport{body: body},
+		},
+		security.DefaultOutboundFetchPolicy(),
+	)
+
+	metadata, err := enricher.Enrich(
+		context.Background(),
+		"https://example.com/articles/1",
+	)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrParseFailed)
+	require.Equal(
+		t,
+		FailureFetch,
+		Kind(err),
+		"a failure while reading the body must not become a permanent parse failure",
+	)
+	require.True(t, metadata.IsEmpty())
+}
+
+// An origin that sends headers and then stops is the same network condition, and
+// the client's overall timeout is what catches it. Large pages on slow
+// connections are exactly what hits this, so it must remain retryable.
+func TestEnrich_BodyReadTimeoutIsRetryable(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+
+			// Send nothing else. The client's timeout, which covers the body
+			// read, is what ends the request.
+			<-r.Context().Done()
+		}),
+	)
+	t.Cleanup(server.Close)
+
+	enricher := NewEnricher(
+		&http.Client{Timeout: 50 * time.Millisecond},
+		security.DefaultOutboundFetchPolicy(),
+	)
+
+	metadata, err := enricher.Enrich(context.Background(), server.URL)
+
+	require.Error(t, err)
+	require.Equal(t, FailureFetch, Kind(err))
+	require.True(t, metadata.IsEmpty())
+}
+
+// A page that declares a legacy encoding is transcoded rather than read as if it
+// were UTF-8, which would store mojibake as the title.
+func TestEnrich_DecodesTheDeclaredCharset(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=windows-1252")
+			_, _ = w.Write([]byte(
+				"<html><head><title>Caf\xe9</title></head></html>",
+			))
+		}),
+	)
+	t.Cleanup(server.Close)
+
+	metadata, err := newTestEnricher(t, server.URL).
+		Enrich(context.Background(), server.URL)
+
+	require.NoError(t, err)
+	requireMetadata(t, metadata, "title", "Café")
+}
+
+// A document may declare its own encoding when the header does not. That is what
+// the prescan is for, and it is the common shape of an older page.
+func TestEnrich_DecodesAPrescanCharset(t *testing.T) {
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(
+				`<html><head><meta charset="windows-1252"><title>Caf` +
+					"\xe9" +
+					`</title></head></html>`,
+			))
+		}),
+	)
+	t.Cleanup(server.Close)
+
+	metadata, err := newTestEnricher(t, server.URL).
+		Enrich(context.Background(), server.URL)
+
+	require.NoError(t, err)
+	requireMetadata(t, metadata, "title", "Café")
+}
+
+// A page that declares nothing and is valid UTF-8 must be left alone. Applying
+// the legacy default to it would turn every accented character into mojibake,
+// which would be a regression rather than a fix.
+func TestEnrich_KeepsUndeclaredUTF8Intact(t *testing.T) {
+	server := serveHTML(
+		t,
+		`<html><head><title>Café — naïve</title></head></html>`,
+	)
+
+	metadata, err := newTestEnricher(t, server.URL).
+		Enrich(context.Background(), server.URL)
+
+	require.NoError(t, err)
+	requireMetadata(t, metadata, "title", "Café — naïve")
+}
+
+// Decoding can expand the stream, so the body limit is applied to the decoded
+// bytes as well. Here the raw limit still contains the meta tag, because each
+// encoded byte is one byte, but the decoded form pushes it past the cap.
+func TestEnrich_DecodedBodyIsBounded(t *testing.T) {
+	body := "<html><head>" +
+		strings.Repeat("\xe9", 30) +
+		`<meta property="og:title" content="Beyond The Decoded Limit">` +
+		`</head></html>`
+
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=windows-1252")
+			_, _ = io.WriteString(w, body)
+		}),
+	)
+	t.Cleanup(server.Close)
+
+	enricher := NewEnricher(
+		&http.Client{},
+		security.OutboundFetchPolicy{MaxResponseBytes: 64},
+	)
+
+	metadata, err := enricher.Enrich(context.Background(), server.URL)
+
+	// Truncation is not a failure, and the expanded bytes count against the same
+	// budget as any other body bytes.
+	require.NoError(t, err)
+	requireNoMetadata(t, metadata, "title")
+}
+
 func TestKind(t *testing.T) {
 	t.Run("an error from this package keeps its kind", func(t *testing.T) {
 		err := newFailure(FailureContent, ErrUnexpectedStatus)
@@ -685,7 +893,7 @@ func TestKind(t *testing.T) {
 
 	t.Run("a wrapped error keeps the innermost kind", func(t *testing.T) {
 		inner := newFailure(FailureContent, ErrUnsupportedContentType)
-		wrapped := wrapFailure(FailureParse, inner)
+		wrapped := wrapFailure(FailureFetch, inner)
 
 		require.Equal(t, FailureContent, Kind(wrapped))
 	})
@@ -705,7 +913,31 @@ func TestKind(t *testing.T) {
 	})
 
 	t.Run("wrapFailure passes nil through", func(t *testing.T) {
-		require.NoError(t, wrapFailure(FailureParse, nil))
+		require.NoError(t, wrapFailure(FailureFetch, nil))
+	})
+}
+
+// The status is reported as a field only when a response was seen. A transport
+// failure, a policy refusal and a read failure all report zero, because none of
+// them has a status to report.
+func TestStatus(t *testing.T) {
+	t.Run("a status failure reports its status", func(t *testing.T) {
+		failure := newFailure(FailureContent, ErrUnexpectedStatus)
+		failure.StatusCode = http.StatusForbidden
+
+		require.Equal(t, http.StatusForbidden, Status(failure))
+	})
+
+	t.Run("a failure with no response reports zero", func(t *testing.T) {
+		require.Zero(t, Status(newFailure(FailureFetch, ErrFetchFailed)))
+	})
+
+	t.Run("an unclassified error reports zero", func(t *testing.T) {
+		require.Zero(t, Status(errors.New("something else")))
+	})
+
+	t.Run("no error reports zero", func(t *testing.T) {
+		require.Zero(t, Status(nil))
 	})
 }
 
@@ -796,6 +1028,24 @@ type erroringReader struct {
 
 func (r erroringReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+// prefixThenErrorReader returns a fixed prefix and then fails, standing in for a
+// body that stopped arriving after part of it had already been read.
+type prefixThenErrorReader struct {
+	prefix []byte
+	err    error
+}
+
+func (r *prefixThenErrorReader) Read(p []byte) (int, error) {
+	if len(r.prefix) == 0 {
+		return 0, r.err
+	}
+
+	n := copy(p, r.prefix)
+	r.prefix = r.prefix[n:]
+
+	return n, nil
 }
 
 func TestFailureSentinelsAreDistinct(t *testing.T) {

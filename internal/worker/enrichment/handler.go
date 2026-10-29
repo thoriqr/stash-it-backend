@@ -143,7 +143,11 @@ func (h *Handler) EnrichSavedItem(
 			zap.String("saved_item_id", payload.SavedItemID.String()),
 			zap.String("task_id", taskID(ctx)),
 			zap.String("kind", string(kind)),
-			zap.Error(err),
+			zap.Int("attempt", retryCount(ctx)+1),
+
+			// A transport failure carries the request URL in its text, so the
+			// error is rendered without it.
+			zap.String("error", enrichment.SafeErrorMessage(err)),
 		)
 
 		// The item is already recorded as failed, which is the durable part of this
@@ -160,8 +164,12 @@ func (h *Handler) EnrichSavedItem(
 		zap.String("saved_item_id", payload.SavedItemID.String()),
 		zap.String("task_id", taskID(ctx)),
 		zap.String("kind", string(kind)),
+		zap.Int("attempt", retryCount(ctx)+1),
 		zap.Int("retry", retryCount(ctx)),
-		zap.Error(err),
+
+		// A transport failure carries the request URL in its text, so the error
+		// is rendered without it.
+		zap.String("error", enrichment.SafeErrorMessage(err)),
 	)
 
 	return err
@@ -169,9 +177,10 @@ func (h *Handler) EnrichSavedItem(
 
 // isPermanent reports whether another attempt could produce a different result.
 //
-// The two permanent kinds are a page that was reached and cannot be used, and a
-// page that was reached and could not be understood. Neither changes when the
-// same request is made again.
+// Only a content failure is permanent: a page that was reached and cannot be
+// used, a resource that is not an HTML document, a redirect chain beyond the
+// limit, or a destination the outbound policy refuses. None of those changes
+// when the same request is made again.
 //
 // The fetch kind is deliberately not treated as permanent, and that includes the
 // statuses an origin uses to say "not right now": a 429 and a 503 arrive from
@@ -185,14 +194,7 @@ func (h *Handler) EnrichSavedItem(
 // exhausted Asynq archives the task, and the item already carries the durable
 // record of the failure.
 func isPermanent(kind enrichment.FailureKind) bool {
-	switch kind {
-	case enrichment.FailureContent, enrichment.FailureParse:
-		return true
-	case enrichment.FailureFetch:
-		return false
-	default:
-		return false
-	}
+	return kind == enrichment.FailureContent
 }
 
 // taskID reads Asynq's task id from the context for logging.

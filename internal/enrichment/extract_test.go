@@ -1246,3 +1246,161 @@ func TestPrecedenceOrdersDoNotUseThePublisherForTitle(t *testing.T) {
 		require.NotEqual(t, jsonLDPublisherName, key)
 	}
 }
+
+// The document below is shaped like a YouTube watch page. It is representative of
+// the metadata those pages publish rather than a captured sample; what it pins is
+// that the generic Open Graph and JSON-LD paths already cover a video page, so no
+// platform specific extraction is needed for one.
+func TestExtract_RepresentativeVideoPage(t *testing.T) {
+	document := `<!doctype html>
+<html>
+<head>
+	<title>Some Video Title - YouTube</title>
+	<meta property="og:site_name" content="YouTube">
+	<meta property="og:title" content="Some Video Title">
+	<meta property="og:description" content="A description of the video.">
+	<meta property="og:image" content="https://i.ytimg.com/vi/abc123/maxresdefault.jpg">
+	<meta property="og:url" content="https://www.youtube.com/watch?v=abc123">
+	<meta name="twitter:card" content="player">
+	<meta name="twitter:title" content="Some Video Title">
+	<link rel="canonical" href="https://www.youtube.com/watch?v=abc123">
+	<script type="application/ld+json">
+	{
+		"@context": "https://schema.org",
+		"@type": "VideoObject",
+		"name": "Some Video Title",
+		"description": "A description of the video.",
+		"thumbnailUrl": "https://i.ytimg.com/vi/abc123/maxresdefault.jpg",
+		"uploadDate": "2026-01-01"
+	}
+	</script>
+</head>
+<body><div id="content"></div></body>
+</html>`
+
+	metadata := extractFrom(
+		t,
+		document,
+		"https://www.youtube.com/watch?v=abc123",
+	)
+
+	requireMetadata(t, metadata, "title", "Some Video Title")
+	requireMetadata(t, metadata, "platform", "YouTube")
+	requireMetadata(
+		t,
+		metadata,
+		"description",
+		"A description of the video.",
+	)
+	requireMetadata(
+		t,
+		metadata,
+		"image",
+		"https://i.ytimg.com/vi/abc123/maxresdefault.jpg",
+	)
+	requireMetadata(
+		t,
+		metadata,
+		"canonical",
+		"https://www.youtube.com/watch?v=abc123",
+	)
+}
+
+// A product page is the ordinary web case with different property names, and it
+// is covered by the same rules. The plausible Indonesian e-commerce shape is
+// asserted here so a later change to the preference tables is measured against
+// it.
+func TestExtract_RepresentativeProductPage(t *testing.T) {
+	document := `<!doctype html>
+<html>
+<head>
+	<title>Kursi Kantor Ergonomis | Tokopedia</title>
+	<meta property="og:site_name" content="Tokopedia">
+	<meta property="og:title" content="Kursi Kantor Ergonomis">
+	<meta property="og:description" content="Kursi kantor dengan sandaran ergonomis.">
+	<meta property="og:image" content="https://images.tokopedia.net/img/cache/700/product.jpg">
+	<meta property="og:url" content="https://www.tokopedia.com/pexio/kursi-kantor">
+	<link rel="canonical" href="https://www.tokopedia.com/pexio/kursi-kantor">
+	<script type="application/ld+json">
+	{
+		"@context": "https://schema.org",
+		"@type": "Product",
+		"name": "Kursi Kantor Ergonomis",
+		"description": "Kursi kantor dengan sandaran ergonomis.",
+		"image": ["https://images.tokopedia.net/img/cache/700/product.jpg"],
+		"brand": {"@type": "Brand", "name": "Pexio"},
+		"offers": {
+			"@type": "Offer",
+			"price": "1500000",
+			"priceCurrency": "IDR"
+		}
+	}
+	</script>
+</head>
+<body><div id="root"></div></body>
+</html>`
+
+	metadata := extractFrom(
+		t,
+		document,
+		"https://www.tokopedia.com/pexio/kursi-kantor",
+	)
+
+	requireMetadata(t, metadata, "title", "Kursi Kantor Ergonomis")
+	requireMetadata(t, metadata, "description", "Kursi kantor dengan sandaran ergonomis.")
+	requireMetadata(
+		t,
+		metadata,
+		"image",
+		"https://images.tokopedia.net/img/cache/700/product.jpg",
+	)
+	requireMetadata(t, metadata, "platform", "Tokopedia")
+}
+
+// A brand names the product's maker, not the site the page belongs to. Filing an
+// item under "Pexio" instead of "Tokopedia" would be a wrong automatic
+// organization, so brand is deliberately not a platform candidate.
+func TestExtract_BrandIsNotAPlatform(t *testing.T) {
+	document := `<html><head>
+		<title>Kursi Kantor</title>
+		<script type="application/ld+json">
+		{
+			"@type": "Product",
+			"name": "Kursi Kantor",
+			"brand": {"@type": "Brand", "name": "Pexio"}
+		}
+		</script>
+	</head></html>`
+
+	metadata := extractFrom(
+		t,
+		document,
+		"https://www.tokopedia.com/pexio/kursi-kantor",
+	)
+
+	requireMetadata(t, metadata, "title", "Kursi Kantor")
+	requireNoMetadata(t, metadata, "platform")
+}
+
+// A page that renders its content client-side can still publish a document
+// title, and that is all it published. The absent fields are an empty successful
+// result, not a failure, and nothing is inferred from the hostname to fill them.
+func TestExtract_JavaScriptShellIsAnEmptySuccess(t *testing.T) {
+	document := `<!doctype html>
+<html>
+<head><title>Shopee Indonesia</title></head>
+<body><div id="main"></div><script src="/app.js"></script></body>
+</html>`
+
+	metadata := extractFrom(
+		t,
+		document,
+		"https://shopee.co.id/product/1/2",
+	)
+
+	requireMetadata(t, metadata, "title", "Shopee Indonesia")
+	requireNoMetadata(t, metadata, "description")
+	requireNoMetadata(t, metadata, "image")
+	requireNoMetadata(t, metadata, "platform")
+	requireNoMetadata(t, metadata, "canonical")
+}

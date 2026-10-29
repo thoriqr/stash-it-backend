@@ -478,6 +478,7 @@ func TestNewGuardedHTTPClient_AppliesLimits(t *testing.T) {
 	require.True(t, ok)
 
 	require.Equal(t, policy.ResponseHeaderTimeout, transport.ResponseHeaderTimeout)
+	require.Equal(t, policy.MaxResponseHeaderBytes, transport.MaxResponseHeaderBytes)
 	require.Equal(t, policy.TLSHandshakeTimeout, transport.TLSHandshakeTimeout)
 	require.Equal(t, policy.MaxIdleConns, transport.MaxIdleConns)
 	require.Equal(t, policy.MaxIdleConnsPerHost, transport.MaxIdleConnsPerHost)
@@ -626,6 +627,11 @@ func TestDefaultOutboundFetchPolicy(t *testing.T) {
 	)
 	require.Equal(t, OutboundFetchMaxRedirects, policy.MaxRedirects)
 	require.Equal(t, OutboundFetchMaxResponseBytes, policy.MaxResponseBytes)
+	require.Equal(
+		t,
+		OutboundFetchMaxResponseHeaderBytes,
+		policy.MaxResponseHeaderBytes,
+	)
 	require.Equal(t, OutboundFetchDialTimeout, policy.DialTimeout)
 	require.Equal(
 		t,
@@ -647,6 +653,7 @@ func TestDefaultOutboundFetchPolicy_HasNoZeroLimit(t *testing.T) {
 	require.Positive(t, policy.ResponseHeaderTimeout)
 	require.Positive(t, policy.MaxRedirects)
 	require.Positive(t, policy.MaxResponseBytes)
+	require.Positive(t, policy.MaxResponseHeaderBytes)
 	require.Positive(t, policy.DialTimeout)
 	require.Positive(t, policy.TLSHandshakeTimeout)
 	require.Positive(t, policy.MaxIdleConns)

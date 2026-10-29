@@ -1991,23 +1991,62 @@ The classification is read from `enrichment.Kind`, so the worker does not define
 second opinion about what a page error means. It maps that classification onto one
 queue decision.
 
-Retryable:
+Retryable (`fetch`):
 
-- DNS, connection, TLS, timeouts, too many redirects, policy refusals;
-- a body that could not be read;
+- DNS, the connection, TLS, a timeout or a stream reset before a response;
+- a body that could not be read, including the client's overall timeout expiring
+  mid-body;
 - `429` and `5xx`, which describe the origin at that moment;
 - any database error, which arrives unclassified and defaults to retryable.
 
-Permanent, and skipped immediately:
+Permanent (`content`), and skipped immediately:
 
 - a terminal client status such as `401`, `403`, `404`, `410`;
 - a non-HTML content type;
-- an HTML document that could not be parsed.
+- a redirect chain beyond the limit;
+- a destination the outbound policy refuses.
+
+There is no third classification. A `parse` kind used to exist for a body that
+could not be tokenized, but the tokenizer only ever returns the reader's own
+error, so the kind could only ever turn a network failure into a permanent one. A
+body read failure is now a `fetch` failure, which is what makes a large page on a
+slow connection recoverable.
 
 Retries are bounded by the queue's own budget: one attempt plus
 `EnrichmentMaxRetry` retries, with an exponentially increasing, jittered, capped
-delay. Once the budget is exhausted Asynq archives the task and the item already
-carries the durable `failed` record.
+delay. `EnrichmentMaxRetry` is `2`, so an item is fetched at most **three times**:
+the waits are 30s and 60s, each ±20%. Once the budget is exhausted Asynq archives
+the task and the item already carries the durable `failed` record.
+
+### Reliability limits and diagnostics
+
+Three changes were made to the extraction path, none of which changes what a
+successful enrichment records:
+
+- **Charset decoding.** The extractor transcodes a page to UTF-8 with
+  `golang.org/x/net/html/charset` before tokenizing it. The encoding is read from
+  the `Content-Type` charset, then a BOM, then a `<meta charset>` prescan, and
+  valid UTF-8 is passed through unchanged, so an undeclared page is not altered. A
+  legacy 8-bit page no longer stores mojibake as its title. The decoded stream is
+  bounded by `OutboundFetchMaxResponseBytes` as well, because transcoding can
+  expand the bytes.
+- **Response-header limit.** `OutboundFetchMaxResponseHeaderBytes` is 64 KiB and
+  is applied by the transport. Go's default is 10 MiB, which no page needs and a
+  broken origin could use to make every in-flight fetch hold memory it has no use
+  for.
+- **Structured failure context.** Both enrichment paths log `kind`, `elapsed_ms`
+  and `http_status` when a response was seen; the worker handler adds `attempt`.
+  The URL is logged with its query string, fragment and userinfo removed, because
+  those carry tracking parameters and credentials. The error text is sanitized
+  the same way: a transport failure arrives as a `url.Error` that embeds the
+  request URL, so that rendering is replaced with its cause before it is logged.
+  A successful enrichment logs `has_title`, `has_platform`, `has_description` and
+  `has_image` as booleans and never the values, so "read successfully and exposed
+  nothing" is distinguishable from "the preview is complete".
+
+Everything else is unchanged: the 10s request ceiling including the body read, the
+5s header and handshake ceilings, the 3-redirect cap, the 2 MiB body cap, the
+80/443 port allowlist, and the dial-time address check that is the SSRF boundary.
 
 ### Concurrency and shutdown
 
@@ -2134,18 +2173,26 @@ The worker has:
 - `internal/worker/organization` — the eligibility guards, the system key derived
   from a platform, and that organization writes no enrichment state;
 - `internal/worker/queue` — payload round trip, payload contents, backoff bounds,
-  and the relationship between the task timeout and the outbound fetch ceiling;
+  the pinned three-attempt retry target, and the relationship between the task
+  timeout and the outbound fetch ceiling;
+- `internal/enrichment` — body-read failures retried rather than made permanent,
+  a mid-body timeout classified as retryable, policy and redirect refusals
+  classified as permanent, the status accessor, charset decoding from both a
+  header and a document prescan, undeclared UTF-8 left intact, the decoded body
+  bound, the sanitized log form of a URL, and representative video, product and
+  JavaScript-shell pages;
 - `internal/worker/enrichment` — handler classification for retryable, permanent,
   unclassified and malformed-payload tasks, and service behavior for completion,
   empty results, failures, missing items and write errors;
 - `internal/integration` — the whole path against real Postgres and real Redis:
   a save enqueues, the worker consumes, the row is written; a deleted item is
   discarded; a permanent failure is archived on the first attempt; a transient
-  failure is retried and then completes; an exhausted budget is archived; the
-  producer's task type, queue, timeout and retry budget round-trip for both task
-  types; the enrichment -> organization handoff runs end to end; and organization
-  creates, reuses, is skipped for, and refuses to undo a user's filing for, with
-  concurrent tasks producing exactly one collection per platform per user.
+  failure is retried and then completes; an exhausted budget is archived after
+  exactly three attempts; the producer's task type, queue, timeout and retry
+  budget round-trip for both task types; the enrichment -> organization handoff
+  runs end to end; and organization creates, reuses, is skipped for, and refuses
+  to undo a user's filing for, with concurrent tasks producing exactly one
+  collection per platform per user.
 
 Deletion is verified against real Postgres, asserting database state rather than
 status codes alone:

@@ -818,6 +818,15 @@ func TestBackgroundEnrichment_RetryBudgetIsBoundedAndFinishes(t *testing.T) {
 		"the task must be attempted once and then exactly as often as the budget allows",
 	)
 
+	// Pinned to the product target as well, so the number cannot drift with the
+	// constant: three attempts means one initial attempt and two retries.
+	require.Equal(
+		t,
+		3,
+		enricher.Calls(),
+		"a fully exhausted retryable failure must be attempted three times in total",
+	)
+
 	require.Equal(
 		t,
 		"failed",

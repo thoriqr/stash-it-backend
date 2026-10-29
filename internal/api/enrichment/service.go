@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -94,15 +95,39 @@ func (s *service) Enrich(
 		return EnrichResult{}, err
 	}
 
+	started := time.Now()
+
 	metadata, enrichErr := s.enricher.Enrich(ctx, rawURL)
+
+	elapsed := time.Since(started)
+
 	if enrichErr != nil {
-		s.log.Warn(
-			"enrichment failed",
+		fields := []zap.Field{
 			zap.String("saved_item_id", savedItemID.String()),
-			zap.String("url", rawURL),
+
+			// Query strings and fragments are dropped: they carry tracking
+			// parameters and signed tokens, and neither is needed to diagnose a
+			// failed fetch.
+			zap.String("url", enrichment.SanitizedURL(rawURL)),
 			zap.String("kind", string(enrichment.Kind(enrichErr))),
-			zap.Error(enrichErr),
+			zap.Int64("elapsed_ms", elapsed.Milliseconds()),
+		}
+
+		// Only a status failure has one, so it is omitted rather than logged as a
+		// zero that would look like a real status.
+		if status := enrichment.Status(enrichErr); status != 0 {
+			fields = append(fields, zap.Int("http_status", status))
+		}
+
+		// The error is rendered through SafeErrorMessage because a transport
+		// failure carries the request URL in its text, including the query string
+		// and fragment. The sanitized URL field above is not enough on its own.
+		fields = append(
+			fields,
+			zap.String("error", enrichment.SafeErrorMessage(enrichErr)),
 		)
+
+		s.log.Warn("enrichment failed", fields...)
 
 		// The status write is the response to a failed enrichment. If it fails
 		// too, that is a database problem and is worth returning, because the
@@ -136,6 +161,19 @@ func (s *service) Enrich(
 	if err != nil {
 		return EnrichResult{}, err
 	}
+
+	// Which fields the page actually exposed, as presence and never as values, so
+	// "the page said nothing" is distinguishable from "the preview is complete"
+	// without logging anything the user saved.
+	s.log.Info(
+		"saved item enriched",
+		zap.String("saved_item_id", savedItemID.String()),
+		zap.Int64("elapsed_ms", elapsed.Milliseconds()),
+		zap.Bool("has_title", metadata.Title != nil),
+		zap.Bool("has_platform", metadata.Platform != nil),
+		zap.Bool("has_description", metadata.Description != nil),
+		zap.Bool("has_image", metadata.ImageURL != nil),
+	)
 
 	return EnrichResult{SavedItem: savedItem}, nil
 }
