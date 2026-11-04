@@ -15,6 +15,16 @@ type Config struct {
 	AccessTokenSecret      string
 	GoogleClientID         string
 
+	// GoogleDesktopClientID is the audience of ID tokens issued to the Windows
+	// desktop application.
+	//
+	// It is optional because a deployment without a desktop client still serves
+	// the existing mobile and web flows. An absent value simply leaves the
+	// verifier accepting only GoogleClientID; it is never replaced with a
+	// default, so a missing desktop client cannot silently become a different
+	// client's audience.
+	GoogleDesktopClientID string
+
 	// RedisURL is the queue connection the API enqueues background work on.
 	//
 	// It is the same value the worker reads and is required on both sides, because
@@ -115,6 +125,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
 	}
 
+	// Optional by design, like SessionCleanupSecret below. A desktop client is
+	// one additional way into the same Google flow, not a dependency of the
+	// existing one, so its absence must not stop the API from starting. No
+	// default is supplied: an invented audience would be the ID of a client this
+	// deployment does not own.
+	googleDesktopClientID := os.Getenv("GOOGLE_DESKTOP_CLIENT_ID")
+
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		return Config{}, fmt.Errorf("REDIS_URL is required")
@@ -149,6 +166,7 @@ func Load() (Config, error) {
 		VerificationCodeSecret: verificationCodeSecret,
 		AccessTokenSecret:      accessTokenSecret,
 		GoogleClientID:         googleClientID,
+		GoogleDesktopClientID:  googleDesktopClientID,
 		RedisURL:               redisURL,
 		ClientIPSource:         clientIPSource,
 		TrustedProxies:         trustedProxies,

@@ -120,6 +120,7 @@ func main() {
 
 	googleTokenVerifier := login.NewGoogleTokenVerifier(
 		cfg.GoogleClientID,
+		cfg.GoogleDesktopClientID,
 	)
 
 	var emailSender email.Sender
