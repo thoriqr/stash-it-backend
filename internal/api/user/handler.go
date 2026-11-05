@@ -70,15 +70,10 @@ func NewHandler(service Service) *Handler {
 
 // GetUser godoc
 // @Summary Get the current user's profile
-// @Description Returns the profile of the authenticated user, together with the authentication providers linked to it and whether the account holds a password credential.
-// @Description The user carries id, email, display_name, has_password_credential, created_at and identities. Nothing else about the account is reported: no password hash, no provider subject, no session identifier.
-// @Description Each identity carries provider, linked_at, email_snapshot and display_name_snapshot. provider_subject is never reported.
-// @Description The snapshots are what the provider asserted about the account at the moment the link was made, kept as history. They are not copies of the account's own email and display_name, they are not refreshed, and they may legitimately disagree with both — comparing them is the client's call. Nothing is fetched from the provider to update them.
-// @Description Both snapshots preserve the stored nullability. A provider that asserted no value reports JSON null, which is different from a provider that asserted an empty value and reports "". Neither is ever filled in from the account's current email or display name.
-// @Description provider is the value stored at link time and is not a value this API maintains a list of, so a client must render a provider it has not seen before rather than treating it as an error. The array is ordered oldest link first and is always present, as an empty array when nothing is linked.
-// @Description has_password_credential decides which form the password settings screen should offer. It is read from the database on every request. It is a rendering hint and never a decision: PUT /users/me/password determines the actual case from the same database and applies the rule that follows from it.
-// @Description This route carries no rate limit. Reading a profile spends two indexed reads and holds nothing beyond the request, so a budget here would buy no protection and would — because the limiter fails closed — make the application unable to render a profile during a Redis outage.
-// @Description Only the authenticated user's own profile is returned. There is no route that accepts a user id, so one user's profile cannot be read by naming another's.
+// @Description Retrieve the authenticated user's profile, including linked authentication providers and whether the account has a password credential.
+// @Description identities contains the authentication providers linked to the account. The array is always present and may be empty. Clients should support provider values they do not recognize.
+// @Description email_snapshot and display_name_snapshot represent provider information captured when the identity was linked. They are historical values and may differ from the user's current email and display name. Both fields may be null.
+// @Description has_password_credential indicates whether the account has a password credential and can be used to determine which password settings options to display. The password update endpoint remains authoritative when applying changes.
 // @Description Possible error codes:
 // @Description - USER_NOT_FOUND
 // @Description - INVALID_AUTHORIZATION_HEADER
@@ -111,11 +106,9 @@ func (h *Handler) GetUser(c fiber.Ctx) error {
 
 // UpdateUser godoc
 // @Summary Update the current user's display name
-// @Description Renames the authenticated user. display_name is the only field this endpoint accepts; a body carrying any other field changes nothing.
-// @Description The name must be between 2 and 100 characters, which are the same bounds registration applies to the same column. It is not trimmed and not case-folded, so a value submitted with surrounding whitespace is stored with it — deliberately matching how registration stores a display name.
-// @Description Only the authenticated user's row is written. No other user is affected and no unique rule applies to display names, so this endpoint never answers with a conflict.
-// @Description The response is the complete profile, in the same shape GET /users/me returns, and is the row this request wrote rather than a re-read. A client therefore never has to merge two representations of the profile it is showing.
-// @Description Updating the display name carries no rate limit either, even though it writes. A rename spends one indexed UPDATE, arranges nothing downstream, and holds nothing beyond the request; DELETE /saved-items/:id and DELETE /collections/:id are unlimited for the same reason.
+// @Description Update the authenticated user's display name. display_name is the only field accepted by this endpoint.
+// @Description The display name must contain between 2 and 100 characters. Leading and trailing whitespace are preserved.
+// @Description The response contains the updated user profile, including linked authentication providers.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - BAD_REQUEST
@@ -159,13 +152,11 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 
 // SetPassword godoc
 // @Summary Create or change the current user's password
-// @Description Sets the authenticated user's password. Which of the two things it does is decided by the database, not by the request: an account holding no credential stores a first password, and one that already holds one has its password replaced. has_password_credential from GET /users/me tells a client which form to render, and is never consulted to decide what happens here.
-// @Description Send new_password alone when the account holds no credential, and both new_password and current_password when it does. Sending current_password for an account that has no credential is refused with UNEXPECTED_CURRENT_PASSWORD rather than ignored, because it would otherwise report success for a password that was never checked.
-// @Description An existing credential is only replaced once the submitted current_password has been verified against it. A wrong password answers 401 CURRENT_PASSWORD_INVALID and costs one Argon2id derivation: the new password is not derived at all when the current one fails.
-// @Description Creating a first password revokes nothing. Changing an existing one revokes every other active session of the account and preserves the session making the request. **That revocation does not take effect immediately for a session already holding an access token.** Access tokens in this application are stateless and are never checked against the session row, so a token issued before this request keeps working until its own expiry — up to about 15 minutes. Signing a device out here therefore means its refresh no longer works, not that its existing token stops working at once.
-// @Description Two concurrent requests that both create a password produce exactly one success; the other is refused with 409 PASSWORD_CREDENTIAL_ALREADY_EXISTS and its password is not stored over the winner's. Two concurrent requests that both change a password produce exactly one success; the other is refused with 409 PASSWORD_ALREADY_CHANGED rather than silently overwriting a password it never verified.
-// @Description If no Argon2id capacity is available the answer is 503 PASSWORD_WORK_UNAVAILABLE with a Retry-After, and nothing at all is written: no credential is stored and no session is revoked.
-// @Description The route is rate limited per authenticated user: 5 requests per 15 minutes. A request over budget is refused with 429 USER_RATE_LIMIT_EXCEEDED and a Retry-After, and never reaches the derivations it guards, so a refused request stores nothing and revokes nothing. The charge is not refunded on success or on failure — a failed attempt costs the budget, because verifying a submitted current_password is exactly what the budget bounds. The budget fails closed: if the counter cannot be evaluated the route answers 503 USER_RATE_LIMIT_UNAVAILABLE and writes nothing, while GET /users/me and PATCH /users/me are unaffected.
+// @Description Create a password for an account that does not have a password credential, or change the existing password.
+// @Description Send new_password alone when creating a password. When changing an existing password, both new_password and current_password are required.
+// @Description The operation is determined by the account's current password credential state. has_password_credential from GET /users/me is a UI hint; this endpoint remains authoritative.
+// @Description Creating a password does not revoke existing sessions. Changing an existing password revokes all other active sessions while preserving the current session. Existing access tokens on revoked sessions may remain usable until they expire.
+// @Description The response message distinguishes between "password created successfully" and "password changed successfully".
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - BAD_REQUEST

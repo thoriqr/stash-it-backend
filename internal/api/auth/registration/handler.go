@@ -24,9 +24,7 @@ func NewHandler(service RegistrationService) *Handler {
 // @Description Start a manual registration flow using an email address.
 // @Description `verification_status` reports the state of the returned verification id.
 // @Description `pending` means a PIN must be requested. `verified` means PIN verification has
-// @Description already completed and a usable registration continuation exists: do not request
-// @Description another PIN, use the continuation token the client stored after verification with
-// @Description GET /auth/register/continuation. The raw continuation token is never returned here.
+// @Description already completed and a usable registration continuation exists: do not request another PIN.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - REGISTRATION_ALREADY_COMPLETED

@@ -295,10 +295,11 @@ plainly. Before finishing:
 
 Read the relevant document before changing the area it covers.
 
-| Area                                                         | Read                                 |
-| ------------------------------------------------------------ | ------------------------------------ |
-| Auth, account linking, saved items, collections, enrichment, worker, rate limiting | `documentation/decisions.md` |
-| Sessions, token rotation, reuse detection, expiry            | `documentation/auth-sessions.md`     |
-| Dead-session cleanup                                         | `documentation/session-cleanup.md`   |
-| PIN email budgets, cooldown, sender contract                 | `documentation/pin-email-budgets.md` |
-| Product scope and phases                                     | `documentation/product.md`           |
+| Area                                                                               | Read                                 |
+| ---------------------------------------------------------------------------------- | ------------------------------------ |
+| Auth, account linking, saved items, collections, enrichment, worker, rate limiting | `documentation/decisions.md`         |
+| Sessions, token rotation, reuse detection, expiry                                  | `documentation/auth-sessions.md`     |
+| Dead-session cleanup                                                               | `documentation/session-cleanup.md`   |
+| PIN email budgets, cooldown, sender contract                                       | `documentation/pin-email-budgets.md` |
+| Product scope, principles and roadmap                                              | `documentation/product.md`           |
+| How the product behaves, feature by feature                                        | `documentation/product-behavior.md`  |

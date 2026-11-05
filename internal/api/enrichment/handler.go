@@ -22,13 +22,10 @@ func NewHandler(service Service) *Handler {
 
 // Enrich godoc
 // @Summary Enrich one saved item's metadata
-// @Description Fetches the page at the saved item's URL and stores the metadata it exposes, such as title, platform, description and preview image.
-// @Description This acts on exactly one saved item. It is not a batch operation and never touches other saved items.
-// @Description A page is not required to expose every field. Whatever is found is stored and the rest stay null, so an item with only a title is still enriched successfully.
-// @Description If the page cannot be fetched or read, the enrichment is recorded as failed and the saved item is returned unchanged. The saved item itself stays valid: a URL that could not be enriched is still a saved item.
-// @Description The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
-// @Description Enrichment never changes which collection the item is in.
-// @Description This is the only endpoint that fetches a page inside the API process, so it is rate limited per authenticated user. The budget is spent before the request reaches this handler: a refused enrichment performs no fetch and writes no enrichment state.
+// @Description Fetch metadata from the saved item's URL.
+// @Description Enrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.
+// @Description The enrichment result is reported through enrichment_status in the response.
+// @Description Enrichment does not change the saved item's collection.
 // @Description Possible error codes:
 // @Description - SAVED_ITEM_NOT_FOUND
 // @Description - BAD_REQUEST

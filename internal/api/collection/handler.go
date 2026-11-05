@@ -22,12 +22,9 @@ func NewHandler(service Service) *Handler {
 
 // PutSavedItem godoc
 // @Summary Put a saved item into a collection
-// @Description File one of the current user's saved items into one of their collections, identified by display name.
-// @Description Any existing collection owned by the user is a valid destination, including system collections such as "Unsorted" and automatically created platform collections such as "YouTube". Collection type does not restrict the destination.
-// @Description collection_intent states which operation the caller means, and it is required. "existing" selects a destination: a collection of either type that holds the name is reused, and if the name no longer resolves a user collection is created, preserving the endpoint's original create-or-get behaviour. "create" asks for a new collection: a name that is already held by one of the user's collections is refused, and nothing is created or moved. Collection names are unique per user across both types, compared case-insensitively with surrounding whitespace ignored, and the stored name is trimmed.
-// @Description The two intents have opposite outcomes for the same taken name, so there is no default and a missing or unknown value is INVALID_COLLECTION_INTENT. Under "existing" a name held by a system collection is a destination, not a rejection; there is no reserved-name error on this endpoint.
-// @Description This operation is idempotent. If the saved item is already in the target collection nothing is written, the saved item's updated_at is left unchanged, and already_in_collection is returned true.
-// @Description The saved item must belong to the authenticated user. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
+// @Description Add a saved item to one of the user's collections.
+// @Description Any collection owned by the user can be used as a destination, including system and automatically created collections.
+// @Description collection_intent determines how the collection is selected. "existing" selects a collection by name or creates one if it does not exist. "create" creates a new collection and returns a conflict if the name is already in use.
 // @Description Possible error codes:
 // @Description - INVALID_COLLECTION_NAME
 // @Description - INVALID_COLLECTION_INTENT
@@ -99,19 +96,15 @@ func (h *Handler) PutSavedItem(c fiber.Ctx) error {
 
 // ListCollections godoc
 // @Summary List collections
-// @Description Get the authenticated user's collections, one page at a time.
-// @Description The Unsorted collection is always the first result, under every sort, and never appears again on a later page. It is reported by its system_key, which is "unsorted"; the display name is not its identity and a collection's type never decides anything about it.
-// @Description Collections automatic organization created appear here exactly like collections the user named themselves, because a collection belongs to one user either way.
-// @Description sort selects the order and defaults to "newest". "newest" and "oldest" order by when the collection was created; "name" orders alphabetically, comparing names case-insensitively and ignoring surrounding whitespace, which is the same comparison collection names are stored under. Every order is broken by id so collections created in the same instant keep a stable order.
-// @Description Every collection reports what it holds through two fields. saved_items_count is how many saved items the collection contains, and saved_items_count_overflow says whether that number is the real one. Together they cover the whole range: a count from 0 to 99 with saved_items_count_overflow false is exact, and a count of 99 with saved_items_count_overflow true means "99 or more". A client can therefore render an exact number up to 99 and a "99+" above it without comparing against a threshold of its own. A collection holding nothing reports 0 and false, never null.
-// @Description The count is of the whole collection and is identical on every page of the listing, so a value shown beside a collection does not change as the user pages through the list. Items belonging to another user are never counted. The count is computed in the same statement that returns the page, so it costs no additional query.
-// @Description Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than a row, so it keeps working even if the collection it came from has since been deleted or renamed, and a cursor pointing past the end returns an empty page rather than an error.
-// @Description meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, or does not match the requested sort is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many collections exist overall, and this response reports no meta.pagination. That is about the size of the page, not about the size of a collection.
-// @Description Search is not available here. GET /search already searches collections by name.
+// @Description Retrieve the authenticated user's collections using cursor-based pagination.
+// @Description The Unsorted collection is always returned first, regardless of sort order, and is identified by its system_key ("unsorted").
+// @Description Collections can be sorted by creation time (newest or oldest) or alphabetically by name. The default sort is "newest".
+// @Description saved_items_count represents the number of saved items in a collection. Counts are exact up to 99; when saved_items_count_overflow is true, the count represents 99 or more.
+// @Description Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
 // @Description Possible error codes:
 // @Description - INVALID_COLLECTION_SORT
 // @Description - INVALID_CURSOR
-// @Description - VALIDATION_ERROR (limit outside 1..50)
+// @Description - VALIDATION_ERROR
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
@@ -171,23 +164,14 @@ func (h *Handler) ListCollections(c fiber.Ctx) error {
 
 // ListSavedItemsInCollection godoc
 // @Summary List a collection's saved items
-// @Description Get one of the current user's collections, newest saved item first. Unsorted behaves exactly like any other collection here; nothing about it is special-cased in this listing.
-// @Description The response body is {"data": {...}, "message": "...", "meta": {...}}. data holds the collection and the page: {"collection": {"id": "...", "name": "..."}, "saved_items": [...]}. The collection object carries only id and name, because the caller already arrived knowing the id and what it cannot know from the path is what the collection is called. It is reported on every response, including when saved_items is empty, so an empty collection is never mistaken for no match.
-// @Description Each saved item carries its full representation: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at. title, description, image_url, domain, platform and last_enriched_at are nullable. Every item keeps its own collection_id, which is always the id in data.collection.
-// @Description enrichment_status is pending, completed or failed, and describes whether the enrichment process ran rather than whether every field is populated, so an item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once, so a pending or failed item reports null.
-// @Description Items whose title is still null and items whose enrichment failed are both returned. A null field is an ordinary state of an item, not a reason to omit it.
-// @Description saved_items is an empty array rather than null when the collection holds nothing.
-// @Description This listing never starts enrichment and never changes anything. Enrichment is scheduled by saving a URL and by an explicit request for one item; looking at a collection is not a reason to fetch anything.
-// @Description Ordering is fixed at created_at DESC, id DESC. There is no sort parameter: a collection is something a person curated, so the order they chose when filing is the one they see. The id breaks ties, because created_at is constant within a transaction and rows inserted together genuinely share a timestamp.
-// @Description limit defaults to 20 and is capped at 50. A limit of 51 or more, or one below 1, is rejected as VALIDATION_ERROR; a non-numeric limit is BAD_REQUEST. limit=0 is treated as absent and falls back to the default.
-// @Description Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the beginning. A cursor records a position rather than an item, so it keeps working even if the item it came from has since been deleted, and a cursor past the end returns an empty page rather than an error.
-// @Description meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, has no position, or holds a value that is not a timestamp is rejected as INVALID_CURSOR. There is deliberately no total count: a cursor-paginated response does not know how many items exist overall, and this response reports no meta.pagination.
-// @Description The collection must belong to the authenticated user. A collection that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
-// @Description A collection that does not exist at all, rather than existing and being emptied, returns 404 COLLECTION_NOT_FOUND.
+// @Description Retrieve a collection and its saved items, ordered by newest first.
+// @Description The response includes collection details even when the collection contains no saved items.
+// @Description Saved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null.
+// @Description Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
 // @Description Possible error codes:
-// @Description - BAD_REQUEST (unparsable limit or cursor length, or a non-UUID collection id)
+// @Description - BAD_REQUEST
 // @Description - INVALID_CURSOR
-// @Description - VALIDATION_ERROR (limit outside 1..50)
+// @Description - VALIDATION_ERROR
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
@@ -258,32 +242,10 @@ func (h *Handler) ListSavedItemsInCollection(c fiber.Ctx) error {
 
 // DeleteCollection godoc
 // @Summary Delete a collection
-// @Description Delete one of the current user's collections by ID. The request must
-// state what happens to the saved items currently filed in that collection, because
-// a collection cannot be removed while saved items still reference it.
-// @Description saved_items_action is required and must be "delete" or "move".
-// @Description "delete" deletes those saved items along with the collection. "move"
-// files them into target_collection_id first and then deletes the collection. The
-// field names and their meanings never change with the action; which combinations
-// are valid is stated here and enforced by the backend.
-// @Description target_collection_id must be null when saved_items_action is
-// "delete" and must be a collection ID when it is "move". It names an ordinary
-// collection: Unsorted is a valid target and is referred to by its ID like any
-// other, and there is no separate mode for it and no fallback to it. A target that
-// does not exist or belongs to another user is an error, never a substitution.
-// @Description Unsorted itself cannot be deleted. It is identified by its
-// system_key, which is a stable identity; neither its display name nor its type
-// decides this. A collection's type does not restrict deletion either: a collection
-// created automatically is one the user may delete exactly like one they named
-// themselves.
-// @Description The whole operation is atomic. The saved items are deleted or moved
-// and the collection is removed together, or nothing changes at all. If a saved item
-// is filed into the collection while the operation runs, the database relationship
-// protects it, the operation fails with COLLECTION_NOT_EMPTY, and the collection and
-// its saved items are left as they were.
-// @Description The collection must belong to the authenticated user. A collection
-// that does not exist and one owned by another user both return the same not found
-// response, so this endpoint never discloses whether an ID exists.
+// @Description Delete one of the user's collections.
+// @Description saved_items_action determines what happens to the saved items in the collection. "delete" deletes the saved items, while "move" moves them to the collection specified by target_collection_id before deleting the collection.
+// @Description target_collection_id must be provided when saved_items_action is "move" and must be null when it is "delete". Unsorted can be used as a move destination.
+// @Description The Unsorted collection cannot be deleted.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - INVALID_COLLECTION_DELETE_ACTION

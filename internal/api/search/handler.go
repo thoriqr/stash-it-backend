@@ -21,16 +21,12 @@ func NewHandler(service Service) *Handler {
 }
 
 // Search godoc
-// @Summary Global Search
-// @Description Search the current user's saved items and collections with one query.
-// @Description Saved items are matched on title, domain and url. Collections are matched on name, and system collections are included, so a search for "unsorted" can find the Unsorted collection.
-// @Description Matching prefers a substring match and falls back to fuzzy matching for typos, so "ca" finds "camera" and "camra" finds it too. A result that contains the query is always ranked above a result that only fuzzy-matches it. Recency is never a substitute for relevance: it only breaks ties between results that scored the same.
-// @Description Results are capped rather than paged. Saved items return up to the internal maximum and collections up to a small fixed number. This endpoint does not accept a limit, page or cursor parameter.
-// @Description A saved item result reports the collection it is filed in, with that collection's id and name, so where a result lives is shown without another request. It also reports the item's enrichment_status, which is what distinguishes a page that exposed no title from a page that has not been read yet. title, domain and image_url are reported as stored and are null until enrichment populates them; no value is ever derived from the URL in their place.
-// @Description A collection result reports only its id and name. Use the id with GET /collections/{id}/saved-items to see what is in it. Whether a collection is one of the user's own or a system collection is reported by GET /collections rather than here.
-// @Description Only the authenticated user's own saved items and collections are searched. Another user's matching data is never returned.
-// @Description A search that matches nothing is a successful request with empty collections and saved_items arrays, not a 404.
-// @Description The query must be at least 2 and at most 128 characters. Surrounding whitespace is trimmed.
+// @Summary Search saved items and collections
+// @Description Search the authenticated user's saved items and collections.
+// @Description Saved items are matched by title, domain, and URL. Collections are matched by name, including system collections.
+// @Description Search supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.
+// @Description Results are limited and are not paginated.
+// @Description Saved item results include their associated collection and enrichment status.
 // @Description Possible error codes:
 // @Description - INVALID_SEARCH_QUERY
 // @Description - INVALID_AUTHORIZATION_HEADER

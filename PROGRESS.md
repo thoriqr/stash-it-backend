@@ -5,7 +5,8 @@ left. It does not describe how anything works and it does not hold rules.
 
 | For                                   | Read                                  |
 | ------------------------------------- | ------------------------------------- |
-| Product scope, phases, principles     | `documentation/product.md`            |
+| Product scope, principles, roadmap    | `documentation/product.md`            |
+| Product behavior, feature by feature  | `documentation/product-behavior.md`   |
 | Agent rules and conventions           | `AGENTS.md`                           |
 | API contracts                         | `docs/swagger.json` (generated)       |
 | Sessions and refresh tokens           | `documentation/auth-sessions.md`      |
@@ -18,7 +19,7 @@ _State as of the last recorded entry: 2026-10-27._
 
 ## Summary
 
-The backend is feature-complete for Phase B (`product.md`): authentication,
+The backend covers steps 1 to 3 of the roadmap in `product.md`: authentication,
 saving, the Inbox, collections, search, and enrichment with automatic
 organization. What remains is **deployment** (hosting platform and email provider
 are not chosen), **client catch-up** (Flutter is behind several backend changes),
@@ -151,10 +152,10 @@ The two breaking changes must ship with, or before, the backend.
       and `PUT /users/me/password` use `min=8,max=128`.
 - [ ] Idle-window clock mix in the refresh path (`auth-sessions.md`, Open items).
 
-### Next phase
+### Next on the roadmap
 
-Reminder and return loop, then product metadata enrichment (`product.md`,
-"Development order"). Not started.
+Reminder and return loop, then product metadata enrichment (steps 4 and 5 of the
+roadmap in `product.md`). Not started.
 
 ### Documentation housekeeping
 

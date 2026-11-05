@@ -22,11 +22,8 @@ func NewHandler(service SavedItemService) *Handler {
 
 // Create godoc
 // @Summary Save a URL
-// @Description Save a URL to the current user's inbox. The domain is derived server-side from the submitted URL by lowercasing the host and removing a single leading "www."; the remote page is never fetched and no metadata extraction is performed. Platform and title are left null and are populated later by background enrichment.
-// @Description The response is deliberately minimal: data.saved_item carries only id, url, collection_id and enrichment_status. A save commits before enrichment has run, so at this point the only metadata column with a value is domain, which was derived locally rather than read off the page. Reporting title, platform, description, image_url or last_enriched_at here would be a set of nulls presented as though they had been looked up, which reads as "this page has nothing" rather than "this page has not been read yet".
-// @Description enrichment_status is the value the row was stored with, which on a fresh save is always "pending". Background enrichment is queued by the time this returns but has not run, so this endpoint never reports "completed". Read GET /saved-items/{id} for the complete item once enrichment has had a chance to finish.
-// @Description The save itself is unchanged: a single INSERT that commits before enrichment is queued, and no response field here is obtained by an extra query.
-// @Description Saving is rate limited per authenticated user. The budget is spent before the request reaches this handler, so a refused save creates nothing and queues nothing: there is no partial state to reconcile.
+// @Description Save a URL to the authenticated user's inbox.
+// @Description The saved item is returned with an initial enrichment_status of "pending". Metadata enrichment is handled asynchronously.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_URL
@@ -82,20 +79,10 @@ func (h *Handler) Create(c fiber.Ctx) error {
 
 // List godoc
 // @Summary List recent saved items
-// @Description Get the current user's recent saved items, newest first, one page at a time. This is the recent history: every saved item the user owns, across every collection they own.
-// @Description An item appears here wherever it has been filed. It stays in the history after it is moved into a collection of the user's own or created for it automatically, and each item reports which collection that is. Unsorted is not this listing's subject: it is one collection among the ones an item can be in, and it keeps its own place in GET /collections.
-// @Description Nothing is filtered out. An item whose enrichment has not run, one whose page could not be read, and one that has been filed into a collection are all ordinary states and all listed. There is no filter on enrichment_status and no branch on whether automatic organization ran; each item reports its own enrichment_status, so a client can tell pending, completed and failed apart without any of them being withheld.
-// @Description The response body is {"data": {...}, "message": "...", "meta": {...}}. data holds the page: {"saved_items": [...]}. Each item carries its full representation: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at, plus a collection object of {"id": "...", "name": "..."}.
-// @Description The collection object is inside each item because this listing spans collections. There is no single collection for the response to name, so each row names the one it is in, and the listing reads it in the same statement as the item so a client never needs a second request per row to learn where something lives. collection_id always equals collection.id. Only id and name are reported: type and system_key belong to GET /collections.
-// @Description title, description, image_url, domain, platform and last_enriched_at are nullable and are reported as null on a key that is always present. enrichment_status is pending, completed or failed and describes whether the enrichment process ran rather than whether every field is populated, so an item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once.
-// @Description saved_items is an empty array rather than null when the user has saved nothing.
-// @Description This listing never starts enrichment, never organizes anything, and never writes. Enrichment is scheduled by saving a URL and by POST /saved-items/{id}/enrich; reading the history is not a reason to fetch anything.
-// @Description Ordering is fixed at created_at DESC, id DESC. There is no sort parameter: a history is read newest first or not at all. The id breaks ties, because created_at is constant within a transaction and rows inserted together genuinely share a timestamp.
-// @Description limit defaults to 20 and is capped at 50. A limit of 51 or more, or one below 1, is rejected as VALIDATION_ERROR; a non-numeric limit is BAD_REQUEST. limit=0 is treated as absent and falls back to the default.
-// @Description Pages are returned by cursor. Pass meta.cursor.next_cursor from one response as the cursor of the next request to continue where that page ended; omit it to start from the newest item. A cursor records a position rather than an item, so it keeps working even if the item it came from has since been deleted, and a cursor past the end returns an empty page rather than an error.
-// @Description meta.cursor.next_cursor is explicitly null on the final page, where meta.cursor.has_more is false. A cursor that cannot be decoded, carries an unsupported version, has no position, or holds a value that is not a timestamp is rejected as INVALID_CURSOR before any listing query runs. There is deliberately no total count: a cursor-paginated response does not know how many items exist overall, and this response reports no meta.pagination.
-// @Description Only the authenticated user's saved items are ever returned. No other user's item is reachable from this endpoint.
-// @Description This route is not rate limited, for the same reason GET /saved-items/{id} and DELETE /saved-items/{id} are not: it performs one indexed read, holds nothing beyond the request, and spends no shared resource. The two saved item routes that do cost something are limited, because a save arranges unbounded downstream work and an on-demand enrichment performs an outbound fetch.
+// @Description Retrieve the authenticated user's saved items across all collections, ordered by newest first.
+// @Description Saved items are returned regardless of their collection or enrichment status. Each item includes its associated collection.
+// @Description enrichment_status indicates the enrichment state of an item: pending, completed, or failed. A completed status does not guarantee that all metadata fields are populated.
+// @Description Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST (unparsable limit or cursor length)
 // @Description - INVALID_CURSOR
@@ -157,12 +144,8 @@ func (h *Handler) List(c fiber.Ctx) error {
 
 // Get godoc
 // @Summary Get a saved item
-// @Description Get one of the current user's saved items by ID, with the collection it is filed in. A saved item that does not exist and one owned by another user both return the same not found response, so this endpoint never discloses whether an ID exists.
-// @Description The response body is {"data": {...}, "message": "..."}, where data holds the item and its collection: {"saved_item": {...}, "collection": {"id": "...", "name": "..."}}. The collection object carries only id and name; type and system_key belong to GET /collections.
-// @Description data.saved_item is the complete saved item, with the same fields as the listing in GET /collections/{id}/saved-items: id, url, domain, platform, title, description, image_url, collection_id, enrichment_status, last_enriched_at, created_at and updated_at. saved_item.collection_id always equals collection.id.
-// @Description title, description, image_url, domain, platform and last_enriched_at are nullable and are reported as null rather than omitted. enrichment_status is pending, completed or failed and describes whether the enrichment process ran rather than whether every field is populated, so a completed item whose page exposed no title is reported completed with a null title. last_enriched_at is null until an enrichment has succeeded at least once, so a pending or failed item reports null.
-// @Description An item whose enrichment has not run, or failed, is still returned in full. It exists and belongs to the caller, and "this page has not been read yet" is a fact about an item rather than a reason to withhold it.
-// @Description This is a read. It starts no enrichment, changes nothing, and does not move the item between collections. The collection is read in the same statement as the item, so naming it costs no additional query.
+// @Description Retrieve a saved item by ID, including the collection it belongs to.
+// @Description The saved item is returned regardless of its enrichment status. A completed enrichment does not guarantee that all metadata fields are populated.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST (non-UUID id)
 // @Description - RESOURCE_NOT_FOUND
@@ -217,19 +200,9 @@ func (h *Handler) Get(c fiber.Ctx) error {
 
 // Delete godoc
 // @Summary Delete a saved item
-// @Description Delete one of the current user's saved items by ID. A saved item
-// that does not exist and one owned by another user both return the same not
-// found response, so this endpoint never discloses whether an ID exists.
-// @Description Deleting a saved item never deletes its collection. The collection
-// the item was in is left exactly as it is, and the response reports what that
-// delete left behind so the caller can decide what to do next.
-// @Description The response returns the collection_id of the deleted saved item,
-// whether that collection is now empty (collection_empty), and whether the user may
-// delete it now (collection_deletable, which is collection_empty and the collection
-// not being Unsorted).
-// @Description These are advisory values, not a guarantee. Another request may add
-// or remove a saved item immediately afterwards. Deleting a collection is a
-// separate, explicit operation that re-reads the database and validates again.
+// @Description Delete a saved item by ID.
+// @Description Deleting a saved item does not delete its collection. The response indicates whether the collection is now empty and whether it can be deleted.
+// @Description The collection deletion eligibility is advisory and may change if the collection is modified by another request.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - RESOURCE_NOT_FOUND

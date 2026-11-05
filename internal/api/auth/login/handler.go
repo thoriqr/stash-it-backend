@@ -81,7 +81,6 @@ func (h *Handler) LoginManual(c fiber.Ctx) error {
 // @Description - authenticated: the user is authenticated and access/refresh tokens are returned.
 // @Description - account_link_required: the user must confirm linking the Google account.
 // @Description - registration_required: the user must continue the registration flow.
-// @Description The Google authentication routes share one per-client-address budget.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
 // @Description - INVALID_GOOGLE_TOKEN
@@ -148,9 +147,6 @@ func (h *Handler) LoginGoogle(c fiber.Ctx) error {
 // GetAccountLinkConfirmation godoc
 // @Summary Get account link confirmation
 // @Description Retrieve an active Google account link confirmation.
-// @Description The account email is returned masked, as masked_user_email.
-// @Description display_name_snapshot is the Google profile name captured when the confirmation was created.
-// @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - ACCOUNT_LINK_CONFIRMATION_INVALID
@@ -203,11 +199,8 @@ func (h *Handler) GetAccountLinkConfirmation(c fiber.Ctx) error {
 // ConfirmAccountLink godoc
 // @Summary Confirm Google account link
 // @Description Confirm a Google account link and create an authenticated session.
-// @Description The confirmation_id identifies the pending confirmation; it does not authorize it.
 // @Description The id_token is required and must belong to the same Google identity the confirmation was created for,
 // @Description matched on provider and provider subject. Email is never used to match.
-// @Description A mismatched or invalid token leaves the confirmation active, so the correct identity can still complete it.
-// @Description Shares the per-client-address budget with the other Google authentication routes.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST
 // @Description - ACCOUNT_LINK_CONFIRMATION_INVALID

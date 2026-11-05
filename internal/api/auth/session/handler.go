@@ -243,13 +243,8 @@ func (h *Handler) RevokeSession(c fiber.Ctx) error {
 
 // CleanupSessions godoc
 // @Summary Run session cleanup
-// @Description Delete sessions that can no longer be used.
-// @Description Removes sessions that are revoked, past their absolute expiry, or
-// @Description past the idle window, together with the refresh tokens that belong
-// @Description to them. The endpoint is intended to be called by an external
-// @Description scheduler, which is what decides how often it runs; nothing in this
-// @Description process schedules it.
-// @Description Every execution is logged, including one that deletes nothing.
+// @Description Remove sessions that are revoked, past their absolute expiry, or beyond the allowed idle period, together with their associated refresh tokens.
+// @Description Intended to be invoked periodically by an external scheduler.
 // @Description Possible error codes:
 // @Description - CLEANUP_SECRET_INVALID
 // @Description - INTERNAL_SERVER_ERROR

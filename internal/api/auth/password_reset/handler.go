@@ -20,11 +20,8 @@ func NewHandler(service *Service) *Handler {
 
 // RequestPasswordReset godoc
 // @Summary Request password reset
-// @Description Start a password reset flow using an email address.
-// @Description The response is the same whether or not the address belongs to an
-// @Description account: an unknown address is answered with a placeholder
-// @Description verification id that resolves to nothing, so this response cannot
-// @Description be used to discover which addresses are registered.
+// @Description Initiate a password reset flow using an email address.
+// @Description The response does not indicate whether the email address is associated with an existing account.
 // @Description Possible error codes:
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags Password Reset
@@ -228,9 +225,6 @@ func (h *Handler) ResendVerification(c fiber.Ctx) error {
 // VerifyPasswordReset godoc
 // @Summary Verify password reset
 // @Description Verify a password reset using the verification PIN.
-// @Description This route is budgeted per client address. The budget bounds the
-// @Description work a wrong guess costs; the five-attempt limit on the
-// @Description verification code is separate and is enforced by the database.
 // @Description Possible error codes:
 // @Description - VERIFICATION_NOT_PENDING
 // @Description - PASSWORD_RESET_NOT_PENDING
@@ -339,9 +333,6 @@ func (h *Handler) GetPasswordResetContinuation(c fiber.Ctx) error {
 // FinalizePasswordReset godoc
 // @Summary Finalize password reset
 // @Description Complete a password reset using a valid password reset continuation token.
-// @Description This route performs the one Argon2id derivation in the flow and is
-// @Description therefore budgeted per client address separately from every other
-// @Description route here.
 // @Description Possible error codes:
 // @Description - PASSWORD_RESET_CONTINUATION_REQUIRED
 // @Description - PASSWORD_RESET_CONTINUATION_CONSUMED
