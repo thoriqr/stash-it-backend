@@ -3305,7 +3305,7 @@ paths:
         Saved items are matched by title, domain, and URL. Collections are matched by name, including system collections.
         Search supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.
         Results are limited and are not paginated.
-        Saved item results include their associated collection and enrichment status.
+        Saved item results carry the item's collection and its enrichment_status, so a client can tell where it lives and whether it has been read; each result is a subset of the item shape reported by GET /collections/{id}/saved-items.
         Possible error codes:
         - INVALID_SEARCH_QUERY
         - INVALID_AUTHORIZATION_HEADER
@@ -3351,7 +3351,7 @@ paths:
       description: |-
         Retrieve the authenticated user's profile, including linked authentication providers and whether the account has a password credential.
         identities contains the authentication providers linked to the account. The array is always present and may be empty. Clients should support provider values they do not recognize.
-        email_snapshot and display_name_snapshot represent provider information captured when the identity was linked. They are historical values and may differ from the user's current email and display name. Both fields may be null.
+        email_snapshot and display_name_snapshot represent provider information captured when the identity was linked. They are historical values and are not refreshed, so they may differ from the user's current email and display name; nothing is fetched from the provider to reconcile them. Both fields may be null.
         has_password_credential indicates whether the account has a password credential and can be used to determine which password settings options to display. The password update endpoint remains authoritative when applying changes.
         Possible error codes:
         - USER_NOT_FOUND
@@ -3442,7 +3442,7 @@ paths:
         Create a password for an account that does not have a password credential, or change the existing password.
         Send new_password alone when creating a password. When changing an existing password, both new_password and current_password are required.
         The operation is determined by the account's current password credential state. has_password_credential from GET /users/me is a UI hint; this endpoint remains authoritative.
-        Creating a password does not revoke existing sessions. Changing an existing password revokes all other active sessions while preserving the current session. Existing access tokens on revoked sessions may remain usable until they expire.
+        Access tokens are stateless: revoking a session does not invalidate an access token that was already issued from it. Creating a password does not revoke existing sessions. Changing an existing password revokes all other active sessions while preserving the current session, but access tokens associated with revoked sessions may remain usable until they expire, which is at most 15 minutes.
         The response message distinguishes between "password created successfully" and "password changed successfully".
         Possible error codes:
         - VALIDATION_ERROR

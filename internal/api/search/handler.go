@@ -26,7 +26,7 @@ func NewHandler(service Service) *Handler {
 // @Description Saved items are matched by title, domain, and URL. Collections are matched by name, including system collections.
 // @Description Search supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.
 // @Description Results are limited and are not paginated.
-// @Description Saved item results include their associated collection and enrichment status.
+// @Description Saved item results carry the item's collection and its enrichment_status, so a client can tell where it lives and whether it has been read; each result is a subset of the item shape reported by GET /collections/{id}/saved-items.
 // @Description Possible error codes:
 // @Description - INVALID_SEARCH_QUERY
 // @Description - INVALID_AUTHORIZATION_HEADER

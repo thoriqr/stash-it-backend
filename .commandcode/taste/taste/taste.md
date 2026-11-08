@@ -1,6 +1,8 @@
 # Taste
 - Wants `AGENTS.md` read first and the repository's existing conventions/documentation followed before touching code. Confidence: 0.8
 - Prefers work staged: an investigation/recommendation (report) first, with implementation only after explicit go-ahead; often explicitly says to stop after findings and not modify code. Confidence: 0.85
+- When the work is already concrete (e.g. named failing tests with their assertions and files), expects the agent to go straight to the fix without writing a separate analysis/plan first; the plan-first staging applies to open design decisions, not to scoped fixups. Confidence: 0.75
+- Fixes failing tests by making the documentation/Swagger annotations accurately describe the existing behavior (verified against the real constants/code path) rather than changing runtime semantics; never weakens, removes or rewrites test assertions just to make them pass. Confidence: 0.8
 - Values smallest correct fix over broader refactors; scoped changes with out-of-scope findings merely reported, not applied. Routine implementation details should be decided without asking, but a newly discovered issue that would materially change the agreed scope or product behavior must be surfaced and reported before proceeding. Confidence: 0.8
 - Avoids changing the public API contract or introducing schema migrations unless the current design makes it unavoidable; prefers working within existing constraints, indexes, transactions and locking patterns. Confidence: 0.75
 - Wants recommendations grounded in the current implementation, with a traced exact code path and an explicit "verified vs. assumed" separation. Confidence: 0.8

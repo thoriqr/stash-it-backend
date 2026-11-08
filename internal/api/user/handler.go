@@ -72,7 +72,7 @@ func NewHandler(service Service) *Handler {
 // @Summary Get the current user's profile
 // @Description Retrieve the authenticated user's profile, including linked authentication providers and whether the account has a password credential.
 // @Description identities contains the authentication providers linked to the account. The array is always present and may be empty. Clients should support provider values they do not recognize.
-// @Description email_snapshot and display_name_snapshot represent provider information captured when the identity was linked. They are historical values and may differ from the user's current email and display name. Both fields may be null.
+// @Description email_snapshot and display_name_snapshot represent provider information captured when the identity was linked. They are historical values and are not refreshed, so they may differ from the user's current email and display name; nothing is fetched from the provider to reconcile them. Both fields may be null.
 // @Description has_password_credential indicates whether the account has a password credential and can be used to determine which password settings options to display. The password update endpoint remains authoritative when applying changes.
 // @Description Possible error codes:
 // @Description - USER_NOT_FOUND
@@ -155,7 +155,7 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // @Description Create a password for an account that does not have a password credential, or change the existing password.
 // @Description Send new_password alone when creating a password. When changing an existing password, both new_password and current_password are required.
 // @Description The operation is determined by the account's current password credential state. has_password_credential from GET /users/me is a UI hint; this endpoint remains authoritative.
-// @Description Creating a password does not revoke existing sessions. Changing an existing password revokes all other active sessions while preserving the current session. Existing access tokens on revoked sessions may remain usable until they expire.
+// @Description Access tokens are stateless: revoking a session does not invalidate an access token that was already issued from it. Creating a password does not revoke existing sessions. Changing an existing password revokes all other active sessions while preserving the current session, but access tokens associated with revoked sessions may remain usable until they expire, which is at most 15 minutes.
 // @Description The response message distinguishes between "password created successfully" and "password changed successfully".
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
