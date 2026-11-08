@@ -3,6 +3,7 @@ package enrichment
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
@@ -20,6 +21,22 @@ import (
 // redirect destination. Followed hops are still validated by the guarded client,
 // but they cannot switch which profile a fetch uses.
 
+// transportKind identifies which guarded HTTP client a host's requests use.
+//
+// It is a property of the host, not of an individual request profile: a host's
+// header fallback stays on the same transport, and every redirect hop is handled by
+// the client that made the first request.
+type transportKind int
+
+const (
+	// genericTransport is the HTTP/2 client configured with the generic timeouts.
+	genericTransport transportKind = iota
+
+	// tokopediaTransport is the HTTP/1.1 client configured with the larger
+	// Tokopedia timeouts.
+	tokopediaTransport
+)
+
 // requestProfile is the header set used for one class of hosts.
 type requestProfile struct {
 	// accept is sent as the Accept header.
@@ -29,6 +46,10 @@ type requestProfile struct {
 	// means the request carries none and the guarded client's transport applies
 	// its configured default, which is the honest crawler agent.
 	userAgent string
+
+	// transport is the guarded client the profile's hosts use. It is read from the
+	// host's own entry, so the headers and the transport cannot disagree.
+	transport transportKind
 }
 
 var (
@@ -38,6 +59,7 @@ var (
 	genericRequestProfile = requestProfile{
 		accept:    enrichAcceptHeader,
 		userAgent: "",
+		transport: genericTransport,
 	}
 
 	// tokopediaRequestProfile is the profile verified against a real product page
@@ -46,6 +68,7 @@ var (
 	tokopediaRequestProfile = requestProfile{
 		accept:    "*/*",
 		userAgent: "Mozilla/5.0",
+		transport: tokopediaTransport,
 	}
 )
 
@@ -59,6 +82,7 @@ var (
 var marketplaceRequestProfiles = map[string]requestProfile{
 	"tokopedia.com":     tokopediaRequestProfile,
 	"www.tokopedia.com": tokopediaRequestProfile,
+	"tk.tokopedia.com":  tokopediaRequestProfile,
 }
 
 // normalizeHostname lowercases a hostname and drops one trailing dot, so a fully
@@ -82,6 +106,49 @@ func requestProfilesFor(hostname string) []requestProfile {
 	}
 
 	return []requestProfile{genericRequestProfile}
+}
+
+// transportFor reports which guarded client a hostname's requests use.
+//
+// The transport comes from the host's own profile, so the header profile and the
+// client that carries it cannot disagree. A host without a profile uses the generic
+// transport. Selection is based on the original URL's hostname only; a redirect
+// destination never changes it, because the whole request is made by the client
+// chosen here.
+func transportFor(hostname string) transportKind {
+	if profile, ok := marketplaceRequestProfiles[normalizeHostname(hostname)]; ok {
+		return profile.transport
+	}
+
+	return genericTransport
+}
+
+// Tokopedia transport policy.
+//
+// Tokopedia can take longer to start responding than a typical page, and its
+// HTTP/2 path intermittently fails with stream and header timeouts. These values
+// and the HTTP/1.1 pinning address that without raising any timeout, or changing
+// the protocol, for every other site.
+const (
+	tokopediaRequestTimeout        = 25 * time.Second
+	tokopediaResponseHeaderTimeout = 15 * time.Second
+)
+
+// TokopediaOutboundFetchPolicy derives the Tokopedia transport policy from the
+// generic one.
+//
+// Only the two timeouts and the protocol differ; every other limit is inherited, so
+// the site keeps the same guarded dialer, redirect limit, response-size limits and
+// TLS behavior as any other host. It is a copy of the guarded policy, not a
+// separate one.
+func TokopediaOutboundFetchPolicy(
+	base security.OutboundFetchPolicy,
+) security.OutboundFetchPolicy {
+	base.Timeout = tokopediaRequestTimeout
+	base.ResponseHeaderTimeout = tokopediaResponseHeaderTimeout
+	base.ForceHTTP1 = true
+
+	return base
 }
 
 // shouldFallBackToGeneric reports whether a failed attempt is worth retrying once

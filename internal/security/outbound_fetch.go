@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +49,12 @@ const (
 	// OutboundFetchTimeout bounds one whole request, including redirects and
 	// reading the body. It is the outer bound that makes a slow origin a failure
 	// instead of a held worker slot.
-	OutboundFetchTimeout = 10 * time.Second
+	OutboundFetchTimeout = 20 * time.Second
 
 	// OutboundFetchResponseHeaderTimeout bounds the wait between finishing the
 	// request write and receiving response headers. A stalled origin usually
 	// fails here rather than at the overall timeout, so it is much shorter.
-	OutboundFetchResponseHeaderTimeout = 5 * time.Second
+	OutboundFetchResponseHeaderTimeout = 12 * time.Second
 
 	// OutboundFetchMaxRedirects bounds how many redirects are followed. Every hop
 	// is revalidated by the dialer, but an unbounded chain is still a way to keep
@@ -269,6 +270,14 @@ type OutboundFetchPolicy struct {
 	// MaxIdleConnsPerHost bounds the idle pool for a single origin, which is the
 	// one that matters when enrichment bursts hit one site.
 	MaxIdleConnsPerHost int
+
+	// ForceHTTP1 makes this policy's client negotiate and use HTTP/1.1 only.
+	//
+	// It is a protocol choice for an origin whose HTTP/2 path is unreliable, not a
+	// security decision: the guarded dialer, the address policy, the scheme and
+	// port checks, the redirect handling and the response limits are identical
+	// whichever protocol is used. When false the client offers HTTP/2 as usual.
+	ForceHTTP1 bool
 }
 
 // DefaultOutboundFetchPolicy returns the limits documented on the constants in
@@ -338,8 +347,9 @@ func NewGuardedHTTPClient(policy OutboundFetchPolicy) *http.Client {
 		IdleConnTimeout:     policy.IdleConnTimeout,
 
 		DisableCompression: false,
-		ForceAttemptHTTP2:  true,
 	}
+
+	configureTransportProtocol(transport, policy)
 
 	return &http.Client{
 		Transport: &userAgentTransport{
@@ -366,6 +376,31 @@ func NewGuardedHTTPClient(policy OutboundFetchPolicy) *http.Client {
 			return nil
 		},
 	}
+}
+
+// configureTransportProtocol applies the policy's HTTP protocol selection to a
+// transport.
+//
+// HTTP/2 is attempted by default. To force HTTP/1.1, a non-nil but empty
+// TLSNextProto is the documented way to turn HTTP/2 off: net/http skips its
+// automatic HTTP/2 setup whenever that map is set, so the transport advertises no
+// h2 in ALPN and negotiates HTTP/1.1 exclusively. ForceAttemptHTTP2 alone would be
+// too weak a statement, because it only opts back into HTTP/2 for a custom dialer
+// rather than forbidding it.
+func configureTransportProtocol(
+	transport *http.Transport,
+	policy OutboundFetchPolicy,
+) {
+	if !policy.ForceHTTP1 {
+		transport.ForceAttemptHTTP2 = true
+
+		return
+	}
+
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = make(
+		map[string]func(string, *tls.Conn) http.RoundTripper,
+	)
 }
 
 // guardedDialControl refuses a connection whose resolved destination is not a

@@ -738,3 +738,84 @@ func (s *stubRoundTripper) RoundTrip(
 
 	return nil, errors.New("stub round tripper")
 }
+
+// The generic policy keeps HTTP/2 enabled.
+func TestConfigureTransportProtocol_GenericKeepsHTTP2(t *testing.T) {
+	transport := &http.Transport{}
+
+	configureTransportProtocol(transport, DefaultOutboundFetchPolicy())
+
+	require.True(t, transport.ForceAttemptHTTP2)
+	require.Nil(t, transport.TLSNextProto)
+}
+
+// A forced HTTP/1.1 policy disables HTTP/2 with a non-nil, empty TLSNextProto,
+// which is what actually turns the automatic HTTP/2 setup off.
+func TestConfigureTransportProtocol_ForceHTTP1DisablesHTTP2(t *testing.T) {
+	transport := &http.Transport{}
+
+	policy := DefaultOutboundFetchPolicy()
+	policy.ForceHTTP1 = true
+
+	configureTransportProtocol(transport, policy)
+
+	require.False(t, transport.ForceAttemptHTTP2)
+	require.NotNil(t, transport.TLSNextProto)
+	require.Empty(t, transport.TLSNextProto)
+}
+
+// The negotiated protocol is checked against a real TLS handshake, not only against
+// the configuration flags above.
+func TestConfigureTransportProtocol_NegotiatesTheConfiguredProtocol(t *testing.T) {
+	t.Run("the generic policy negotiates HTTP/2", func(t *testing.T) {
+		requireNegotiatedProtocol(t, DefaultOutboundFetchPolicy(), "HTTP/2.0")
+	})
+
+	t.Run("the forced HTTP/1.1 policy negotiates HTTP/1.1", func(t *testing.T) {
+		policy := DefaultOutboundFetchPolicy()
+		policy.ForceHTTP1 = true
+
+		requireNegotiatedProtocol(t, policy, "HTTP/1.1")
+	})
+}
+
+// requireNegotiatedProtocol makes one request to a local TLS server using the
+// protocol configuration the policy produces, and asserts the protocol that was
+// actually negotiated.
+//
+// The guarded client refuses loopback, so this exercises the protocol configuration
+// on a transport built the same way, with the test server's trusted certificate. The
+// guard itself is not altered and is covered by its own tests.
+func requireNegotiatedProtocol(
+	t *testing.T,
+	policy OutboundFetchPolicy,
+	expected string,
+) {
+	t.Helper()
+
+	server := httptest.NewUnstartedServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "ok")
+		}),
+	)
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	serverTransport, ok := server.Client().Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, serverTransport.TLSClientConfig)
+
+	transport := &http.Transport{
+		TLSClientConfig: serverTransport.TLSClientConfig.Clone(),
+	}
+
+	configureTransportProtocol(transport, policy)
+
+	response, err := (&http.Client{Transport: transport}).Get(server.URL)
+	require.NoError(t, err)
+
+	defer response.Body.Close()
+
+	require.Equal(t, expected, response.Proto)
+}

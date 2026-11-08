@@ -97,16 +97,20 @@ func main() {
 	defer pool.Close()
 
 	// The worker is the second consumer of the guarded outbound HTTP client, and
-	// the second user of the extraction capability. Both are constructed here from
-	// the same security boundary the synchronous endpoint uses, so a URL the API
-	// refuses to fetch is a URL the worker also refuses to fetch. The client is
-	// built from the policy rather than fetched from anywhere, so there is no
-	// second SSRF implementation to keep in step with the first.
-	outboundFetchPolicy := security.DefaultOutboundFetchPolicy()
+	// the second user of the extraction capability. Both clients are constructed here
+	// from the same security boundary the synchronous endpoint uses, so a URL the API
+	// refuses to fetch is a URL the worker also refuses to fetch. The generic policy
+	// stays the default; Tokopedia gets a copy with larger timeouts and HTTP/1.1
+	// pinned because its HTTP/2 path is unreliable.
+	genericOutboundFetchPolicy := security.DefaultOutboundFetchPolicy()
+	tokopediaOutboundFetchPolicy := enrichmentcore.TokopediaOutboundFetchPolicy(
+		genericOutboundFetchPolicy,
+	)
 
-	metadataEnricher := enrichmentcore.NewEnricher(
-		security.NewGuardedHTTPClient(outboundFetchPolicy),
-		outboundFetchPolicy,
+	metadataEnricher := enrichmentcore.NewEnricherWithTransports(
+		security.NewGuardedHTTPClient(genericOutboundFetchPolicy),
+		security.NewGuardedHTTPClient(tokopediaOutboundFetchPolicy),
+		genericOutboundFetchPolicy,
 	)
 
 	enrichmentQueries := workerenrichmentdb.New(pool)

@@ -319,14 +319,19 @@ func main() {
 	)
 
 	// Enrichment fetches a URL the user supplied, so it goes through the guarded
-	// outbound HTTP client. The client is the SSRF boundary and the policy is
-	// passed alongside it because the response body limit is applied by
-	// enrichment, which is the component that reads the body.
-	outboundFetchPolicy := security.DefaultOutboundFetchPolicy()
+	// outbound HTTP client. The generic policy stays the default; Tokopedia gets a
+	// copy with larger timeouts and HTTP/1.1 pinned because its HTTP/2 path is
+	// unreliable. Both clients are built from the same guard, so neither can reach a
+	// URL the other could not.
+	genericOutboundFetchPolicy := security.DefaultOutboundFetchPolicy()
+	tokopediaOutboundFetchPolicy := enrichmentcore.TokopediaOutboundFetchPolicy(
+		genericOutboundFetchPolicy,
+	)
 
-	metadataEnricher := enrichmentcore.NewEnricher(
-		security.NewGuardedHTTPClient(outboundFetchPolicy),
-		outboundFetchPolicy,
+	metadataEnricher := enrichmentcore.NewEnricherWithTransports(
+		security.NewGuardedHTTPClient(genericOutboundFetchPolicy),
+		security.NewGuardedHTTPClient(tokopediaOutboundFetchPolicy),
+		genericOutboundFetchPolicy,
 	)
 
 	enrichment.RegisterModule(

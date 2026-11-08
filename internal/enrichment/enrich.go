@@ -35,7 +35,14 @@ type Enricher interface {
 
 // enricher is the implementation.
 type enricher struct {
-	client *http.Client
+	// genericClient carries the generic protocol and timeout policy.
+	genericClient *http.Client
+
+	// tokopediaClient carries the Tokopedia protocol and timeout policy.
+	tokopediaClient *http.Client
+
+	// policy supplies the response body limit. It is the generic policy, whose
+	// size limit is shared by both transports.
 	policy security.OutboundFetchPolicy
 }
 
@@ -49,12 +56,11 @@ type enricher struct {
 const enrichAcceptHeader = "text/html,application/xhtml+xml;q=0.9," +
 	"text/plain;q=0.5,*/*;q=0.1"
 
-// NewEnricher builds an Enricher around a guarded HTTP client.
+// NewEnricher builds an Enricher that uses one guarded HTTP client for every host.
 //
-// client must come from security.NewGuardedHTTPClient. That is not a convention
-// this package asks nicely for: the SSRF policy lives in the client's dialer, so
-// a client from anywhere else means the fetch has none of it, and enrichment
-// cannot detect that for itself.
+// client must come from security.NewGuardedHTTPClient. It is the seam used by tests
+// and by any caller that does not distinguish hosts; production wires the two
+// distinct transports with NewEnricherWithTransports.
 //
 // policy is needed only for the response body limit, which is applied here rather
 // than by the client because a client cannot bound a body it does not read. It
@@ -63,10 +69,42 @@ func NewEnricher(
 	client *http.Client,
 	policy security.OutboundFetchPolicy,
 ) *enricher {
+	return NewEnricherWithTransports(client, client, policy)
+}
+
+// NewEnricherWithTransports builds an Enricher with distinct guarded clients for
+// the generic hosts and for Tokopedia.
+//
+// Both clients must come from security.NewGuardedHTTPClient: the SSRF policy lives
+// in each client's dialer, so a client from anywhere else has none of it, and
+// enrichment cannot detect that for itself.
+//
+// The client is selected once, from the original submitted URL's hostname, and is
+// then used for the whole request: redirect hops and the header-profile fallback
+// cannot move it to the other client. That is what keeps a redirect from a
+// Tokopedia short link on the Tokopedia transport.
+//
+// policy supplies the response body limit used by reader. It must be the policy the
+// generic client was built with; the size limit is the same on both transports.
+func NewEnricherWithTransports(
+	genericClient *http.Client,
+	tokopediaClient *http.Client,
+	policy security.OutboundFetchPolicy,
+) *enricher {
 	return &enricher{
-		client: client,
-		policy: policy,
+		genericClient:   genericClient,
+		tokopediaClient: tokopediaClient,
+		policy:          policy,
 	}
+}
+
+// clientFor returns the guarded client for a transport selection.
+func (e *enricher) clientFor(transport transportKind) *http.Client {
+	if transport == tokopediaTransport {
+		return e.tokopediaClient
+	}
+
+	return e.genericClient
 }
 
 // Enrich fetches rawURL and extracts metadata from the response.
@@ -77,10 +115,12 @@ func NewEnricher(
 // page produces an error, and every error is a *Failure carrying a Kind, so a
 // caller can tell a retryable problem from a permanent one.
 //
-// The request profile is chosen from the original URL's hostname. A host with a
-// verified profile is tried first and the generic profile is tried once more if
-// that attempt fails for a reason the headers can change, so the generic fallback
-// stays reachable without becoming the universal default.
+// The request profile and the HTTP client are both chosen from the original URL's
+// hostname. A host with a verified profile is tried first and the generic profile
+// is tried once more if that attempt fails for a reason the headers can change, so
+// the generic fallback stays reachable without becoming the universal default. The
+// chosen client carries every attempt and every redirect hop: the fallback changes
+// headers only, never the transport.
 //
 // There is no SSRF decision anywhere in this function. The scheme, the port and
 // the resolved address are all enforced by the injected client, in its dialer,
@@ -103,12 +143,18 @@ func (e *enricher) Enrich(
 		)
 	}
 
-	profiles := requestProfilesFor(parsed.Hostname())
+	hostname := parsed.Hostname()
+
+	// The transport is selected once from the original host and then reused for the
+	// whole request, so neither a redirect hop nor the header fallback can move the
+	// fetch to a different client.
+	client := e.clientFor(transportFor(hostname))
+	profiles := requestProfilesFor(hostname)
 
 	var lastFailure error
 
 	for index, profile := range profiles {
-		metadata, failure := e.enrichWithProfile(ctx, rawURL, profile)
+		metadata, failure := e.enrichWithProfile(ctx, client, rawURL, profile)
 		if failure == nil {
 			return metadata, nil
 		}
@@ -127,15 +173,19 @@ func (e *enricher) Enrich(
 
 // enrichWithProfile performs one fetch-and-extract attempt with the given profile.
 //
+// client is the one chosen for the original host, so the header fallback stays on
+// the same transport.
+//
 // The response body is closed here, after it has been read, because reader hands
 // back a stream that is still bound to it. Pairing the close with the whole read
 // in one function is what keeps every attempt from leaking a body.
 func (e *enricher) enrichWithProfile(
 	ctx context.Context,
+	client *http.Client,
 	rawURL string,
 	profile requestProfile,
 ) (Metadata, error) {
-	response, err := e.do(ctx, rawURL, profile)
+	response, err := e.do(ctx, client, rawURL, profile)
 	if err != nil {
 		return Metadata{}, err
 	}
@@ -167,6 +217,7 @@ func (e *enricher) enrichWithProfile(
 // It deliberately does not close the body. The caller reads it and closes it.
 func (e *enricher) do(
 	ctx context.Context,
+	client *http.Client,
 	rawURL string,
 	profile requestProfile,
 ) (
@@ -198,7 +249,7 @@ func (e *enricher) do(
 	// No Accept-Encoding is set on purpose. The guarded client's transport adds
 	// gzip and decodes the response transparently, and doing that by hand would
 	// mean parsing a compressed body as if it were HTML.
-	response, err := e.client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, newFailure(
 			requestFailureKind(err),

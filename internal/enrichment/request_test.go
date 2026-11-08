@@ -3,6 +3,7 @@ package enrichment
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -190,4 +191,62 @@ func TestShouldFallBackToGeneric_DoesNotRetryDestinationFailures(t *testing.T) {
 		fmt.Errorf("%w: test", security.ErrTooManyRedirects),
 	)
 	require.False(t, shouldFallBackToGeneric(tooManyRedirects))
+}
+
+func TestTransportFor(t *testing.T) {
+	cases := []struct {
+		host string
+		want transportKind
+	}{
+		{"tokopedia.com", tokopediaTransport},
+		{"www.tokopedia.com", tokopediaTransport},
+		{"tk.tokopedia.com", tokopediaTransport},
+		{"WWW.TOKOPEDIA.COM.", tokopediaTransport},
+		{"example.com", genericTransport},
+		{"shopee.co.id", genericTransport},
+		{"www.blibli.com", genericTransport},
+		{"shop.tiktok.com", genericTransport},
+		{"tokopedia.com.evil.example", genericTransport},
+		{"notokopedia.com", genericTransport},
+		{"m.tokopedia.com", genericTransport},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			require.Equal(t, tc.want, transportFor(tc.host))
+		})
+	}
+}
+
+func TestTokopediaOutboundFetchPolicy(t *testing.T) {
+	base := security.DefaultOutboundFetchPolicy()
+
+	tokopedia := TokopediaOutboundFetchPolicy(base)
+
+	require.True(t, tokopedia.ForceHTTP1)
+	require.Equal(t, 25*time.Second, tokopedia.Timeout)
+	require.Equal(t, 15*time.Second, tokopedia.ResponseHeaderTimeout)
+
+	// Every other limit is inherited from the guarded generic policy, so the
+	// Tokopedia transport keeps the same dialer policy, redirect limit, size limits
+	// and TLS behavior.
+	require.Equal(t, base.UserAgent, tokopedia.UserAgent)
+	require.Equal(t, base.MaxRedirects, tokopedia.MaxRedirects)
+	require.Equal(t, base.MaxResponseBytes, tokopedia.MaxResponseBytes)
+	require.Equal(t, base.MaxResponseHeaderBytes, tokopedia.MaxResponseHeaderBytes)
+	require.Equal(t, base.DialTimeout, tokopedia.DialTimeout)
+	require.Equal(t, base.TLSHandshakeTimeout, tokopedia.TLSHandshakeTimeout)
+	require.Equal(t, base.KeepAlive, tokopedia.KeepAlive)
+	require.Equal(t, base.IdleConnTimeout, tokopedia.IdleConnTimeout)
+	require.Equal(t, base.MaxIdleConns, tokopedia.MaxIdleConns)
+	require.Equal(t, base.MaxIdleConnsPerHost, tokopedia.MaxIdleConnsPerHost)
+
+	// The generic policy is a value and is not mutated.
+	require.False(t, base.ForceHTTP1)
+	require.Equal(t, security.OutboundFetchTimeout, base.Timeout)
+	require.Equal(
+		t,
+		security.OutboundFetchResponseHeaderTimeout,
+		base.ResponseHeaderTimeout,
+	)
 }
