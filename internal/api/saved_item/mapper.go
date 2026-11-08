@@ -48,9 +48,11 @@ func mapSavedItemDetailResponse(
 		Title:    mapOptionalText(savedItem.Title),
 		// Passed through as stored, including when still NULL. A page is not
 		// required to expose either, and one that did not is an ordinary result.
-		Description:  mapOptionalText(savedItem.Description),
-		ImageURL:     mapOptionalText(savedItem.ImageURL),
-		CollectionID: savedItem.CollectionID,
+		Description:   mapOptionalText(savedItem.Description),
+		ImageURL:      mapOptionalText(savedItem.ImageURL),
+		PriceAmount:   mapOptionalNumeric(savedItem.PriceAmount),
+		PriceCurrency: mapOptionalText(savedItem.PriceCurrency),
+		CollectionID:  savedItem.CollectionID,
 		// EnrichmentStatus is a NOT NULL column with a default, so there is no null
 		// case to represent and it is not mapped through mapOptionalText.
 		EnrichmentStatus: savedItem.EnrichmentStatus,
@@ -107,6 +109,8 @@ func mapListedSavedItemResponse(
 		Title:            mapOptionalText(savedItem.Title),
 		Description:      mapOptionalText(savedItem.Description),
 		ImageURL:         mapOptionalText(savedItem.ImageURL),
+		PriceAmount:      mapOptionalNumeric(savedItem.PriceAmount),
+		PriceCurrency:    mapOptionalText(savedItem.PriceCurrency),
 		CollectionID:     savedItem.CollectionID,
 		EnrichmentStatus: savedItem.EnrichmentStatus,
 		LastEnrichedAt:   lastEnrichedAt,
@@ -163,6 +167,30 @@ func mapOptionalText(value pgtype.Text) *string {
 	}
 
 	text := value.String
+
+	return &text
+}
+
+// mapOptionalNumeric renders an exact numeric as its decimal string for the API
+// response.
+//
+// price_amount is reported as a string so a client never has to parse money through
+// a floating point value. pgtype.Numeric already holds the exact value and its own
+// decimal rendering, so nothing is recalculated here, and a NULL column stays null.
+func mapOptionalNumeric(value pgtype.Numeric) *string {
+	if !value.Valid {
+		return nil
+	}
+
+	rendered, err := value.Value()
+	if err != nil {
+		return nil
+	}
+
+	text, ok := rendered.(string)
+	if !ok {
+		return nil
+	}
 
 	return &text
 }

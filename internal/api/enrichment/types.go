@@ -27,6 +27,13 @@ type SavedItem struct {
 	Description pgtype.Text
 	ImageURL    pgtype.Text
 
+	// PriceAmount and PriceCurrency are the optional product price captured by a
+	// successful enrichment. They stay NULL until a page exposes a usable price, and
+	// remain NULL afterwards when the latest successful result has none. The amount
+	// is an exact decimal in the database and in the extraction contract.
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
+
 	// CollectionID is projected so a caller can see where the item lives. It is
 	// never written by this feature: enrichment does not organize.
 	CollectionID uuid.UUID
@@ -81,4 +88,27 @@ func toPersistenceText(value *string) pgtype.Text {
 		String: *value,
 		Valid:  true,
 	}
+}
+
+// toPersistenceNumeric converts the extraction contract's exact decimal string
+// into the numeric form the database column uses.
+//
+// The price extractor already produced a validated exact decimal, and it is
+// carried as a string to avoid floating point. pgtype.Numeric parses that same
+// string without a float ever being involved, so the stored value is the value the
+// page displayed. A nil pointer means SQL NULL, which is what a result without a
+// price or without a title produces. A value that cannot be parsed also becomes
+// NULL rather than failing the write: price is optional metadata and must never
+// invalidate an otherwise successful enrichment.
+func toPersistenceNumeric(value *string) pgtype.Numeric {
+	if value == nil {
+		return pgtype.Numeric{}
+	}
+
+	var numeric pgtype.Numeric
+	if err := numeric.Scan(*value); err != nil {
+		return pgtype.Numeric{}
+	}
+
+	return numeric
 }

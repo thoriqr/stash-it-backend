@@ -134,6 +134,98 @@ func completed(
 	}
 }
 
+// Price is persisted only when the extraction also produced a title. Every other
+// combination must reach the repository as two nil fields, which the database turns
+// into NULL and which clears any stale price from an earlier successful refresh.
+func TestService_EnrichSavedItem_AppliesTitleDependentPricePersistence(t *testing.T) {
+	cases := []struct {
+		name         string
+		metadata     enrichmentcore.Metadata
+		wantAmount   *string
+		wantCurrency *string
+	}{
+		{
+			name: "title and price persist amount and currency",
+			metadata: enrichmentcore.Metadata{
+				Title: validText("Product"),
+				Price: &enrichmentcore.Price{
+					Amount:   "24500000",
+					Currency: "IDR",
+				},
+			},
+			wantAmount:   validText("24500000"),
+			wantCurrency: validText("IDR"),
+		},
+		{
+			name: "title and price with unknown currency persist amount only",
+			metadata: enrichmentcore.Metadata{
+				Title: validText("Product"),
+				Price: &enrichmentcore.Price{Amount: "129.99"},
+			},
+			wantAmount:   validText("129.99"),
+			wantCurrency: nil,
+		},
+		{
+			name:         "title without price clears both",
+			metadata:     enrichmentcore.Metadata{Title: validText("Product")},
+			wantAmount:   nil,
+			wantCurrency: nil,
+		},
+		{
+			name: "price without title is not persisted",
+			metadata: enrichmentcore.Metadata{
+				Price: &enrichmentcore.Price{
+					Amount:   "24500000",
+					Currency: "IDR",
+				},
+			},
+			wantAmount:   nil,
+			wantCurrency: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			item := savedItem("https://www.tokopedia.com/jullindo/product")
+			savedItemID := item.ID
+
+			repository := mocks.NewMockRepository(ctrl)
+			repository.EXPECT().
+				GetSavedItemForBackgroundEnrichment(gomock.Any(), savedItemID).
+				Return(item, nil)
+
+			enricher := mocks.NewMockMetadataEnricher(ctrl)
+			enricher.EXPECT().
+				Enrich(gomock.Any(), item.Url).
+				Return(tc.metadata, nil)
+
+			repository.EXPECT().
+				CompleteSavedItemEnrichment(gomock.Any(), gomock.Any()).
+				DoAndReturn(
+					func(
+						_ context.Context,
+						params workerenrichment.CompleteSavedItemEnrichmentParams,
+					) (workerenrichment.CompletedSavedItem, error) {
+						require.Equal(t, tc.wantAmount, params.PriceAmount)
+						require.Equal(t, tc.wantCurrency, params.PriceCurrency)
+
+						return workerenrichment.CompletedSavedItem{
+							SavedItemID: savedItemID,
+							UserID:      item.UserID,
+						}, nil
+					},
+				)
+
+			err := newTestService(repository, enricher).
+				EnrichSavedItem(context.Background(), savedItemID)
+
+			require.NoError(t, err)
+		})
+	}
+}
+
 // A page that exposes nothing is a successful enrichment with an empty result,
 // so it is recorded as completed rather than failed.
 func TestService_EnrichSavedItem_EmptyMetadataIsCompleted(t *testing.T) {

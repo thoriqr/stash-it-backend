@@ -548,3 +548,185 @@ func TestWorkerEnrichment_LoadsTheRowItWasGiven(t *testing.T) {
 		"only the item named by the task may be enriched",
 	)
 }
+
+// Price is persisted only when the extraction also produced a title, and the
+// background path applies exactly the rule the synchronous path applies. These
+// tests exercise the real repository and the real statements against the database.
+func TestWorkerEnrichment_PricePersistence(t *testing.T) {
+	t.Run("persists amount and currency when a title is present", func(t *testing.T) {
+		truncateWorkerEnrichmentData(t)
+
+		userID := createWorkerEnrichmentUser(t, "worker-price@example.com")
+		collectionID := createUnsortedForWorkerEnrichment(t, userID)
+		savedItemID := createPendingSavedItemForWorkerEnrichment(
+			t,
+			userID,
+			collectionID,
+			"https://www.tokopedia.com/jullindo/product",
+		)
+
+		title := "Microsoft Surface Pro"
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: &title,
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		after := workerEnrichmentState(t, savedItemID)
+		require.Equal(t, "24500000", numericString(t, after.PriceAmount))
+		require.Equal(t, "IDR", after.PriceCurrency.String)
+		require.True(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("persists the amount and leaves the currency null when unknown", func(t *testing.T) {
+		truncateWorkerEnrichmentData(t)
+
+		userID := createWorkerEnrichmentUser(t, "worker-price-nocur@example.com")
+		collectionID := createUnsortedForWorkerEnrichment(t, userID)
+		savedItemID := createPendingSavedItemForWorkerEnrichment(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		title := "Product"
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: &title,
+					Price: &enrichmentcore.Price{Amount: "129.99"},
+				},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		after := workerEnrichmentState(t, savedItemID)
+		require.Equal(t, "129.99", numericString(t, after.PriceAmount))
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("does not persist a price without a title", func(t *testing.T) {
+		truncateWorkerEnrichmentData(t)
+
+		userID := createWorkerEnrichmentUser(t, "worker-price-notitle@example.com")
+		collectionID := createUnsortedForWorkerEnrichment(t, userID)
+		savedItemID := createPendingSavedItemForWorkerEnrichment(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		after := workerEnrichmentState(t, savedItemID)
+		require.Equal(t, "completed", after.EnrichmentStatus)
+		require.False(t, after.PriceAmount.Valid)
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("a refresh without a price clears a stale price", func(t *testing.T) {
+		truncateWorkerEnrichmentData(t)
+
+		userID := createWorkerEnrichmentUser(t, "worker-price-stale@example.com")
+		collectionID := createUnsortedForWorkerEnrichment(t, userID)
+		savedItemID := createPendingSavedItemForWorkerEnrichment(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		title := "Product"
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: &title,
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		require.True(t, workerEnrichmentState(t, savedItemID).PriceAmount.Valid)
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{Title: &title},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		after := workerEnrichmentState(t, savedItemID)
+		require.False(
+			t,
+			after.PriceAmount.Valid,
+			"a successful refresh with no price must clear the stale amount",
+		)
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("a failed enrichment preserves the stored price", func(t *testing.T) {
+		truncateWorkerEnrichmentData(t)
+
+		userID := createWorkerEnrichmentUser(t, "worker-price-fail@example.com")
+		collectionID := createUnsortedForWorkerEnrichment(t, userID)
+		savedItemID := createPendingSavedItemForWorkerEnrichment(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		title := "Product"
+
+		require.NoError(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: &title,
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		require.Error(
+			t,
+			newRealWorkerService(t, &testutil.FakeEnricher{
+				Err: enrichmentcore.ErrFetchFailed,
+			}).EnrichSavedItem(context.Background(), savedItemID),
+		)
+
+		after := workerEnrichmentState(t, savedItemID)
+		require.Equal(t, "failed", after.EnrichmentStatus)
+		require.Equal(t, "24500000", numericString(t, after.PriceAmount))
+		require.Equal(t, "IDR", after.PriceCurrency.String)
+	})
+}

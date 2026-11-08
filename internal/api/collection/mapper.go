@@ -88,14 +88,16 @@ func mapListedSavedItemResponse(
 	}
 
 	return ListedSavedItemResponse{
-		ID:           savedItem.ID,
-		URL:          savedItem.URL,
-		Domain:       mapOptionalText(savedItem.Domain),
-		Platform:     mapOptionalText(savedItem.Platform),
-		Title:        mapOptionalText(savedItem.Title),
-		Description:  mapOptionalText(savedItem.Description),
-		ImageURL:     mapOptionalText(savedItem.ImageURL),
-		CollectionID: savedItem.CollectionID,
+		ID:            savedItem.ID,
+		URL:           savedItem.URL,
+		Domain:        mapOptionalText(savedItem.Domain),
+		Platform:      mapOptionalText(savedItem.Platform),
+		Title:         mapOptionalText(savedItem.Title),
+		Description:   mapOptionalText(savedItem.Description),
+		ImageURL:      mapOptionalText(savedItem.ImageURL),
+		PriceAmount:   mapOptionalNumeric(savedItem.PriceAmount),
+		PriceCurrency: mapOptionalText(savedItem.PriceCurrency),
+		CollectionID:  savedItem.CollectionID,
 		// EnrichmentStatus is a NOT NULL column with a default, so it is always a real
 		// value here rather than an absent one. It is not mapped through
 		// mapOptionalText because there is no null case to represent.
@@ -171,6 +173,30 @@ func mapOptionalText(value pgtype.Text) *string {
 	}
 
 	text := value.String
+
+	return &text
+}
+
+// mapOptionalNumeric renders an exact numeric as its decimal string for the API
+// response.
+//
+// price_amount travels as a string so a client never parses money through a float.
+// pgtype.Numeric already holds the exact value and its own decimal rendering, so
+// nothing is recalculated here, and a NULL column stays null.
+func mapOptionalNumeric(value pgtype.Numeric) *string {
+	if !value.Valid {
+		return nil
+	}
+
+	rendered, err := value.Value()
+	if err != nil {
+		return nil
+	}
+
+	text, ok := rendered.(string)
+	if !ok {
+		return nil
+	}
 
 	return &text
 }

@@ -547,6 +547,32 @@ func TestNewGuardedHTTPClient_SetsUserAgent(t *testing.T) {
 	require.Empty(t, req.Header.Get("User-Agent"))
 }
 
+func TestUserAgentTransport_PreservesCallerSuppliedAgent(t *testing.T) {
+	// A caller that sets its own User-Agent keeps it. Enrichment relies on this to
+	// send a host-specific agent for an explicitly supported host, while the
+	// configured default still applies everywhere else.
+	stub := &stubRoundTripper{}
+
+	transport := &userAgentTransport{
+		userAgent: DefaultOutboundUserAgent,
+		next:      stub,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://example.com/", nil)
+	require.NoError(t, err)
+
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	_, err = transport.RoundTrip(req)
+	require.Error(t, err)
+
+	require.NotNil(t, stub.request)
+	require.Equal(t, "Mozilla/5.0", stub.request.Header.Get("User-Agent"))
+
+	// It is still the caller's request that is left untouched.
+	require.Equal(t, "Mozilla/5.0", req.Header.Get("User-Agent"))
+}
+
 func TestNewGuardedHTTPClient_RefusesLoopbackServer(t *testing.T) {
 	// httptest binds 127.0.0.1 on an ephemeral port. Reaching it would mean the
 	// dialer policy is not installed, so a successful fetch here is the failure.

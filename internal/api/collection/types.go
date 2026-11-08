@@ -380,6 +380,11 @@ type ListedSavedItem struct {
 	// ordinary outcome and not a defect.
 	Description pgtype.Text
 	ImageURL    pgtype.Text
+	// PriceAmount and PriceCurrency are the optional product price stored by the
+	// latest successful enrichment. Both are NULL until a page exposes a usable
+	// price, and remain NULL afterwards when the latest result has none.
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
 	// CollectionID is the collection this item is filed in. It is included because a
 	// listing is scoped to a collection and reporting where an item lives lets a
 	// client confirm the scoping it asked for.

@@ -41,6 +41,13 @@ type SavedItem struct {
 	Description pgtype.Text
 	ImageURL    pgtype.Text
 
+	// PriceAmount and PriceCurrency are the optional product price stored by the
+	// latest successful enrichment. Both are NULL until a page exposes a usable
+	// price, and remain NULL afterwards when the latest result has none. The amount
+	// is an exact decimal in the database.
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
+
 	// CollectionID is the collection this item is filed in. Every saved item belongs
 	// to exactly one, and the column is NOT NULL.
 	CollectionID uuid.UUID
@@ -117,6 +124,12 @@ type ListedSavedItem struct {
 	// out of the history.
 	Description pgtype.Text
 	ImageURL    pgtype.Text
+
+	// PriceAmount and PriceCurrency are the optional product price stored by the
+	// latest successful enrichment. Both are NULL until a page exposes a usable
+	// price, and remain NULL afterwards when the latest result has none.
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
 
 	// CollectionID is the collection this item is filed in. Every saved item belongs
 	// to exactly one, and the column is NOT NULL, so it always has a value. It is

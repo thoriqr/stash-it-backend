@@ -55,6 +55,7 @@ and a **hardening backlog**.
 | Background enrichment worker                    | done  | `cmd/worker`, `internal/worker/{queue,enrichment}` |
 | Automatic organization                          | done  | `internal/worker/organization`                     |
 | Guarded outbound fetching                       | done  | `internal/security`                                |
+| Optional product price (amount + currency)      | done  | `internal/enrichment`, `internal/api/enrichment`, `internal/worker/enrichment` |
 
 ### Abuse protection
 

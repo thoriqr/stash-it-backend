@@ -16,14 +16,22 @@ import (
 // them, but there are no saved_items columns for them and no decision to expose
 // them, so reporting them would promise storage that does not exist.
 type SavedItemResponse struct {
-	ID           uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
-	URL          string    `json:"url" example:"https://example.com/articles/1"`
-	Domain       *string   `json:"domain" example:"example.com"`
-	Platform     *string   `json:"platform" example:"youtube"`
-	Title        *string   `json:"title" example:"An interesting article"`
-	Description  *string   `json:"description" example:"A short summary of the page"`
-	ImageURL     *string   `json:"image_url" example:"https://example.com/og.png"`
-	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	ID          uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	URL         string    `json:"url" example:"https://example.com/articles/1"`
+	Domain      *string   `json:"domain" example:"example.com"`
+	Platform    *string   `json:"platform" example:"youtube"`
+	Title       *string   `json:"title" example:"An interesting article"`
+	Description *string   `json:"description" example:"A short summary of the page"`
+	ImageURL    *string   `json:"image_url" example:"https://example.com/og.png"`
+
+	// PriceAmount and PriceCurrency are the optional product price stored by the
+	// latest successful enrichment. price_amount is a JSON string so a client never
+	// has to parse money through a floating point value; price_currency is null when
+	// the source currency could not be normalized. Both are null when the page
+	// exposed no usable price or when there was no title to anchor it to.
+	PriceAmount   *string   `json:"price_amount" example:"24500000"`
+	PriceCurrency *string   `json:"price_currency" example:"IDR"`
+	CollectionID  uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 
 	// EnrichmentStatus is pending, completed or failed. It is completed when the
 	// enrichment process succeeded, which is not the same as every metadata field

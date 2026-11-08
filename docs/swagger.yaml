@@ -210,6 +210,17 @@ definitions:
       platform:
         example: youtube
         type: string
+      price_amount:
+        description: |-
+          PriceAmount and PriceCurrency are the optional product price. price_amount is
+          a JSON string so a client never parses money through a float, and
+          price_currency is null when the source currency was unknown. Both are null when
+          no usable price was stored.
+        example: "24500000"
+        type: string
+      price_currency:
+        example: IDR
+        type: string
       title:
         example: An interesting article
         type: string
@@ -380,6 +391,18 @@ definitions:
         type: string
       platform:
         example: youtube
+        type: string
+      price_amount:
+        description: |-
+          PriceAmount and PriceCurrency are the optional product price stored by the
+          latest successful enrichment. price_amount is a JSON string so a client never
+          has to parse money through a floating point value; price_currency is null when
+          the source currency could not be normalized. Both are null when the page
+          exposed no usable price or when there was no title to anchor it to.
+        example: "24500000"
+        type: string
+      price_currency:
+        example: IDR
         type: string
       title:
         example: An interesting article
@@ -987,6 +1010,17 @@ definitions:
       platform:
         example: youtube
         type: string
+      price_amount:
+        description: |-
+          PriceAmount and PriceCurrency are the optional product price. price_amount is
+          a JSON string so a client never parses money through a float, and
+          price_currency is null when the source currency was unknown. Both are null when
+          no usable price was stored.
+        example: "24500000"
+        type: string
+      price_currency:
+        example: IDR
+        type: string
       title:
         example: An interesting article
         type: string
@@ -1043,6 +1077,17 @@ definitions:
         type: string
       platform:
         example: youtube
+        type: string
+      price_amount:
+        description: |-
+          PriceAmount and PriceCurrency are the optional product price. price_amount is
+          a JSON string so a client never parses money through a float, and
+          price_currency is null when the source currency was unknown. Both are null when
+          no usable price was stored.
+        example: "24500000"
+        type: string
+      price_currency:
+        example: IDR
         type: string
       title:
         example: An interesting article

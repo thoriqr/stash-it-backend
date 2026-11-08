@@ -130,6 +130,12 @@ const (
 	metaTwitterImage         = "twitter:image"
 	metaTwitterImageSrc      = "twitter:image:src"
 
+	// Open Graph product price tags. They are read together by the price
+	// extractor: the amount is required, the currency is optional, and both are
+	// consumed by selectPrice rather than through a precedence order.
+	metaProductPriceAmount   = "product:price:amount"
+	metaProductPriceCurrency = "product:price:currency"
+
 	jsonLDName             = "jsonld:name"
 	jsonLDHeadline         = "jsonld:headline"
 	jsonLDDescription      = "jsonld:description"

@@ -47,9 +47,13 @@ Metadata may include information such as:
 - platform
 - preview image URL
 - canonical URL
+- product price, when the source page publishes one
 
 Preview images are references to images provided by the original source. Discovery
 does not own or guarantee the availability of those external images.
+
+A product price is a snapshot of what the page reported when it was last read. It
+may be absent, and it is not tracked, updated, or compared over time.
 
 Enrichment metadata is additive. A Saved Item is a valid, useful saved item
 before any of it arrives, and it stays one when none of it does.

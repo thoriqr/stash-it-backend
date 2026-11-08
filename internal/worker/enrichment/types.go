@@ -98,3 +98,23 @@ func toPersistenceText(value *string) pgtype.Text {
 		Valid:  true,
 	}
 }
+
+// toPersistenceNumeric converts the extraction contract's exact decimal string
+// into the numeric form the database column uses.
+//
+// The price extractor already produced a validated exact decimal, and it is carried
+// as a string so no floating point value is ever involved. pgtype.Numeric parses
+// that same string exactly, and a nil pointer, or a value it cannot parse, becomes
+// SQL NULL rather than failing the write: price is optional metadata.
+func toPersistenceNumeric(value *string) pgtype.Numeric {
+	if value == nil {
+		return pgtype.Numeric{}
+	}
+
+	var numeric pgtype.Numeric
+	if err := numeric.Scan(*value); err != nil {
+		return pgtype.Numeric{}
+	}
+
+	return numeric
+}

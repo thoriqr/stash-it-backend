@@ -33,6 +33,8 @@ SET
     platform = sqlc.arg(platform),
     description = sqlc.arg(description),
     image_url = sqlc.arg(image_url),
+    price_amount = sqlc.arg(price_amount),
+    price_currency = sqlc.arg(price_currency),
     enrichment_status = 'completed',
     last_enriched_at = NOW()
 WHERE id = sqlc.arg(id)
@@ -46,6 +48,8 @@ RETURNING
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,
@@ -76,6 +80,8 @@ RETURNING
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,

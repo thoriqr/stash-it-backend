@@ -25,6 +25,7 @@ func selectMetadata(
 		CanonicalURL: optionalURL(firstCandidate(doc, canonicalPrecedence), baseURL),
 		SiteName:     optionalText(firstCandidate(doc, siteNamePrecedence)),
 		Author:       optionalText(firstCandidate(doc, authorPrecedence)),
+		Price:        selectPrice(doc),
 	}
 }
 

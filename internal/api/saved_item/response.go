@@ -56,9 +56,16 @@ type SavedItemDetailResponse struct {
 
 	// Description and ImageURL are null until enrichment supplies them, and stay null
 	// afterwards when a page exposed neither.
-	Description  *string   `json:"description" example:"A short summary of the page"`
-	ImageURL     *string   `json:"image_url" example:"https://example.com/og.png"`
-	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	Description *string `json:"description" example:"A short summary of the page"`
+	ImageURL    *string `json:"image_url" example:"https://example.com/og.png"`
+
+	// PriceAmount and PriceCurrency are the optional product price. price_amount is
+	// a JSON string so a client never parses money through a float, and
+	// price_currency is null when the source currency was unknown. Both are null when
+	// no usable price was stored.
+	PriceAmount   *string   `json:"price_amount" example:"24500000"`
+	PriceCurrency *string   `json:"price_currency" example:"IDR"`
+	CollectionID  uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 
 	// EnrichmentStatus is pending, completed or failed. Completed means the process
 	// ran, not that every field above is populated.
@@ -169,9 +176,16 @@ type ListedSavedItemResponse struct {
 	// Description and ImageURL are null until enrichment supplies them, and stay null
 	// afterwards when a page exposed neither. Both are ordinary states rather than
 	// defects, and neither is a reason to leave the item out of the history.
-	Description  *string   `json:"description" example:"A short summary of the page"`
-	ImageURL     *string   `json:"image_url" example:"https://example.com/og.png"`
-	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	Description *string `json:"description" example:"A short summary of the page"`
+	ImageURL    *string `json:"image_url" example:"https://example.com/og.png"`
+
+	// PriceAmount and PriceCurrency are the optional product price. price_amount is
+	// a JSON string so a client never parses money through a float, and
+	// price_currency is null when the source currency was unknown. Both are null when
+	// no usable price was stored.
+	PriceAmount   *string   `json:"price_amount" example:"24500000"`
+	PriceCurrency *string   `json:"price_currency" example:"IDR"`
+	CollectionID  uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 
 	// EnrichmentStatus is pending, completed or failed. Completed means the process
 	// ran, not that every field above is populated. No item is filtered out of this

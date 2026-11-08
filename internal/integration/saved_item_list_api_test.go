@@ -512,6 +512,8 @@ func TestSavedItemAPI_ListRecent(t *testing.T) {
 			"title",
 			"description",
 			"image_url",
+			"price_amount",
+			"price_currency",
 			"last_enriched_at",
 		} {
 			require.Contains(t, entry, field)

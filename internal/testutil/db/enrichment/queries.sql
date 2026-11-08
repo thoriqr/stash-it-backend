@@ -75,6 +75,8 @@ SELECT
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,

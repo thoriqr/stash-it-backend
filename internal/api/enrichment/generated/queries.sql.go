@@ -19,10 +19,12 @@ SET
     platform = $2,
     description = $3,
     image_url = $4,
+    price_amount = $5,
+    price_currency = $6,
     enrichment_status = 'completed',
     last_enriched_at = NOW()
-WHERE id = $5
-  AND user_id = $6
+WHERE id = $7
+  AND user_id = $8
 RETURNING
     id,
     user_id,
@@ -32,6 +34,8 @@ RETURNING
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,
@@ -40,12 +44,14 @@ RETURNING
 `
 
 type CompleteSavedItemEnrichmentParams struct {
-	Title       pgtype.Text
-	Platform    pgtype.Text
-	Description pgtype.Text
-	ImageUrl    pgtype.Text
-	ID          uuid.UUID
-	UserID      uuid.UUID
+	Title         pgtype.Text
+	Platform      pgtype.Text
+	Description   pgtype.Text
+	ImageUrl      pgtype.Text
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
+	ID            uuid.UUID
+	UserID        uuid.UUID
 }
 
 type CompleteSavedItemEnrichmentRow struct {
@@ -57,6 +63,8 @@ type CompleteSavedItemEnrichmentRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -84,6 +92,8 @@ func (q *Queries) CompleteSavedItemEnrichment(ctx context.Context, arg CompleteS
 		arg.Platform,
 		arg.Description,
 		arg.ImageUrl,
+		arg.PriceAmount,
+		arg.PriceCurrency,
 		arg.ID,
 		arg.UserID,
 	)
@@ -97,6 +107,8 @@ func (q *Queries) CompleteSavedItemEnrichment(ctx context.Context, arg CompleteS
 		&i.Title,
 		&i.Description,
 		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,
@@ -121,6 +133,8 @@ RETURNING
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,
@@ -142,6 +156,8 @@ type FailSavedItemEnrichmentRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -169,6 +185,8 @@ func (q *Queries) FailSavedItemEnrichment(ctx context.Context, arg FailSavedItem
 		&i.Title,
 		&i.Description,
 		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,

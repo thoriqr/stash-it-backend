@@ -23,6 +23,12 @@ type CompleteSavedItemEnrichmentParams struct {
 	Platform    *string
 	Description *string
 	ImageURL    *string
+
+	// PriceAmount and PriceCurrency carry the optional product price. They are
+	// already NULL when the service decided this result must not persist a price,
+	// which is the same Title-dependent rule the synchronous path applies.
+	PriceAmount   *string
+	PriceCurrency *string
 }
 
 // CompletedSavedItem is what a successful enrichment write reported back.
@@ -133,11 +139,13 @@ func (r *repository) CompleteSavedItemEnrichment(
 	row, err := r.queries.CompleteSavedItemEnrichment(
 		ctx,
 		enrichmentdb.CompleteSavedItemEnrichmentParams{
-			Title:       toPersistenceText(params.Title),
-			Platform:    toPersistenceText(params.Platform),
-			Description: toPersistenceText(params.Description),
-			ImageUrl:    toPersistenceText(params.ImageURL),
-			ID:          params.SavedItemID,
+			Title:         toPersistenceText(params.Title),
+			Platform:      toPersistenceText(params.Platform),
+			Description:   toPersistenceText(params.Description),
+			ImageUrl:      toPersistenceText(params.ImageURL),
+			PriceAmount:   toPersistenceNumeric(params.PriceAmount),
+			PriceCurrency: toPersistenceText(params.PriceCurrency),
+			ID:            params.SavedItemID,
 		},
 	)
 	if err != nil {

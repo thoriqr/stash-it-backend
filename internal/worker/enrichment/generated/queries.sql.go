@@ -19,18 +19,22 @@ SET
     platform = $2,
     description = $3,
     image_url = $4,
+    price_amount = $5,
+    price_currency = $6,
     enrichment_status = 'completed',
     last_enriched_at = NOW()
-WHERE id = $5
+WHERE id = $7
 RETURNING id, user_id
 `
 
 type CompleteSavedItemEnrichmentParams struct {
-	Title       pgtype.Text
-	Platform    pgtype.Text
-	Description pgtype.Text
-	ImageUrl    pgtype.Text
-	ID          uuid.UUID
+	Title         pgtype.Text
+	Platform      pgtype.Text
+	Description   pgtype.Text
+	ImageUrl      pgtype.Text
+	PriceAmount   pgtype.Numeric
+	PriceCurrency pgtype.Text
+	ID            uuid.UUID
 }
 
 type CompleteSavedItemEnrichmentRow struct {
@@ -65,6 +69,8 @@ func (q *Queries) CompleteSavedItemEnrichment(ctx context.Context, arg CompleteS
 		arg.Platform,
 		arg.Description,
 		arg.ImageUrl,
+		arg.PriceAmount,
+		arg.PriceCurrency,
 		arg.ID,
 	)
 	var i CompleteSavedItemEnrichmentRow

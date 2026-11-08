@@ -77,6 +77,11 @@ func NewEnricher(
 // page produces an error, and every error is a *Failure carrying a Kind, so a
 // caller can tell a retryable problem from a permanent one.
 //
+// The request profile is chosen from the original URL's hostname. A host with a
+// verified profile is tried first and the generic profile is tried once more if
+// that attempt fails for a reason the headers can change, so the generic fallback
+// stays reachable without becoming the universal default.
+//
 // There is no SSRF decision anywhere in this function. The scheme, the port and
 // the resolved address are all enforced by the injected client, in its dialer,
 // and re-checking them here would create a second place to keep in step with the
@@ -88,24 +93,53 @@ func (e *enricher) Enrich(
 	rawURL string,
 ) (Metadata, error) {
 	// The URL is parsed rather than validated, purely so that a malformed value
-	// is reported as a bad URL instead of surfacing as a transport error.
-	if _, err := url.Parse(strings.TrimSpace(rawURL)); err != nil {
+	// is reported as a bad URL instead of surfacing as a transport error, and so
+	// the hostname for profile selection comes from the URL the caller supplied.
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
 		return Metadata{}, newFailure(
 			FailureFetch,
 			fmt.Errorf("%w: %w", ErrInvalidURL, err),
 		)
 	}
 
-	response, err := e.do(ctx, rawURL)
+	profiles := requestProfilesFor(parsed.Hostname())
+
+	var lastFailure error
+
+	for index, profile := range profiles {
+		metadata, failure := e.enrichWithProfile(ctx, rawURL, profile)
+		if failure == nil {
+			return metadata, nil
+		}
+
+		lastFailure = failure
+
+		// Stop after the last profile, and never fall back for a failure the
+		// headers cannot change. See shouldFallBackToGeneric.
+		if !shouldFallBackToGeneric(failure) || index == len(profiles)-1 {
+			break
+		}
+	}
+
+	return Metadata{}, lastFailure
+}
+
+// enrichWithProfile performs one fetch-and-extract attempt with the given profile.
+//
+// The response body is closed here, after it has been read, because reader hands
+// back a stream that is still bound to it. Pairing the close with the whole read
+// in one function is what keeps every attempt from leaking a body.
+func (e *enricher) enrichWithProfile(
+	ctx context.Context,
+	rawURL string,
+	profile requestProfile,
+) (Metadata, error) {
+	response, err := e.do(ctx, rawURL, profile)
 	if err != nil {
 		return Metadata{}, err
 	}
 
-	// The body is closed here and not inside do or reader, because both hand back
-	// a reader that is still bound to it. A close deferred in a function that
-	// returns such a reader runs before the caller reads it, and every page would
-	// then arrive as "read on closed response body". The close is paired with the
-	// whole read, which is the only pairing that is correct.
 	defer response.Body.Close()
 
 	body, finalURL, err := e.reader(response)
@@ -134,6 +168,7 @@ func (e *enricher) Enrich(
 func (e *enricher) do(
 	ctx context.Context,
 	rawURL string,
+	profile requestProfile,
 ) (
 	*http.Response,
 	error,
@@ -151,7 +186,14 @@ func (e *enricher) do(
 		)
 	}
 
-	request.Header.Set("Accept", enrichAcceptHeader)
+	request.Header.Set("Accept", profile.accept)
+
+	// Only a verified host-specific profile supplies a User-Agent. When it does
+	// not, the guarded client's transport applies its default, which is the honest
+	// crawler agent. Enrichment does not invent one here.
+	if profile.userAgent != "" {
+		request.Header.Set("User-Agent", profile.userAgent)
+	}
 
 	// No Accept-Encoding is set on purpose. The guarded client's transport adds
 	// gzip and decodes the response transparently, and doing that by hand would

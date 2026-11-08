@@ -165,6 +165,100 @@ func TestService_Enrich_PersistsOnlyWhatTheEnricherFound(t *testing.T) {
 	require.Equal(t, "completed", result.SavedItem.EnrichmentStatus)
 }
 
+func TestService_Enrich_AppliesTitleDependentPricePersistence(t *testing.T) {
+	// Price is persisted only when the extraction also produced a title. Every
+	// other combination must reach the repository as two nil fields, which the
+	// database turns into NULL and which clears any stale price from an earlier
+	// successful refresh.
+	cases := []struct {
+		name         string
+		metadata     enrichmentcore.Metadata
+		wantAmount   *string
+		wantCurrency *string
+	}{
+		{
+			name: "title and price persist amount and currency",
+			metadata: enrichmentcore.Metadata{
+				Title: validText("Product"),
+				Price: &enrichmentcore.Price{
+					Amount:   "24500000",
+					Currency: "IDR",
+				},
+			},
+			wantAmount:   validText("24500000"),
+			wantCurrency: validText("IDR"),
+		},
+		{
+			name: "title and price with unknown currency persist amount only",
+			metadata: enrichmentcore.Metadata{
+				Title: validText("Product"),
+				Price: &enrichmentcore.Price{Amount: "129.99"},
+			},
+			wantAmount:   validText("129.99"),
+			wantCurrency: nil,
+		},
+		{
+			name:         "title without price clears both",
+			metadata:     enrichmentcore.Metadata{Title: validText("Product")},
+			wantAmount:   nil,
+			wantCurrency: nil,
+		},
+		{
+			name: "price without title is not persisted",
+			metadata: enrichmentcore.Metadata{
+				Price: &enrichmentcore.Price{
+					Amount:   "24500000",
+					Currency: "IDR",
+				},
+			},
+			wantAmount:   nil,
+			wantCurrency: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			userID := uuid.New()
+			savedItemID := uuid.New()
+			rawURL := "https://www.tokopedia.com/jullindo/product"
+
+			repository := mocks.NewMockRepository(ctrl)
+			repository.EXPECT().
+				GetSavedItemURLForEnrichment(gomock.Any(), userID, savedItemID).
+				Return(rawURL, nil)
+
+			enricher := mocks.NewMockMetadataEnricher(ctrl)
+			enricher.EXPECT().
+				Enrich(gomock.Any(), rawURL).
+				Return(tc.metadata, nil)
+
+			repository.EXPECT().
+				CompleteSavedItemEnrichment(gomock.Any(), gomock.Any()).
+				DoAndReturn(
+					func(
+						_ context.Context,
+						params enrichment.CompleteSavedItemEnrichmentParams,
+					) (enrichment.SavedItem, error) {
+						require.Equal(t, tc.wantAmount, params.PriceAmount)
+						require.Equal(t, tc.wantCurrency, params.PriceCurrency)
+
+						return enrichment.SavedItem{
+							ID:               savedItemID,
+							EnrichmentStatus: "completed",
+						}, nil
+					},
+				)
+
+			_, err := newTestService(t, repository, enricher).
+				Enrich(context.Background(), userID, savedItemID)
+
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestService_Enrich_EmptyMetadataIsStillCompleted(t *testing.T) {
 	// A page with no usable metadata is a successful enrichment with an empty
 	// result, never a failure.

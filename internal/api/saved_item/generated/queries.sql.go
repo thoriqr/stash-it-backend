@@ -72,6 +72,8 @@ RETURNING
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,
@@ -97,6 +99,8 @@ type CreateSavedItemRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -141,6 +145,8 @@ func (q *Queries) CreateSavedItem(ctx context.Context, arg CreateSavedItemParams
 		&i.Title,
 		&i.Description,
 		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,
@@ -228,6 +234,8 @@ SELECT
     si.title,
     si.description,
     si.image_url,
+    si.price_amount,
+    si.price_currency,
     si.collection_id,
     si.enrichment_status,
     si.last_enriched_at,
@@ -256,6 +264,8 @@ type GetSavedItemByIDForUserRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -293,6 +303,8 @@ func (q *Queries) GetSavedItemByIDForUser(ctx context.Context, arg GetSavedItemB
 		&i.Title,
 		&i.Description,
 		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,
@@ -333,6 +345,8 @@ SELECT
     si.title,
     si.description,
     si.image_url,
+    si.price_amount,
+    si.price_currency,
     si.collection_id,
     si.enrichment_status,
     si.last_enriched_at,
@@ -370,6 +384,8 @@ type ListSavedItemsAfterRowRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -417,6 +433,8 @@ func (q *Queries) ListSavedItemsAfterRow(ctx context.Context, arg ListSavedItems
 			&i.Title,
 			&i.Description,
 			&i.ImageUrl,
+			&i.PriceAmount,
+			&i.PriceCurrency,
 			&i.CollectionID,
 			&i.EnrichmentStatus,
 			&i.LastEnrichedAt,
@@ -444,6 +462,8 @@ SELECT
     si.title,
     si.description,
     si.image_url,
+    si.price_amount,
+    si.price_currency,
     si.collection_id,
     si.enrichment_status,
     si.last_enriched_at,
@@ -475,6 +495,8 @@ type ListSavedItemsFirstRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -541,6 +563,8 @@ func (q *Queries) ListSavedItemsFirst(ctx context.Context, arg ListSavedItemsFir
 			&i.Title,
 			&i.Description,
 			&i.ImageUrl,
+			&i.PriceAmount,
+			&i.PriceCurrency,
 			&i.CollectionID,
 			&i.EnrichmentStatus,
 			&i.LastEnrichedAt,

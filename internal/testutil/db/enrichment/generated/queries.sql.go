@@ -134,6 +134,8 @@ SELECT
     title,
     description,
     image_url,
+    price_amount,
+    price_currency,
     collection_id,
     enrichment_status,
     last_enriched_at,
@@ -152,6 +154,8 @@ type GetSavedItemEnrichmentStateRow struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
 	CollectionID     uuid.UUID
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -173,6 +177,8 @@ func (q *Queries) GetSavedItemEnrichmentState(ctx context.Context, id uuid.UUID)
 		&i.Title,
 		&i.Description,
 		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
 		&i.CollectionID,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,

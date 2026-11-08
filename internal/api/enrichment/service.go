@@ -146,16 +146,21 @@ func (s *service) Enrich(
 
 	// What is written is exactly what the extractor returned. A field it did not
 	// provide is stored as NULL, and no value is derived, defaulted or inferred
-	// from the URL here.
+	// from the URL here. Price follows the one persistence rule this feature adds:
+	// it is stored only when there is also a title. See priceForPersistence.
+	priceAmount, priceCurrency := priceForPersistence(metadata)
+
 	savedItem, err := s.repository.CompleteSavedItemEnrichment(
 		ctx,
 		CompleteSavedItemEnrichmentParams{
-			UserID:      userID,
-			SavedItemID: savedItemID,
-			Title:       metadata.Title,
-			Platform:    metadata.Platform,
-			Description: metadata.Description,
-			ImageURL:    metadata.ImageURL,
+			UserID:        userID,
+			SavedItemID:   savedItemID,
+			Title:         metadata.Title,
+			Platform:      metadata.Platform,
+			Description:   metadata.Description,
+			ImageURL:      metadata.ImageURL,
+			PriceAmount:   priceAmount,
+			PriceCurrency: priceCurrency,
 		},
 	)
 	if err != nil {
@@ -176,4 +181,35 @@ func (s *service) Enrich(
 	)
 
 	return EnrichResult{SavedItem: savedItem}, nil
+}
+
+// priceForPersistence applies the Title-dependent persistence rule for price.
+//
+// Price is persisted only when the extraction also produced a title. Title is not
+// a requirement for successful enrichment and it does not gate any other field; it
+// gates price alone, because a price without the product title that gives it
+// meaning is not trustworthy as standalone product information.
+//
+// Every other combination yields two NULLs, which is what clears a stale price from
+// an earlier successful refresh. A valid amount is kept even when its currency could
+// not be normalized, in which case the currency column is NULL.
+func priceForPersistence(
+	metadata enrichment.Metadata,
+) (
+	amount *string,
+	currency *string,
+) {
+	if metadata.Title == nil || metadata.Price == nil {
+		return nil, nil
+	}
+
+	priceAmount := metadata.Price.Amount
+
+	var priceCurrency *string
+	if metadata.Price.Currency != "" {
+		mapped := metadata.Price.Currency
+		priceCurrency = &mapped
+	}
+
+	return &priceAmount, priceCurrency
 }

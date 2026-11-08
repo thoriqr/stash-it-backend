@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
@@ -137,6 +138,24 @@ func metadataPtr(value string) *string {
 	return &value
 }
 
+// numericString renders a stored exact numeric as its decimal string, the same way
+// the API mapper does, so a test can compare it without involving a float.
+func numericString(t *testing.T, value pgtype.Numeric) string {
+	t.Helper()
+
+	if !value.Valid {
+		return ""
+	}
+
+	rendered, err := value.Value()
+	require.NoError(t, err)
+
+	text, ok := rendered.(string)
+	require.True(t, ok)
+
+	return text
+}
+
 // newEnrichmentApp builds a real app wired to a controllable enricher.
 func newEnrichmentApp(enricher *testutil.FakeEnricher) *fiber.App {
 	app, _ := testutil.NewAppWithEnricher(testPool, enricher)
@@ -154,6 +173,8 @@ type enrichSavedItemBody struct {
 			Title            *string `json:"title"`
 			Description      *string `json:"description"`
 			ImageURL         *string `json:"image_url"`
+			PriceAmount      *string `json:"price_amount"`
+			PriceCurrency    *string `json:"price_currency"`
 			CollectionID     string  `json:"collection_id"`
 			EnrichmentStatus string  `json:"enrichment_status"`
 			LastEnrichedAt   *string `json:"last_enriched_at"`
@@ -779,5 +800,200 @@ func TestEnrichmentAPI_EnrichRequestErrors(t *testing.T) {
 			after.EnrichmentStatus,
 			"an unauthenticated request must not enrich anything",
 		)
+	})
+}
+
+// Price is persisted only when the extraction also produced a title. These tests
+// assert the rule against the real repository and the real statements, and check the
+// response reports the same stored values.
+func TestEnrichmentAPI_EnrichPricePersistence(t *testing.T) {
+	t.Run("persists amount and currency when a title is present", func(t *testing.T) {
+		truncateEnrichmentData(t)
+
+		userID := createEnrichmentUser(t, "enrich-price@example.com")
+		collectionID := createUnsortedForEnrichment(t, userID)
+		savedItemID := createPendingSavedItem(
+			t,
+			userID,
+			collectionID,
+			"https://www.tokopedia.com/jullindo/product",
+		)
+
+		resp, body := enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: metadataPtr("Microsoft Surface Pro"),
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		after := getEnrichmentState(t, savedItemID)
+		require.Equal(t, "24500000", numericString(t, after.PriceAmount))
+		require.Equal(t, "IDR", after.PriceCurrency.String)
+		require.True(t, after.PriceCurrency.Valid)
+
+		require.NotNil(t, body.Data.SavedItem.PriceAmount)
+		require.Equal(t, "24500000", *body.Data.SavedItem.PriceAmount)
+		require.NotNil(t, body.Data.SavedItem.PriceCurrency)
+		require.Equal(t, "IDR", *body.Data.SavedItem.PriceCurrency)
+	})
+
+	t.Run("persists the amount and leaves the currency null when unknown", func(t *testing.T) {
+		truncateEnrichmentData(t)
+
+		userID := createEnrichmentUser(t, "enrich-price-nocur@example.com")
+		collectionID := createUnsortedForEnrichment(t, userID)
+		savedItemID := createPendingSavedItem(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: metadataPtr("Product"),
+					Price: &enrichmentcore.Price{Amount: "129.99"},
+				},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		after := getEnrichmentState(t, savedItemID)
+		require.Equal(t, "129.99", numericString(t, after.PriceAmount))
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("does not persist a price without a title", func(t *testing.T) {
+		truncateEnrichmentData(t)
+
+		userID := createEnrichmentUser(t, "enrich-price-notitle@example.com")
+		collectionID := createUnsortedForEnrichment(t, userID)
+		savedItemID := createPendingSavedItem(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		after := getEnrichmentState(t, savedItemID)
+		require.Equal(t, "completed", after.EnrichmentStatus)
+		require.False(t, after.PriceAmount.Valid)
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("a refresh without a price clears a stale price", func(t *testing.T) {
+		truncateEnrichmentData(t)
+
+		userID := createEnrichmentUser(t, "enrich-price-stale@example.com")
+		collectionID := createUnsortedForEnrichment(t, userID)
+		savedItemID := createPendingSavedItem(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: metadataPtr("Product"),
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		require.True(t, getEnrichmentState(t, savedItemID).PriceAmount.Valid)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{Title: metadataPtr("Product")},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		after := getEnrichmentState(t, savedItemID)
+		require.False(
+			t,
+			after.PriceAmount.Valid,
+			"a successful refresh with no price must clear the stale amount",
+		)
+		require.False(t, after.PriceCurrency.Valid)
+	})
+
+	t.Run("a failed enrichment preserves the stored price", func(t *testing.T) {
+		truncateEnrichmentData(t)
+
+		userID := createEnrichmentUser(t, "enrich-price-fail@example.com")
+		collectionID := createUnsortedForEnrichment(t, userID)
+		savedItemID := createPendingSavedItem(
+			t,
+			userID,
+			collectionID,
+			"https://example.com/product",
+		)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Metadata: enrichmentcore.Metadata{
+					Title: metadataPtr("Product"),
+					Price: &enrichmentcore.Price{
+						Amount:   "24500000",
+						Currency: "IDR",
+					},
+				},
+			}),
+			userID,
+			savedItemID,
+		)
+
+		_, _ = enrichSavedItem(
+			t,
+			newEnrichmentApp(&testutil.FakeEnricher{
+				Err: enrichmentcore.ErrFetchFailed,
+			}),
+			userID,
+			savedItemID,
+		)
+
+		after := getEnrichmentState(t, savedItemID)
+		require.Equal(t, "failed", after.EnrichmentStatus)
+		require.Equal(t, "24500000", numericString(t, after.PriceAmount))
+		require.Equal(t, "IDR", after.PriceCurrency.String)
 	})
 }

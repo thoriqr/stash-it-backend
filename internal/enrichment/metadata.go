@@ -61,6 +61,29 @@ type Metadata struct {
 	// it and no plan to add one, so it is exposed for the same reason as
 	// SiteName and is otherwise unused.
 	Author *string
+
+	// Price is the optional product price the page exposes.
+	//
+	// It is nil unless a valid exact amount was found. A page that is not a
+	// product, or one whose price is absent or malformed, simply has no price;
+	// that is an ordinary result and never a failure. Currency is independent of
+	// Amount: a valid amount whose currency cannot be normalized is still a
+	// Price, with an empty Currency.
+	Price *Price
+}
+
+// Price is an optional product price found on a page.
+//
+// Amount is the exact decimal representation of the price, with no currency
+// symbol, no grouping separator and no display formatting. It is a string so that
+// no floating point value is ever produced from it.
+//
+// Currency is a canonical ISO 4217 code, derived only through an explicit
+// source-label mapping. It is empty when the source label was absent, unknown or
+// ambiguous, which keeps an unnormalized label from being presented as a code.
+type Price struct {
+	Amount   string
+	Currency string
 }
 
 // IsEmpty reports whether nothing usable was found.
@@ -76,5 +99,6 @@ func (m Metadata) IsEmpty() bool {
 		m.ImageURL == nil &&
 		m.CanonicalURL == nil &&
 		m.SiteName == nil &&
-		m.Author == nil
+		m.Author == nil &&
+		m.Price == nil
 }

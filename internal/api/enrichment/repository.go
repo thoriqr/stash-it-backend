@@ -28,6 +28,13 @@ type CompleteSavedItemEnrichmentParams struct {
 	Platform    *string
 	Description *string
 	ImageURL    *string
+
+	// PriceAmount and PriceCurrency carry the optional product price. They are
+	// already NULL when the caller decided the current result must not persist a
+	// price, which is a persistence decision made above this layer. The repository
+	// only converts them to the database representation.
+	PriceAmount   *string
+	PriceCurrency *string
 }
 
 type Repository interface {
@@ -106,12 +113,14 @@ func (r *repository) CompleteSavedItemEnrichment(
 	row, err := r.queries.CompleteSavedItemEnrichment(
 		ctx,
 		enrichmentdb.CompleteSavedItemEnrichmentParams{
-			Title:       toPersistenceText(params.Title),
-			Platform:    toPersistenceText(params.Platform),
-			Description: toPersistenceText(params.Description),
-			ImageUrl:    toPersistenceText(params.ImageURL),
-			ID:          params.SavedItemID,
-			UserID:      params.UserID,
+			Title:         toPersistenceText(params.Title),
+			Platform:      toPersistenceText(params.Platform),
+			Description:   toPersistenceText(params.Description),
+			ImageUrl:      toPersistenceText(params.ImageURL),
+			PriceAmount:   toPersistenceNumeric(params.PriceAmount),
+			PriceCurrency: toPersistenceText(params.PriceCurrency),
+			ID:            params.SavedItemID,
+			UserID:        params.UserID,
 		},
 	)
 	if err != nil {
@@ -178,6 +187,8 @@ func newSavedItemFromCompleteRow(
 		Title:            row.Title,
 		Description:      row.Description,
 		ImageURL:         row.ImageUrl,
+		PriceAmount:      row.PriceAmount,
+		PriceCurrency:    row.PriceCurrency,
 		CollectionID:     row.CollectionID,
 		EnrichmentStatus: row.EnrichmentStatus,
 		LastEnrichedAt:   row.LastEnrichedAt,
@@ -198,6 +209,8 @@ func newSavedItemFromFailRow(
 		Title:            row.Title,
 		Description:      row.Description,
 		ImageURL:         row.ImageUrl,
+		PriceAmount:      row.PriceAmount,
+		PriceCurrency:    row.PriceCurrency,
 		CollectionID:     row.CollectionID,
 		EnrichmentStatus: row.EnrichmentStatus,
 		LastEnrichedAt:   row.LastEnrichedAt,

@@ -589,7 +589,15 @@ func (t *userAgentTransport) RoundTrip(
 	// The caller's request is not mutated. A RoundTripper must not modify the
 	// request it is given, so the header is set on a clone.
 	cloned := req.Clone(req.Context())
-	cloned.Header.Set("User-Agent", t.userAgent)
+
+	// The configured agent is a default, not an override. A caller that set a
+	// User-Agent on the request keeps it; enrichment does so only for a small set
+	// of explicitly supported hosts. Every other request, including every request
+	// that sets none, keeps the honest crawler default, so a host-specific agent
+	// cannot silently become the universal one.
+	if cloned.Header.Get("User-Agent") == "" {
+		cloned.Header.Set("User-Agent", t.userAgent)
+	}
 
 	return t.next.RoundTrip(cloned)
 }

@@ -1,6 +1,10 @@
 -- Baseline schema
--- Represents the final database state after migrations 001-023.
--- Source of truth: the cumulative effect of migrations/000001..000023 (up only).
+-- A manually maintained snapshot of the database schema after the migrations,
+-- used only by the test-only sqlc targets and by the throwaway Postgres
+-- containers that integration tests start. It is not used at runtime and can
+-- drift from the migrations; migrations/ remains the production source of truth.
+-- This file represents the cumulative effect of migrations/000001..000030 (up
+-- only).
 
 -- ============================================================
 -- Extensions
@@ -142,6 +146,14 @@ CREATE TABLE saved_items (
     -- required to expose a description or a preview image.
     description TEXT,
     image_url TEXT,
+
+    -- Optional product price captured by enrichment. price_amount is an exact
+    -- NUMERIC so no floating point value ever holds a stored price, and
+    -- price_currency is a nullable three character ISO 4217 code. Both stay NULL
+    -- until a successful enrichment supplies them, and remain NULL afterwards
+    -- when the page exposed no usable price or when the item has no title.
+    price_amount NUMERIC,
+    price_currency VARCHAR(3),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

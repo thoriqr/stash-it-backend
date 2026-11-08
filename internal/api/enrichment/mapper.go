@@ -15,6 +15,8 @@ func mapSavedItemResponse(savedItem SavedItem) SavedItemResponse {
 		Title:            mapOptionalText(savedItem.Title),
 		Description:      mapOptionalText(savedItem.Description),
 		ImageURL:         mapOptionalText(savedItem.ImageURL),
+		PriceAmount:      mapOptionalNumeric(savedItem.PriceAmount),
+		PriceCurrency:    mapOptionalText(savedItem.PriceCurrency),
 		CollectionID:     savedItem.CollectionID,
 		EnrichmentStatus: savedItem.EnrichmentStatus,
 		LastEnrichedAt:   mapOptionalTimestamp(savedItem.LastEnrichedAt),
@@ -47,4 +49,28 @@ func mapOptionalTimestamp(value pgtype.Timestamptz) *time.Time {
 	timestamp := value.Time
 
 	return &timestamp
+}
+
+// mapOptionalNumeric renders an exact numeric as its decimal string.
+//
+// The response carries a price amount as a string rather than a number so a client
+// never routes money through a floating point type. pgtype.Numeric already holds the
+// exact value and its own decimal rendering, so no recalculation happens here, and a
+// NULL column stays null in the response.
+func mapOptionalNumeric(value pgtype.Numeric) *string {
+	if !value.Valid {
+		return nil
+	}
+
+	rendered, err := value.Value()
+	if err != nil {
+		return nil
+	}
+
+	text, ok := rendered.(string)
+	if !ok {
+		return nil
+	}
+
+	return &text
 }

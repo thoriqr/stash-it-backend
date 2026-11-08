@@ -674,3 +674,17 @@ for platform names and is a separate writer with separate behavior.
     the redundancy makes the item self-describing once it leaves the response. The
     Inbox joins the same way, and no collection field is added to it without a
     demonstrated need.
+
+## Product price
+
+65. **A product price belongs directly on `saved_items`.** `price_amount` (an exact
+    `NUMERIC`) and `price_currency` (a nullable three-character ISO 4217 code) are
+    nullable columns on the Saved Item itself, populated by a successful enrichment
+    and cleared when a later successful refresh has no price. Price is persisted only
+    when the same enrichment also produced a title; without a title it is not kept,
+    because a bare amount does not identify a product. A separate product catalog or
+    price-history model is not needed for the present scope, which carries an
+    optional snapshot rather than a tracked series. The amount stays exact in the
+    extraction contract and in the database, and the API reports it as a string so
+    no client routes money through a floating point value. Price tracking, history,
+    alerts and currency conversion are out of scope.

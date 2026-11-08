@@ -579,8 +579,8 @@ func TestSavedItem_Get(t *testing.T) {
 			t,
 			[]string{
 				"id", "url", "domain", "platform", "title",
-				"description", "image_url", "collection_id",
-				"enrichment_status", "last_enriched_at",
+				"description", "image_url", "price_amount", "price_currency",
+				"collection_id", "enrichment_status", "last_enriched_at",
 				"created_at", "updated_at",
 			},
 			shapeKeys,

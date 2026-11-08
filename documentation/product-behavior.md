@@ -19,6 +19,7 @@ The initial Saved Item is deliberately minimal:
 | Title            | not set until enrichment runs                                         |
 | Description      | not set until enrichment runs, and may stay unset afterwards          |
 | Preview image    | not set until enrichment runs, and may stay unset afterwards          |
+| Price            | optional; set by enrichment when the page publishes one, may stay unset |
 | Created, updated | when the item was saved and when it last changed                      |
 | Collection       | the collection the item is currently in; every item has exactly one   |
 
@@ -126,6 +127,12 @@ enhancement to the core loop, never a condition of it.
   the more specific one wins. `platform` is only ever taken from what the page
   claims to be — never guessed from which site the URL happens to point at, since
   a link to an article hosted elsewhere is not made by that host.
+- **A product price may be captured, but only as a snapshot.** When the source page
+  publishes a product price, enrichment may record the amount and, when it can be
+  determined, the currency. The stored price is the latest successfully enriched
+  value, not a live one: it is not tracked over time, not kept as price history, not
+  used for alerts, and never converted between currencies. A price without a title
+  is not kept, because a bare amount does not identify a product.
 
 ## Metadata extraction
 
@@ -148,6 +155,9 @@ scheduled.
   is not treated as a partially successful extraction.
 - One unreadable block on an otherwise fine page, such as malformed structured
   data, does not cost the page the metadata that was readable around it.
+- A product price is read only from metadata the page publishes for its product,
+  never from arbitrary numbers elsewhere on the page. An amount whose currency
+  cannot be determined is kept without a currency rather than assumed.
 
 ## The Unsorted collection
 

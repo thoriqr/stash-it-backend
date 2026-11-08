@@ -2728,6 +2728,15 @@ const docTemplate = `{
                     "type": "string",
                     "example": "youtube"
                 },
+                "price_amount": {
+                    "description": "PriceAmount and PriceCurrency are the optional product price. price_amount is\na JSON string so a client never parses money through a float, and\nprice_currency is null when the source currency was unknown. Both are null when\nno usable price was stored.",
+                    "type": "string",
+                    "example": "24500000"
+                },
+                "price_currency": {
+                    "type": "string",
+                    "example": "IDR"
+                },
                 "title": {
                     "type": "string",
                     "example": "An interesting article"
@@ -2919,6 +2928,15 @@ const docTemplate = `{
                 "platform": {
                     "type": "string",
                     "example": "youtube"
+                },
+                "price_amount": {
+                    "description": "PriceAmount and PriceCurrency are the optional product price stored by the\nlatest successful enrichment. price_amount is a JSON string so a client never\nhas to parse money through a floating point value; price_currency is null when\nthe source currency could not be normalized. Both are null when the page\nexposed no usable price or when there was no title to anchor it to.",
+                    "type": "string",
+                    "example": "24500000"
+                },
+                "price_currency": {
+                    "type": "string",
+                    "example": "IDR"
                 },
                 "title": {
                     "type": "string",
@@ -3759,6 +3777,15 @@ const docTemplate = `{
                     "type": "string",
                     "example": "youtube"
                 },
+                "price_amount": {
+                    "description": "PriceAmount and PriceCurrency are the optional product price. price_amount is\na JSON string so a client never parses money through a float, and\nprice_currency is null when the source currency was unknown. Both are null when\nno usable price was stored.",
+                    "type": "string",
+                    "example": "24500000"
+                },
+                "price_currency": {
+                    "type": "string",
+                    "example": "IDR"
+                },
                 "title": {
                     "type": "string",
                     "example": "An interesting article"
@@ -3827,6 +3854,15 @@ const docTemplate = `{
                 "platform": {
                     "type": "string",
                     "example": "youtube"
+                },
+                "price_amount": {
+                    "description": "PriceAmount and PriceCurrency are the optional product price. price_amount is\na JSON string so a client never parses money through a float, and\nprice_currency is null when the source currency was unknown. Both are null when\nno usable price was stored.",
+                    "type": "string",
+                    "example": "24500000"
+                },
+                "price_currency": {
+                    "type": "string",
+                    "example": "IDR"
                 },
                 "title": {
                     "type": "string",
