@@ -138,11 +138,12 @@ func TestSavedItem_CreateContract(t *testing.T) {
 	savedItem, ok := data["saved_item"].(map[string]any)
 	require.True(t, ok, "response has no saved_item object")
 
-	// Exactly the four agreed fields. Nothing about the item's metadata is reported,
-	// because at save time none of it has been read.
+	// Exactly the five agreed fields. Nothing about the item's metadata is reported,
+	// because at save time none of it has been read. note is reported because it is
+	// user-supplied at save time rather than looked up.
 	require.ElementsMatch(
 		t,
-		[]string{"id", "url", "collection_id", "enrichment_status"},
+		[]string{"id", "url", "note", "collection_id", "enrichment_status"},
 		rawKeys(t, savedItem),
 	)
 
@@ -248,7 +249,7 @@ func TestSavedItem_DetailContract(t *testing.T) {
 	require.ElementsMatch(
 		t,
 		[]string{
-			"id", "url", "domain", "platform", "title",
+			"id", "url", "domain", "platform", "title", "note",
 			"description", "image_url", "price_amount", "price_currency",
 			"collection_id", "enrichment_status", "last_enriched_at",
 			"created_at", "updated_at",

@@ -26,8 +26,14 @@ import (
 // to carry fields a save cannot fill, or the save response to omit fields a caller
 // may be relying on being absent.
 type CreatedSavedItemResponse struct {
-	ID           uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
-	URL          string    `json:"url" example:"https://example.com/articles/1"`
+	ID  uuid.UUID `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
+	URL string    `json:"url" example:"https://example.com/articles/1"`
+
+	// Note is the note that was actually stored with the save, or null when none was
+	// submitted or when the submitted value contained only whitespace. Reporting it
+	// here lets a caller confirm what was written without opening the item.
+	Note *string `json:"note" example:"Read the section about database indexing later."`
+
 	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 
 	// EnrichmentStatus is the value the row was stored with, which on a fresh save is
@@ -53,6 +59,10 @@ type SavedItemDetailResponse struct {
 	Domain   *string   `json:"domain" example:"example.com"`
 	Platform *string   `json:"platform" example:"youtube"`
 	Title    *string   `json:"title" example:"An interesting article"`
+
+	// Note is the user-authored plain-text note, or null when the user has not set
+	// one. It is independent of enrichment and never changes as a result of it.
+	Note *string `json:"note" example:"Read the section about database indexing later."`
 
 	// Description and ImageURL are null until enrichment supplies them, and stay null
 	// afterwards when a page exposed neither.
@@ -149,7 +159,7 @@ type GetSavedItemAPIResponse struct {
 // ListedSavedItemResponse is a saved item as the recent saved items listing reports
 // it.
 //
-// It carries the same twelve fields as SavedItemDetailResponse, for the same reason:
+// It carries the same fields as SavedItemDetailResponse, for the same reason:
 // without enrichment_status a null title is ambiguous between "this page has no
 // title" and "this page has not been read yet", and without last_enriched_at there is
 // no way to tell whether the metadata above is current.
@@ -172,6 +182,10 @@ type ListedSavedItemResponse struct {
 	Domain   *string   `json:"domain" example:"example.com"`
 	Platform *string   `json:"platform" example:"youtube"`
 	Title    *string   `json:"title" example:"An interesting article"`
+
+	// Note is the user-authored plain-text note, or null when the user has not set
+	// one. It is returned as stored and is never derived from enrichment.
+	Note *string `json:"note" example:"Read the section about database indexing later."`
 
 	// Description and ImageURL are null until enrichment supplies them, and stay null
 	// afterwards when a page exposed neither. Both are ordinary states rather than
@@ -260,4 +274,29 @@ type CursorPageMeta struct {
 	// exact rather than inferred from a count. There is deliberately no total: a
 	// cursor-paginated response does not know how many results exist overall.
 	HasMore bool `json:"has_more" example:"true"`
+}
+
+// UpdateSavedItemNoteResponse is what adding or editing a note reports.
+//
+// It carries the note as it was stored, not a copy of what was submitted. The two
+// are the same text by construction, but reporting the stored value keeps the
+// response tied to the row rather than to the request.
+type UpdateSavedItemNoteResponse struct {
+	Note string `json:"note" example:"My updated context for saving this URL."`
+}
+
+type UpdateSavedItemNoteAPIResponse struct {
+	Data    *UpdateSavedItemNoteResponse `json:"data"`
+	Message string                       `json:"message" example:"saved item note saved successfully"`
+}
+
+// DeleteSavedItemNoteAPIResponse is a plain success with no body.
+//
+// Clearing a note has no outcome to report beyond the operation succeeding: the
+// note is gone and the saved item remains. It follows the collection delete
+// convention rather than the saved item delete, whose data object exists only
+// because it describes the collection that was left behind.
+type DeleteSavedItemNoteAPIResponse struct {
+	Data    *struct{} `json:"data"`
+	Message string    `json:"message" example:"saved item note deleted successfully"`
 }

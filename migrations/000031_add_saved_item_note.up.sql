@@ -1,0 +1,2 @@
+ALTER TABLE saved_items
+ADD COLUMN note TEXT;

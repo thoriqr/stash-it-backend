@@ -3,7 +3,7 @@
 -- used only by the test-only sqlc targets and by the throwaway Postgres
 -- containers that integration tests start. It is not used at runtime and can
 -- drift from the migrations; migrations/ remains the production source of truth.
--- This file represents the cumulative effect of migrations/000001..000030 (up
+-- This file represents the cumulative effect of migrations/000001..000031 (up
 -- only).
 
 -- ============================================================
@@ -140,6 +140,12 @@ CREATE TABLE saved_items (
     domain TEXT,
     platform TEXT,
     title TEXT,
+
+    -- Optional plain-text note the user writes about the saved item. It is
+    -- user-authored data and independent of enrichment: nothing in enrichment or
+    -- automatic organization reads or writes it, and it stays NULL until the user
+    -- sets one.
+    note TEXT,
 
     -- Optional enriched metadata. Both stay NULL until background enrichment
     -- runs, and either may still be NULL afterwards because a page is not

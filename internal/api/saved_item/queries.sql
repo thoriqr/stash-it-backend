@@ -20,6 +20,7 @@
 INSERT INTO saved_items (
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -27,6 +28,7 @@ INSERT INTO saved_items (
 ) VALUES (
     sqlc.arg(user_id),
     sqlc.arg(url),
+    sqlc.arg(note),
     sqlc.arg(domain),
     sqlc.arg(platform),
     sqlc.arg(title),
@@ -36,6 +38,7 @@ RETURNING
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -83,6 +86,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -122,6 +126,39 @@ DELETE FROM saved_items
 WHERE id = sqlc.arg(id)
   AND user_id = sqlc.arg(user_id)
 RETURNING id, collection_id;
+
+-- name: UpdateSavedItemNote :one
+-- Sets the note on one saved item of the authenticated user and reports what was
+-- stored.
+--
+-- Matching id AND user_id means an item that does not exist and an item owned by
+-- another user both return no row, so both surface as the same not found error and
+-- the endpoint never discloses whether an ID exists.
+--
+-- Only note is written. Enrichment columns, collection_id and every other field
+-- stay as they are: a note is user-authored data and editing it is not an
+-- enrichment or organization event. The saved_items.updated_at trigger fires,
+-- which is intended because the note is a real change to the item.
+UPDATE saved_items
+SET note = sqlc.arg(note)
+WHERE id = sqlc.arg(id)
+  AND user_id = sqlc.arg(user_id)
+RETURNING note;
+
+-- name: ClearSavedItemNote :one
+-- Clears the note on one saved item of the authenticated user.
+--
+-- Matching id AND user_id means an item that does not exist and an item owned by
+-- another user both return no row, so both surface as the same not found error and
+-- the endpoint never discloses whether an ID exists.
+--
+-- The saved item itself is never removed, and no other column is touched. Clearing
+-- a note is an ordinary update, not a delete of the item.
+UPDATE saved_items
+SET note = NULL
+WHERE id = sqlc.arg(id)
+  AND user_id = sqlc.arg(user_id)
+RETURNING id;
 
 -- name: ListSavedItemsFirst :many
 -- First page of the authenticated user's recent saved items, newest first.
@@ -168,6 +205,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -212,6 +250,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,

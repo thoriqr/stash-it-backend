@@ -37,6 +37,38 @@ func Routes(
 		handler.Create,
 	)
 
+	// Adding, editing and clearing a note share one per-user budget and one
+	// namespace. They write the same column on the same kind of row, so a separate
+	// counter per HTTP method would let a caller double its allowance by switching
+	// between them. It is separate from the save budget because a save inserts a row
+	// and arranges background work while a note mutation updates one column.
+	//
+	// Mounted after Auth and before the handler for the same reason every user budget
+	// is: there is no account to key on until Auth has verified one, and a refused
+	// request must never reach the write it guards.
+	noteUserLimit := middleware.UserRateLimit(
+		userRateLimiter,
+		noteUserRateLimitNamespace,
+		ratelimit.Policy{
+			Max:    NoteUserRateLimitMax,
+			Window: NoteUserRateLimitWindow,
+		},
+	)
+
+	router.Put(
+		"/:id/note",
+		middleware.Auth(verifier),
+		noteUserLimit,
+		handler.SetNote,
+	)
+
+	router.Delete(
+		"/:id/note",
+		middleware.Auth(verifier),
+		noteUserLimit,
+		handler.DeleteNote,
+	)
+
 	// The recent history. Registered on "/" rather than on a distinct sub-path,
 	// because this is the listing of the resource this group is mounted on and it
 	// belongs where a client looks for one. It does not collide with GET

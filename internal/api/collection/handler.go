@@ -166,7 +166,7 @@ func (h *Handler) ListCollections(c fiber.Ctx) error {
 // @Summary List a collection's saved items
 // @Description Retrieve a collection and its saved items, ordered by newest first.
 // @Description The response includes collection details even when the collection contains no saved items.
-// @Description Saved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null.
+// @Description Saved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null. Each item includes its optional note, which is null when the user has not set one.
 // @Description Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
 // @Description Possible error codes:
 // @Description - BAD_REQUEST

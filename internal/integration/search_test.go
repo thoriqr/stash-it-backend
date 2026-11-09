@@ -213,6 +213,30 @@ func createSearchSavedItemFull(
 	return savedItemID
 }
 
+// setSearchSavedItemNote writes a user-authored note onto a saved item.
+//
+// A separate statement from the enrichment-state helper because a note is not
+// enrichment metadata: it is set by the user, and testing that it is reported
+// without being searchable needs a value no other column carries.
+func setSearchSavedItemNote(
+	t *testing.T,
+	savedItemID uuid.UUID,
+	note string,
+) {
+	t.Helper()
+
+	require.NoError(
+		t,
+		searchdbtest.New(testPool).SetSearchSavedItemNote(
+			context.Background(),
+			searchdbtest.SetSearchSavedItemNoteParams{
+				Note: optionalTestText(note),
+				ID:   savedItemID,
+			},
+		),
+	)
+}
+
 // setSearchSavedItemEnrichmentState writes the enrichment columns a search result
 // reports. The collection slice's helper already sets the full enrichment state on a
 // saved item, so it is reused rather than copied: a second version here could

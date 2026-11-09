@@ -44,6 +44,8 @@ func searchSavedItemFixture(
 		"https://example.org/og.png",
 	)
 
+	setSearchSavedItemNote(t, itemID, "A note from the user")
+
 	return userID, itemID, collectionID
 }
 
@@ -123,7 +125,7 @@ func TestSearchAPI_ResponseContract(t *testing.T) {
 	require.ElementsMatch(
 		t,
 		[]string{
-			"id", "title", "url", "domain", "image_url",
+			"id", "title", "url", "note", "domain", "image_url",
 			"enrichment_status", "collection", "created_at",
 		},
 		rawKeys(t, savedItem),
@@ -132,6 +134,7 @@ func TestSearchAPI_ResponseContract(t *testing.T) {
 	require.Equal(t, itemID.String(), savedItem["id"])
 	require.Equal(t, "Camera Buying Guide", savedItem["title"])
 	require.Equal(t, "https://example.org/notes/camera-buying-guide", savedItem["url"])
+	require.Equal(t, "A note from the user", savedItem["note"])
 	require.Equal(t, "example.org", savedItem["domain"])
 	require.Equal(t, "https://example.org/og.png", savedItem["image_url"])
 	require.Equal(t, "completed", savedItem["enrichment_status"])

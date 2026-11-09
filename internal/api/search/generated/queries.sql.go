@@ -91,6 +91,7 @@ SELECT
     saved_items.id,
     saved_items.title,
     saved_items.url,
+    saved_items.note,
     saved_items.domain,
     saved_items.image_url,
     saved_items.enrichment_status,
@@ -145,6 +146,7 @@ type SearchSavedItemsRow struct {
 	ID               uuid.UUID
 	Title            pgtype.Text
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	ImageUrl         pgtype.Text
 	EnrichmentStatus string
@@ -226,6 +228,7 @@ func (q *Queries) SearchSavedItems(ctx context.Context, arg SearchSavedItemsPara
 			&i.ID,
 			&i.Title,
 			&i.Url,
+			&i.Note,
 			&i.Domain,
 			&i.ImageUrl,
 			&i.EnrichmentStatus,

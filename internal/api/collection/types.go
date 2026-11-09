@@ -369,9 +369,13 @@ type SavedItem struct {
 // metadata had arrived, which is the difference between "an item with no title" and
 // "an item whose title has not arrived yet".
 type ListedSavedItem struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	URL      string
+	ID     uuid.UUID
+	UserID uuid.UUID
+	URL    string
+
+	// Note is the optional plain-text note the user wrote about this item. It is
+	// returned as stored, including when NULL, and is independent of enrichment.
+	Note     pgtype.Text
 	Domain   pgtype.Text
 	Platform pgtype.Text
 	Title    pgtype.Text

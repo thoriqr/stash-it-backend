@@ -152,6 +152,7 @@ type ListedSavedItemResponse struct {
 	Domain      *string   `json:"domain" example:"example.com"`
 	Platform    *string   `json:"platform" example:"youtube"`
 	Title       *string   `json:"title" example:"An interesting article"`
+	Note        *string   `json:"note" example:"Read the section about database indexing later."`
 	Description *string   `json:"description" example:"A short summary of the page"`
 	ImageURL    *string   `json:"image_url" example:"https://example.com/og.png"`
 

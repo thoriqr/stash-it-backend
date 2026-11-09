@@ -35,6 +35,7 @@ func mapSearchSavedItemResponse(savedItem SearchSavedItem) SearchSavedItemRespon
 		ID:               savedItem.ID,
 		Title:            mapOptionalText(savedItem.Title),
 		URL:              savedItem.URL,
+		Note:             mapOptionalText(savedItem.Note),
 		Domain:           mapOptionalText(savedItem.Domain),
 		ImageURL:         mapOptionalText(savedItem.ImageURL),
 		EnrichmentStatus: savedItem.EnrichmentStatus,

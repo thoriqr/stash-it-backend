@@ -28,9 +28,15 @@ import (
 // of columns shaped for paging over a collection rather than for describing one
 // item. It stays separate for that reason.
 type SavedItem struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	Url      string
+	ID     uuid.UUID
+	UserID uuid.UUID
+	Url    string
+
+	// Note is the optional plain-text note the user wrote about this item. It is
+	// user-authored data, independent of enrichment and automatic organization, and
+	// is NULL until the user sets one.
+	Note pgtype.Text
+
 	Domain   pgtype.Text
 	Platform pgtype.Text
 	Title    pgtype.Text
@@ -111,9 +117,14 @@ type DeletedSavedItem struct {
 // CollectionName is read from the same statement as the item, by joining collections,
 // so reporting it costs nothing beyond the read that was happening anyway.
 type ListedSavedItem struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	Url      string
+	ID     uuid.UUID
+	UserID uuid.UUID
+	Url    string
+
+	// Note is the optional plain-text note the user wrote about this item. It is
+	// returned as stored, including when NULL, and is never derived from enrichment.
+	Note pgtype.Text
+
 	Domain   pgtype.Text
 	Platform pgtype.Text
 	Title    pgtype.Text

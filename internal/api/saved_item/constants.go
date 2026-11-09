@@ -53,6 +53,34 @@ const (
 	CreateUserRateLimitWindow = 10 * time.Minute
 )
 
+// NoteMaxLength bounds a saved item's note, measured in runes.
+//
+// A note is plain text the user writes for themselves, so the bound exists to keep
+// one row from carrying an unbounded document rather than to restrict ordinary use.
+// It is measured in characters rather than bytes so a multilingual note is not
+// rejected for being long when it is not.
+const NoteMaxLength = 5000
+
+// NoteUserRateLimitMax and NoteUserRateLimitWindow bound how often one authenticated
+// user may add, edit or clear saved item notes.
+//
+// Both note mutation routes share this one budget and namespace. They write the same
+// column on the same kind of row, so splitting adding, editing and deleting into
+// separate allowances would only let a caller spend one route's budget by switching
+// to another that costs the same.
+//
+// The mutation is a single scoped UPDATE, so this bounds repeated writes to the same
+// account's rows rather than an outbound fetch or a queue write. It sits well above
+// ordinary editing without leaving one account free to write the same row without
+// limit.
+//
+// **This is an initial engineering estimate, not a production-validated
+// threshold.** No deployment has been selected and no traffic observed.
+const (
+	NoteUserRateLimitMax    = 120
+	NoteUserRateLimitWindow = 10 * time.Minute
+)
+
 const (
 	// SavedItemListDefaultLimit and SavedItemListMaxLimit bound a page of recent
 	// saved items.
@@ -83,3 +111,15 @@ const (
 // attempt, and an exhausted save budget must never lock anyone out of signing in
 // with a password they already have.
 const createUserRateLimitNamespace = "saved-item-create-user"
+
+// noteUserRateLimitNamespace groups the note mutation counters in Redis.
+//
+// It is its own namespace rather than part of the save budget because the two
+// routes cost different things: a save inserts a row and arranges background work,
+// while a note mutation updates one column. A caller throttled on one must still be
+// able to use the other, and one flow's flood must never spend another's allowance.
+//
+// Both note mutation routes share this namespace on purpose. They write the same
+// column and have the same cost, so a separate counter per HTTP method would let a
+// caller double its allowance by editing instead of adding.
+const noteUserRateLimitNamespace = "saved-item-note-user"

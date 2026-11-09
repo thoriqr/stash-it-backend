@@ -12,6 +12,7 @@ import (
 
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
+	saveditemdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/saved_item/generated"
 	workerorganizationdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/worker_organization/generated"
 	workerorganization "github.com/thoriqr/stash-it-backend/internal/worker/organization"
 	workerorganizationdb "github.com/thoriqr/stash-it-backend/internal/worker/organization/generated"
@@ -665,6 +666,17 @@ func TestOrganization_LeavesEnrichmentStateUntouched(t *testing.T) {
 		"completed",
 	)
 
+	require.NoError(
+		t,
+		saveditemdbtest.New(testPool).SetTestSavedItemNote(
+			context.Background(),
+			saveditemdbtest.SetTestSavedItemNoteParams{
+				Note: testText("organization note"),
+				ID:   savedItemID,
+			},
+		),
+	)
+
 	before := organizationItemState(t, savedItemID)
 
 	require.NoError(t, organizeNow(t, savedItemID, userID))
@@ -675,6 +687,13 @@ func TestOrganization_LeavesEnrichmentStateUntouched(t *testing.T) {
 	require.Equal(t, "completed", after.EnrichmentStatus)
 	require.Equal(t, before.LastEnrichedAt.Time, after.LastEnrichedAt.Time)
 	require.Equal(t, before.Platform.String, after.Platform.String)
+	require.True(t, after.Note.Valid)
+	require.Equal(
+		t,
+		"organization note",
+		after.Note.String,
+		"automatic organization must not modify the user's note",
+	)
 }
 
 // A database failure leaves the item exactly as it was and is reported so the

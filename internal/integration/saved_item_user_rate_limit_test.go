@@ -155,6 +155,62 @@ func (a userLimitedApp) enrich(
 	return a.do(t, req)
 }
 
+func (a userLimitedApp) putNote(
+	t *testing.T,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+	note string,
+) userLimitResponse {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/saved-items/"+savedItemID.String()+"/note",
+		strings.NewReader(`{"note":"`+note+`"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+	return a.do(t, req)
+}
+
+func (a userLimitedApp) deleteNote(
+	t *testing.T,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+) userLimitResponse {
+	t.Helper()
+
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/saved-items/"+savedItemID.String()+"/note",
+		nil,
+	)
+	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+	return a.do(t, req)
+}
+
+// createNoteRateLimitItem builds a user, their Unsorted collection, and one saved
+// item, so a note mutation has a real row to write without spending the save budget.
+func createNoteRateLimitItem(
+	t *testing.T,
+	email string,
+) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+
+	userID := createCollectionUser(t, email)
+	unsortedID := createUnsorted(t, userID)
+	itemID := createSavedItemInCollection(
+		t,
+		userID,
+		unsortedID,
+		"https://example.com/note-rate-limit",
+	)
+
+	return userID, itemID
+}
+
 // createRateLimitUser creates an account with the Unsorted collection a save
 // needs. saved_items.collection_id is NOT NULL and the collection has to belong to
 // the same user, so a save cannot be attempted without one.
@@ -652,5 +708,330 @@ func TestSavedItemUserRateLimit_ReadsAndDeletesAreNotLimited(t *testing.T) {
 		t,
 		limiter.CallsIn(testutil.SavedItemEnrichUserNamespace),
 		"reading and deleting must not spend the enrichment budget",
+	)
+}
+
+// Both note mutation routes spend the same account-keyed namespace and the documented
+// policy. Asserting the namespace and the policy rather than only the outcome is what
+// pins the wiring to the constants.
+func TestSavedItemNoteUserRateLimit_WithinBudgetChargesTheCallersAccount(t *testing.T) {
+	truncateCollectionData(t)
+
+	userID, itemID := createNoteRateLimitItem(
+		t,
+		"note-within-budget@example.com",
+	)
+
+	limiter := testutil.NewCountingPinRateLimiter()
+	app := newUserLimitedApp(t, limiter)
+
+	require.Equal(
+		t,
+		http.StatusOK,
+		app.putNote(t, userID, itemID, "first note").status,
+	)
+
+	require.Equal(
+		t,
+		http.StatusOK,
+		app.deleteNote(t, userID, itemID).status,
+	)
+
+	require.Equal(
+		t,
+		[]string{
+			testutil.SavedItemNoteUserNamespace,
+			testutil.SavedItemNoteUserNamespace,
+		},
+		limiter.Namespaces,
+		"adding and clearing must spend the same namespace",
+	)
+
+	require.Equal(
+		t,
+		[]string{userID.String(), userID.String()},
+		limiter.SubjectsIn(testutil.SavedItemNoteUserNamespace),
+	)
+
+	expectedPolicy := ratelimit.Policy{
+		Max:    saveditem.NoteUserRateLimitMax,
+		Window: saveditem.NoteUserRateLimitWindow,
+	}
+
+	require.Equal(
+		t,
+		[]ratelimit.Policy{expectedPolicy, expectedPolicy},
+		limiter.Policies,
+	)
+}
+
+// A refused note mutation is a 429 carrying the wait, and it is refused before the
+// column is written.
+func TestSavedItemNoteUserRateLimit_ExceededWritesNothing(t *testing.T) {
+	truncateCollectionData(t)
+
+	userID, itemID := createNoteRateLimitItem(
+		t,
+		"note-exceeded@example.com",
+	)
+
+	require.NoError(
+		t,
+		saveditemdbtest.New(testPool).SetTestSavedItemNote(
+			context.Background(),
+			saveditemdbtest.SetTestSavedItemNoteParams{
+				Note: testText("existing note"),
+				ID:   itemID,
+			},
+		),
+	)
+
+	limiter := &testutil.CountingPinRateLimiter{
+		Allowed:    false,
+		RetryAfter: 137 * time.Second,
+	}
+	app := newUserLimitedApp(t, limiter)
+
+	result := app.putNote(t, userID, itemID, "new note")
+
+	require.Equal(t, http.StatusTooManyRequests, result.status)
+	require.Equal(t, middleware.CodeUserRateLimitExceeded, result.code)
+	require.Equal(t, "137", result.retryAfter)
+	require.NotContains(t, result.message, userID.String())
+
+	state := savedItemState(t, itemID)
+	require.True(t, state.Note.Valid)
+	require.Equal(t, "existing note", state.Note.String)
+
+	result = app.deleteNote(t, userID, itemID)
+
+	require.Equal(t, http.StatusTooManyRequests, result.status)
+	require.Equal(t, middleware.CodeUserRateLimitExceeded, result.code)
+
+	state = savedItemState(t, itemID)
+	require.True(
+		t,
+		state.Note.Valid,
+		"a refused delete must not clear the note",
+	)
+}
+
+// PUT and DELETE share one budget, and that budget belongs to the account rather than
+// to a route or an address.
+//
+// The loop alternates the two methods, so the allowance is spent half by each. If the
+// routes had separate counters neither would reach the limit, and the final refusals
+// would not happen.
+func TestSavedItemNoteUserRateLimit_PutAndDeleteShareOneBudgetPerUser(t *testing.T) {
+	truncateCollectionData(t)
+
+	flooderID, flooderItem := createNoteRateLimitItem(
+		t,
+		"note-flooder@example.com",
+	)
+
+	neighbourID, neighbourItem := createNoteRateLimitItem(
+		t,
+		"note-neighbour@example.com",
+	)
+
+	app := newUserLimitedApp(t, testutil.NewEnforcingPinRateLimiter())
+
+	for i := range saveditem.NoteUserRateLimitMax {
+		var result userLimitResponse
+
+		if i%2 == 0 {
+			result = app.putNote(t, flooderID, flooderItem, "a note")
+		} else {
+			result = app.deleteNote(t, flooderID, flooderItem)
+		}
+
+		require.NotEqual(
+			t,
+			http.StatusTooManyRequests,
+			result.status,
+			"attempt %d should be within budget, got %s", i, result.code,
+		)
+	}
+
+	require.Equal(
+		t,
+		http.StatusTooManyRequests,
+		app.putNote(t, flooderID, flooderItem, "over budget").status,
+		"the shared budget should be spent after %d requests",
+		saveditem.NoteUserRateLimitMax,
+	)
+
+	require.Equal(
+		t,
+		http.StatusTooManyRequests,
+		app.deleteNote(t, flooderID, flooderItem).status,
+		"the other method must find the same budget spent",
+	)
+
+	// A different account is untouched.
+	require.Equal(
+		t,
+		http.StatusOK,
+		app.putNote(t, neighbourID, neighbourItem, "neighbour's note").status,
+	)
+}
+
+// The note budget is separate from both other saved-item budgets, in both directions.
+func TestSavedItemNoteUserRateLimit_IsIndependentFromOtherBudgets(t *testing.T) {
+	truncateCollectionData(t)
+
+	userID, itemID := createNoteRateLimitItem(
+		t,
+		"note-independent-budgets@example.com",
+	)
+
+	t.Run("an exhausted note budget does not stop a save", func(t *testing.T) {
+		limiter := testutil.NewCountingPinRateLimiter().
+			AllowNamespace(
+				testutil.SavedItemNoteUserNamespace,
+				testutil.NamespaceOutcome{Allowed: false},
+			)
+
+		app := newUserLimitedApp(t, limiter)
+
+		require.Equal(
+			t,
+			http.StatusTooManyRequests,
+			app.putNote(t, userID, itemID, "blocked").status,
+		)
+
+		require.Equal(
+			t,
+			http.StatusCreated,
+			app.save(t, userID, "https://example.com/independent").status,
+		)
+	})
+
+	t.Run("an exhausted save budget does not stop a note mutation", func(t *testing.T) {
+		limiter := testutil.NewCountingPinRateLimiter().
+			AllowNamespace(
+				testutil.SavedItemCreateUserNamespace,
+				testutil.NamespaceOutcome{Allowed: false},
+			)
+
+		app := newUserLimitedApp(t, limiter)
+
+		require.Equal(
+			t,
+			http.StatusTooManyRequests,
+			app.save(t, userID, "https://example.com/blocked").status,
+		)
+
+		require.Equal(
+			t,
+			http.StatusOK,
+			app.putNote(t, userID, itemID, "still allowed").status,
+		)
+	})
+
+	t.Run("an exhausted enrichment budget does not stop a note mutation", func(t *testing.T) {
+		limiter := testutil.NewCountingPinRateLimiter().
+			AllowNamespace(
+				testutil.SavedItemEnrichUserNamespace,
+				testutil.NamespaceOutcome{Allowed: false},
+			)
+
+		app := newUserLimitedApp(t, limiter)
+
+		require.Equal(
+			t,
+			http.StatusTooManyRequests,
+			app.enrich(t, userID, itemID).status,
+		)
+
+		require.Equal(
+			t,
+			http.StatusOK,
+			app.putNote(t, userID, itemID, "still allowed").status,
+		)
+	})
+}
+
+// An unreachable counter is not permission, and it must not write or clear anything.
+func TestSavedItemNoteUserRateLimit_UnavailableCounterFailsClosed(t *testing.T) {
+	truncateCollectionData(t)
+
+	userID, itemID := createNoteRateLimitItem(
+		t,
+		"note-unavailable@example.com",
+	)
+
+	require.NoError(
+		t,
+		saveditemdbtest.New(testPool).SetTestSavedItemNote(
+			context.Background(),
+			saveditemdbtest.SetTestSavedItemNoteParams{
+				Note: testText("existing note"),
+				ID:   itemID,
+			},
+		),
+	)
+
+	app := newUserLimitedApp(
+		t,
+		testutil.UnavailablePinRateLimiter(
+			errors.New("dial tcp 127.0.0.1:6379: connect: connection refused"),
+		),
+	)
+
+	result := app.putNote(t, userID, itemID, "new note")
+
+	require.Equal(t, http.StatusServiceUnavailable, result.status)
+	require.Equal(t, middleware.CodeUserRateLimitUnavailable, result.code)
+	require.Empty(
+		t,
+		result.retryAfter,
+		"there is no known recovery time, so no wait should be named",
+	)
+
+	state := savedItemState(t, itemID)
+	require.True(t, state.Note.Valid)
+	require.Equal(t, "existing note", state.Note.String)
+
+	result = app.deleteNote(t, userID, itemID)
+
+	require.Equal(t, http.StatusServiceUnavailable, result.status)
+	require.Equal(t, middleware.CodeUserRateLimitUnavailable, result.code)
+
+	state = savedItemState(t, itemID)
+	require.True(
+		t,
+		state.Note.Valid,
+		"a refused delete must not clear the note",
+	)
+}
+
+// Authentication runs before the note budget, so an unauthenticated request is refused
+// without inventing a subject.
+func TestSavedItemNoteUserRateLimit_UnauthenticatedIsRefusedBeforeTheBudget(t *testing.T) {
+	truncateCollectionData(t)
+
+	limiter := testutil.NewCountingPinRateLimiter()
+	app := newUserLimitedApp(t, limiter)
+
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(
+			method,
+			"/saved-items/"+uuid.NewString()+"/note",
+			strings.NewReader(`{"note":"x"}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+
+		result := app.do(t, req)
+
+		require.Equal(t, http.StatusUnauthorized, result.status)
+		require.NotEqual(t, middleware.CodeUserRateLimitExceeded, result.code)
+	}
+
+	require.Empty(
+		t,
+		limiter.SubjectsIn(testutil.SavedItemNoteUserNamespace),
+		"no identity means no note budget is charged",
 	)
 }

@@ -152,6 +152,24 @@ func (q *Queries) CreateSearchUser(ctx context.Context, arg CreateSearchUserPara
 	return id, err
 }
 
+const setSearchSavedItemNote = `-- name: SetSearchSavedItemNote :exec
+UPDATE saved_items
+SET note = $1
+WHERE id = $2
+`
+
+type SetSearchSavedItemNoteParams struct {
+	Note pgtype.Text
+	ID   uuid.UUID
+}
+
+// Writes a note directly so a search test can prove the note is reported without
+// making the note searchable.
+func (q *Queries) SetSearchSavedItemNote(ctx context.Context, arg SetSearchSavedItemNoteParams) error {
+	_, err := q.db.Exec(ctx, setSearchSavedItemNote, arg.Note, arg.ID)
+	return err
+}
+
 const truncateSearchData = `-- name: TruncateSearchData :exec
 
 TRUNCATE TABLE

@@ -468,6 +468,17 @@ const (
 	// shared address for the activity of everyone behind it.
 	SavedItemCreateUserNamespace = "saved-item-create-user"
 
+	// SavedItemNoteUserNamespace is the per-user budget shared by
+	// PUT /saved-items/:id/note and DELETE /saved-items/:id/note, spent after Auth
+	// and before the handler.
+	//
+	// One namespace rather than one per method is the point: both routes write the
+	// same column on the same kind of row, so splitting them would let a caller
+	// double its allowance by switching between adding and clearing. It is separate
+	// from both other saved-item budgets because a note mutation is neither a save
+	// nor an outbound fetch.
+	SavedItemNoteUserNamespace = "saved-item-note-user"
+
 	// SavedItemEnrichUserNamespace is the per-user budget on
 	// POST /saved-items/:id/enrich, spent after Auth and before the handler.
 	//

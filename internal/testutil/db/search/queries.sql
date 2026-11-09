@@ -68,6 +68,13 @@ INSERT INTO saved_items (
 )
 RETURNING id;
 
+-- name: SetSearchSavedItemNote :exec
+-- Writes a note directly so a search test can prove the note is reported without
+-- making the note searchable.
+UPDATE saved_items
+SET note = sqlc.narg(note)
+WHERE id = sqlc.arg(id);
+
 -- name: CountSavedItemsForSearchUser :one
 SELECT COUNT(*)
 FROM saved_items

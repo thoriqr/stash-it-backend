@@ -97,6 +97,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     platform,
     enrichment_status,
     last_enriched_at,

@@ -56,6 +56,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://example.com/articles/1",
+			nil,
 		)
 
 		require.NoError(t, err)
@@ -106,6 +107,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://www.youtube.com/watch?v=abc",
+			nil,
 		)
 
 		require.NoError(t, err)
@@ -147,6 +149,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://shop.example.com:8443/a/b?c=d#e",
+			nil,
 		)
 
 		require.NoError(t, err)
@@ -243,6 +246,7 @@ func TestService_Create(t *testing.T) {
 					context.Background(),
 					userID,
 					tc.rawURL,
+					nil,
 				)
 
 				require.NoError(t, err)
@@ -260,6 +264,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			uuid.New(),
 			"not-a-url",
+			nil,
 		)
 
 		require.Error(t, err)
@@ -280,6 +285,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			uuid.New(),
 			"https://example.com/\x7f",
+			nil,
 		)
 
 		require.Error(t, err)
@@ -312,6 +318,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://example.com",
+			nil,
 		)
 
 		require.Equal(t, repoErr, err)
@@ -350,6 +357,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://example.com",
+			nil,
 		)
 
 		require.NoError(t, err)
@@ -378,6 +386,7 @@ func TestService_Create(t *testing.T) {
 			context.Background(),
 			userID,
 			"https://example.com",
+			nil,
 		)
 
 		require.Equal(t, lookupErr, err)

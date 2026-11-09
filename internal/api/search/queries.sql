@@ -59,6 +59,7 @@ SELECT
     saved_items.id,
     saved_items.title,
     saved_items.url,
+    saved_items.note,
     saved_items.domain,
     saved_items.image_url,
     saved_items.enrichment_status,

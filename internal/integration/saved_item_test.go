@@ -578,7 +578,7 @@ func TestSavedItem_Get(t *testing.T) {
 		require.ElementsMatch(
 			t,
 			[]string{
-				"id", "url", "domain", "platform", "title",
+				"id", "url", "domain", "platform", "title", "note",
 				"description", "image_url", "price_amount", "price_currency",
 				"collection_id", "enrichment_status", "last_enriched_at",
 				"created_at", "updated_at",

@@ -18,6 +18,26 @@ type Repository interface {
 		params saveditemdb.CreateSavedItemParams,
 	) (SavedItem, error)
 
+	// UpdateSavedItemNote sets the note on one saved item of the authenticated user
+	// and returns the stored value.
+	//
+	// The statement matches both the item id and the user id, so a missing item and
+	// one owned by another user both produce the same not found error.
+	UpdateSavedItemNote(
+		ctx context.Context,
+		userID uuid.UUID,
+		savedItemID uuid.UUID,
+		note pgtype.Text,
+	) (pgtype.Text, error)
+
+	// ClearSavedItemNote sets the note on one saved item of the authenticated user
+	// to NULL. The saved item itself is never removed.
+	ClearSavedItemNote(
+		ctx context.Context,
+		userID uuid.UUID,
+		savedItemID uuid.UUID,
+	) error
+
 	GetUnsortedCollectionByUser(
 		ctx context.Context,
 		userID uuid.UUID,
@@ -87,6 +107,7 @@ func (r *repository) CreateSavedItem(
 		row.ID,
 		row.UserID,
 		row.Url,
+		row.Note,
 		row.Domain,
 		row.Platform,
 		row.Title,
@@ -100,6 +121,65 @@ func (r *repository) CreateSavedItem(
 		row.CreatedAt,
 		row.UpdatedAt,
 	), nil
+}
+
+// UpdateSavedItemNote writes one note, scoped by both the item and the user.
+//
+// A missing item and an item owned by another user both match nothing, so both
+// surface as the same not found error and the endpoint never discloses whether an
+// id exists. Only the note column is written; enrichment state and the item's
+// collection are untouched.
+func (r *repository) UpdateSavedItemNote(
+	ctx context.Context,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+	note pgtype.Text,
+) (pgtype.Text, error) {
+	stored, err := r.queries.UpdateSavedItemNote(
+		ctx,
+		saveditemdb.UpdateSavedItemNoteParams{
+			Note:   note,
+			ID:     savedItemID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return pgtype.Text{}, apperror.NotFound(err)
+		}
+
+		return pgtype.Text{}, internalError(err)
+	}
+
+	return stored, nil
+}
+
+// ClearSavedItemNote sets one note to NULL, scoped by both the item and the user.
+//
+// The saved item is never deleted, and no column other than note is touched. A
+// missing item and an item owned by another user both match nothing, so both
+// surface as the same not found error.
+func (r *repository) ClearSavedItemNote(
+	ctx context.Context,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+) error {
+	_, err := r.queries.ClearSavedItemNote(
+		ctx,
+		saveditemdb.ClearSavedItemNoteParams{
+			ID:     savedItemID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperror.NotFound(err)
+		}
+
+		return internalError(err)
+	}
+
+	return nil
 }
 
 func (r *repository) GetUnsortedCollectionByUser(
@@ -157,6 +237,7 @@ func (r *repository) GetSavedItemByIDForUser(
 		row.ID,
 		row.UserID,
 		row.Url,
+		row.Note,
 		row.Domain,
 		row.Platform,
 		row.Title,
@@ -360,6 +441,7 @@ func newListedSavedItems(
 			ID:               row.ID,
 			UserID:           row.UserID,
 			Url:              row.Url,
+			Note:             row.Note,
 			Domain:           row.Domain,
 			Platform:         row.Platform,
 			Title:            row.Title,
@@ -395,6 +477,7 @@ func newListedSavedItemsAfterCursor(
 			ID:               row.ID,
 			UserID:           row.UserID,
 			Url:              row.Url,
+			Note:             row.Note,
 			Domain:           row.Domain,
 			Platform:         row.Platform,
 			Title:            row.Title,
@@ -428,6 +511,7 @@ func newSavedItem(
 	id uuid.UUID,
 	userID uuid.UUID,
 	url string,
+	note pgtype.Text,
 	domain pgtype.Text,
 	platform pgtype.Text,
 	title pgtype.Text,
@@ -445,6 +529,7 @@ func newSavedItem(
 		ID:               id,
 		UserID:           userID,
 		Url:              url,
+		Note:             note,
 		Domain:           domain,
 		Platform:         platform,
 		Title:            title,

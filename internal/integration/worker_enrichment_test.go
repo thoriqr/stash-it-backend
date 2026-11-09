@@ -13,6 +13,7 @@ import (
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/testutil"
+	saveditemdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/saved_item/generated"
 	workerenrichmentdbtest "github.com/thoriqr/stash-it-backend/internal/testutil/db/worker_enrichment/generated"
 	workerenrichment "github.com/thoriqr/stash-it-backend/internal/worker/enrichment"
 	enrichmentdb "github.com/thoriqr/stash-it-backend/internal/worker/enrichment/generated"
@@ -317,6 +318,17 @@ func TestWorkerEnrichment_FailurePreservesMetadataAndTimestamp(t *testing.T) {
 		"https://example.com/flaky",
 	)
 
+	require.NoError(
+		t,
+		saveditemdbtest.New(testPool).SetTestSavedItemNote(
+			context.Background(),
+			saveditemdbtest.SetTestSavedItemNoteParams{
+				Note: testText("worker note"),
+				ID:   savedItemID,
+			},
+		),
+	)
+
 	title := "An interesting article"
 	imageURL := "https://example.com/og.png"
 
@@ -334,6 +346,8 @@ func TestWorkerEnrichment_FailurePreservesMetadataAndTimestamp(t *testing.T) {
 
 	require.Equal(t, "completed", completed.EnrichmentStatus)
 	require.True(t, completed.LastEnrichedAt.Valid)
+	require.True(t, completed.Note.Valid)
+	require.Equal(t, "worker note", completed.Note.String)
 
 	pageErr := &enrichmentcore.Failure{
 		Kind: enrichmentcore.FailureContent,
@@ -362,6 +376,13 @@ func TestWorkerEnrichment_FailurePreservesMetadataAndTimestamp(t *testing.T) {
 		"a failed attempt must not clear metadata the item already had",
 	)
 	require.Equal(t, imageURL, after.ImageUrl.String)
+
+	require.True(
+		t,
+		after.Note.Valid,
+		"a failed enrichment must not clear the user's note",
+	)
+	require.Equal(t, "worker note", after.Note.String)
 
 	require.Equal(
 		t,

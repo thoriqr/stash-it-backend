@@ -1155,6 +1155,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -1192,6 +1193,7 @@ type ListSavedItemsInCollectionAfterRowRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -1244,6 +1246,7 @@ func (q *Queries) ListSavedItemsInCollectionAfterRow(ctx context.Context, arg Li
 			&i.ID,
 			&i.UserID,
 			&i.Url,
+			&i.Note,
 			&i.Domain,
 			&i.Platform,
 			&i.Title,
@@ -1272,6 +1275,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -1303,6 +1307,7 @@ type ListSavedItemsInCollectionFirstRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -1356,6 +1361,7 @@ func (q *Queries) ListSavedItemsInCollectionFirst(ctx context.Context, arg ListS
 			&i.ID,
 			&i.UserID,
 			&i.Url,
+			&i.Note,
 			&i.Domain,
 			&i.Platform,
 			&i.Title,

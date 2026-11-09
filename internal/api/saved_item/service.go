@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,6 +21,7 @@ type SavedItemService interface {
 		ctx context.Context,
 		userID uuid.UUID,
 		rawURL string,
+		note *string,
 	) (CreateResult, error)
 
 	Get(
@@ -27,6 +29,22 @@ type SavedItemService interface {
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
 	) (GetResult, error)
+
+	// SetNote adds or replaces the note on one saved item. Adding and editing are
+	// the same operation, so there is one method rather than two.
+	SetNote(
+		ctx context.Context,
+		userID uuid.UUID,
+		savedItemID uuid.UUID,
+		note string,
+	) (NoteResult, error)
+
+	// DeleteNote clears the note on one saved item without removing the item.
+	DeleteNote(
+		ctx context.Context,
+		userID uuid.UUID,
+		savedItemID uuid.UUID,
+	) error
 
 	Delete(
 		ctx context.Context,
@@ -106,8 +124,17 @@ func (s *service) Create(
 	ctx context.Context,
 	userID uuid.UUID,
 	rawURL string,
+	note *string,
 ) (CreateResult, error) {
 	domain, err := deriveDomain(rawURL)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
+	// The note is validated before any row is touched. It is optional, so an absent
+	// value and a whitespace-only one both become SQL NULL, which is the same state
+	// a save had before notes existed.
+	noteValue, err := normalizeOptionalNote(note)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -141,6 +168,7 @@ func (s *service) Create(
 		saveditemdb.CreateSavedItemParams{
 			UserID: userID,
 			Url:    rawURL,
+			Note:   noteValue,
 			Domain: optionalText(domain),
 			// platform is deliberately left unset for enrichment to populate.
 			// An empty pgtype.Text is SQL NULL, which is the intended state.
@@ -191,6 +219,117 @@ func (s *service) enqueueEnrichment(
 			zap.Error(err),
 		)
 	}
+}
+
+// NoteResult reports the note a mutation stored.
+type NoteResult struct {
+	Note string
+}
+
+// SetNote adds or replaces the note on one saved item of the authenticated user.
+//
+// The note is validated before any row is touched, so a blank or over-long value
+// never reaches a statement. A blank value is rejected rather than treated as a
+// clear: removing a note has its own endpoint, and silently deleting one because a
+// caller sent whitespace would make two different requests mean the same thing.
+//
+// Ownership is enforced by the statement itself, which matches both the item id and
+// the authenticated user id. A missing item and an item owned by another user
+// therefore both produce the same not found error, and there is no way to add,
+// edit, or clear a note on a row this user cannot read.
+//
+// This writes only the note column. Enrichment state and the item's collection are
+// left untouched, which is what keeps a note independent of both.
+func (s *service) SetNote(
+	ctx context.Context,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+	note string,
+) (NoteResult, error) {
+	noteValue, err := normalizeRequiredNote(note)
+	if err != nil {
+		return NoteResult{}, err
+	}
+
+	stored, err := s.repository.UpdateSavedItemNote(
+		ctx,
+		userID,
+		savedItemID,
+		noteValue,
+	)
+	if err != nil {
+		return NoteResult{}, err
+	}
+
+	return NoteResult{Note: stored.String}, nil
+}
+
+// DeleteNote clears the note on one saved item of the authenticated user.
+//
+// The saved item itself is never deleted. Clearing the column is the whole
+// operation, and the statement is scoped by both the item id and the authenticated
+// user id, so a missing item and an item owned by another user both produce the
+// same not found error.
+func (s *service) DeleteNote(
+	ctx context.Context,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+) error {
+	return s.repository.ClearSavedItemNote(ctx, userID, savedItemID)
+}
+
+// normalizeOptionalNote turns an optional client value into what the column should
+// hold.
+//
+// Absent and null both stay NULL, and a value that is nothing but whitespace is also
+// normalized to NULL rather than stored as an empty-looking note. Surrounding
+// whitespace is otherwise preserved: a note is plain text the user wrote, and
+// rewriting it is not this service's job. The limit is measured in runes so a
+// multilingual note is not rejected for being long in bytes.
+func normalizeOptionalNote(note *string) (pgtype.Text, error) {
+	if note == nil {
+		return pgtype.Text{}, nil
+	}
+
+	if strings.TrimSpace(*note) == "" {
+		return pgtype.Text{}, nil
+	}
+
+	if utf8.RuneCountInString(*note) > NoteMaxLength {
+		return pgtype.Text{}, apperror.BadRequestWith(
+			CodeInvalidNote,
+			"note is too long",
+			nil,
+		)
+	}
+
+	return pgtype.Text{String: *note, Valid: true}, nil
+}
+
+// normalizeRequiredNote validates a note submitted to the add/edit route.
+//
+// Unlike the optional create field, this value is required, so a blank one is an
+// error rather than a clear. Multiline content and surrounding whitespace are
+// preserved and only the blank check trims. The limit is measured in runes, matching
+// the create path.
+func normalizeRequiredNote(note string) (pgtype.Text, error) {
+	if strings.TrimSpace(note) == "" {
+		return pgtype.Text{}, apperror.BadRequestWith(
+			CodeInvalidNote,
+			"note must not be blank",
+			nil,
+		)
+	}
+
+	if utf8.RuneCountInString(note) > NoteMaxLength {
+		return pgtype.Text{}, apperror.BadRequestWith(
+			CodeInvalidNote,
+			"note is too long",
+			nil,
+		)
+	}
+
+	return pgtype.Text{String: note, Valid: true}, nil
 }
 
 type GetResult struct {

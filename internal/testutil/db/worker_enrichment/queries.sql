@@ -77,6 +77,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,

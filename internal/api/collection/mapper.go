@@ -93,6 +93,7 @@ func mapListedSavedItemResponse(
 		Domain:        mapOptionalText(savedItem.Domain),
 		Platform:      mapOptionalText(savedItem.Platform),
 		Title:         mapOptionalText(savedItem.Title),
+		Note:          mapOptionalText(savedItem.Note),
 		Description:   mapOptionalText(savedItem.Description),
 		ImageURL:      mapOptionalText(savedItem.ImageURL),
 		PriceAmount:   mapOptionalNumeric(savedItem.PriceAmount),

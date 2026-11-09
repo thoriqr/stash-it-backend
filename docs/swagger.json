@@ -1741,7 +1741,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve a collection and its saved items, ordered by newest first.\nThe response includes collection details even when the collection contains no saved items.\nSaved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null.\nPass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.\nPossible error codes:\n- BAD_REQUEST\n- INVALID_CURSOR\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- COLLECTION_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
+                "description": "Retrieve a collection and its saved items, ordered by newest first.\nThe response includes collection details even when the collection contains no saved items.\nSaved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null. Each item includes its optional note, which is null when the user has not set one.\nPass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.\nPossible error codes:\n- BAD_REQUEST\n- INVALID_CURSOR\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- COLLECTION_NOT_FOUND\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1860,7 +1860,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve the authenticated user's saved items across all collections, ordered by newest first.\nSaved items are returned regardless of their collection or enrichment status. Each item includes its associated collection.\nenrichment_status indicates the enrichment state of an item: pending, completed, or failed. A completed status does not guarantee that all metadata fields are populated.\nPass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.\nPossible error codes:\n- BAD_REQUEST (unparsable limit or cursor length)\n- INVALID_CURSOR\n- VALIDATION_ERROR (limit outside 1..50)\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Retrieve the authenticated user's saved items across all collections, ordered by newest first.\nSaved items are returned regardless of their collection or enrichment status. Each item includes its associated collection and its optional note, which is null when the user has not set one.\nenrichment_status indicates the enrichment state of an item: pending, completed, or failed. A completed status does not guarantee that all metadata fields are populated.\nPass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.\nPossible error codes:\n- BAD_REQUEST (unparsable limit or cursor length)\n- INVALID_CURSOR\n- VALIDATION_ERROR (limit outside 1..50)\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -1921,7 +1921,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Save a URL to the authenticated user's inbox.\nThe saved item is returned with an initial enrichment_status of \"pending\". Metadata enrichment is handled asynchronously.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Save a URL to the authenticated user's inbox.\nThe saved item is returned with an initial enrichment_status of \"pending\". Metadata enrichment is handled asynchronously.\nAn optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_NOTE\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -1945,7 +1945,7 @@
                 ],
                 "responses": {
                     "201": {
-                        "description": "The saved item's id, url, collection_id and enrichment_status",
+                        "description": "The saved item's id, url, stored note, collection_id and enrichment_status",
                         "schema": {
                             "$ref": "#/definitions/saved_item.CreateSavedItemAPIResponse"
                         }
@@ -1990,7 +1990,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve a saved item by ID, including the collection it belongs to.\nThe saved item is returned regardless of its enrichment status. A completed enrichment does not guarantee that all metadata fields are populated.\nPossible error codes:\n- BAD_REQUEST (non-UUID id)\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Retrieve a saved item by ID, including the collection it belongs to and its optional note.\nThe saved item is returned regardless of its enrichment status. A completed enrichment does not guarantee that all metadata fields are populated. note is null when the user has not set one.\nPossible error codes:\n- BAD_REQUEST (non-UUID id)\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -2248,6 +2248,160 @@
                 }
             }
         },
+        "/saved-items/{id}/note": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Add a plain-text note to a saved item, or replace the note it already has. Adding and editing use the same endpoint.\nThe note is required and may be at most 5000 characters. It is plain text and may span multiple lines. A whitespace-only value is rejected; use DELETE /saved-items/{id}/note to remove a note.\nThe response reports the note as it was stored. A missing saved item and one owned by another user produce the same not found error.\nPossible error codes:\n- INVALID_NOTE\n- BAD_REQUEST (non-UUID id or malformed body)\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Add or edit a saved item's note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Add or edit note request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.UpdateSavedItemNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The note as it was stored",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.UpdateSavedItemNoteAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid note, saved item ID, or body",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found, or owned by another user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Note mutation rate limit exceeded for this user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so the note is not written",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Clear the note on a saved item by setting it to null. The saved item itself is not deleted.\nA missing saved item, an item owned by another user, and an item with no note all follow the existing not-found or success behavior: the item is scoped by both id and user, and clearing an absent note succeeds.\nPossible error codes:\n- BAD_REQUEST (non-UUID id)\n- RESOURCE_NOT_FOUND\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "SavedItem"
+                ],
+                "summary": "Delete a saved item's note",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "example": "01a0f359-093b-737a-963a-80f7ca6768ed",
+                        "description": "Saved item ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/saved_item.DeleteSavedItemNoteAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid saved item ID",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Saved item not found, or owned by another user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Note mutation rate limit exceeded for this user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so the note is not cleared",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/search": {
             "get": {
                 "security": [
@@ -2255,7 +2409,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Search the authenticated user's saved items and collections.\nSaved items are matched by title, domain, and URL. Collections are matched by name, including system collections.\nSearch supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.\nResults are limited and are not paginated.\nSaved item results carry the item's collection and its enrichment_status, so a client can tell where it lives and whether it has been read; each result is a subset of the item shape reported by GET /collections/{id}/saved-items.\nPossible error codes:\n- INVALID_SEARCH_QUERY\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
+                "description": "Search the authenticated user's saved items and collections.\nSaved items are matched by title, domain, and URL. Collections are matched by name, including system collections.\nSearch supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.\nResults are limited and are not paginated.\nSaved item results carry the item's collection, its enrichment_status and its optional note, so a client can tell where it lives, whether it has been read, and what the user wrote about it; each result is a subset of the item shape reported by GET /collections/{id}/saved-items. The note is reported but is not searchable.\nPossible error codes:\n- INVALID_SEARCH_QUERY\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- INTERNAL_SERVER_ERROR",
                 "produces": [
                     "application/json"
                 ],
@@ -2716,6 +2870,10 @@
                     "description": "LastEnrichedAt is null until an enrichment has succeeded at least once. A failed\nattempt refreshes nothing, so it does not set this.",
                     "type": "string",
                     "example": "2026-10-02T10:31:00Z"
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Read the section about database indexing later."
                 },
                 "platform": {
                     "type": "string",
@@ -3580,6 +3738,12 @@
                 "url"
             ],
             "properties": {
+                "note": {
+                    "description": "Note is optional plain text the user wants to remember about this URL. It is\nnullable and may span multiple lines, and leaving it out (or sending null)\npreserves the existing save behavior exactly. A value containing only\nwhitespace is stored as NULL.\n\nmax=5000 is measured in runes by the validator, so a multilingual note is not\nrejected for being long in bytes. The service applies the same bound again for\ncallers that reach it without this type.",
+                    "type": "string",
+                    "maxLength": 5000,
+                    "example": "Read the section about database indexing later."
+                },
                 "url": {
                     "type": "string",
                     "maxLength": 2048,
@@ -3611,6 +3775,11 @@
                     "type": "string",
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 },
+                "note": {
+                    "description": "Note is the note that was actually stored with the save, or null when none was\nsubmitted or when the submitted value contained only whitespace. Reporting it\nhere lets a caller confirm what was written without opening the item.",
+                    "type": "string",
+                    "example": "Read the section about database indexing later."
+                },
                 "url": {
                     "type": "string",
                     "example": "https://example.com/articles/1"
@@ -3641,6 +3810,18 @@
                 "message": {
                     "type": "string",
                     "example": "saved item deleted successfully"
+                }
+            }
+        },
+        "saved_item.DeleteSavedItemNoteAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item note deleted successfully"
                 }
             }
         },
@@ -3766,6 +3947,11 @@
                     "type": "string",
                     "example": "2026-10-02T10:31:00Z"
                 },
+                "note": {
+                    "description": "Note is the user-authored plain-text note, or null when the user has not set\none. It is returned as stored and is never derived from enrichment.",
+                    "type": "string",
+                    "example": "Read the section about database indexing later."
+                },
                 "platform": {
                     "type": "string",
                     "example": "youtube"
@@ -3844,6 +4030,11 @@
                     "type": "string",
                     "example": "2026-10-02T10:31:00Z"
                 },
+                "note": {
+                    "description": "Note is the user-authored plain-text note, or null when the user has not set\none. It is independent of enrichment and never changes as a result of it.",
+                    "type": "string",
+                    "example": "Read the section about database indexing later."
+                },
                 "platform": {
                     "type": "string",
                     "example": "youtube"
@@ -3868,6 +4059,37 @@
                 "url": {
                     "type": "string",
                     "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "saved_item.UpdateSavedItemNoteAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/saved_item.UpdateSavedItemNoteResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "saved item note saved successfully"
+                }
+            }
+        },
+        "saved_item.UpdateSavedItemNoteRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "maxLength": 5000,
+                    "example": "My updated context for saving this URL."
+                }
+            }
+        },
+        "saved_item.UpdateSavedItemNoteResponse": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "example": "My updated context for saving this URL."
                 }
             }
         },
@@ -3951,6 +4173,10 @@
                 "image_url": {
                     "type": "string",
                     "example": "https://example.org/og.png"
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Read the section about database indexing later."
                 },
                 "title": {
                     "type": "string",

@@ -2,6 +2,27 @@ package saved_item
 
 type CreateSavedItemRequest struct {
 	URL string `json:"url" validate:"required,url,max=2048" example:"https://example.com/articles/1"`
+
+	// Note is optional plain text the user wants to remember about this URL. It is
+	// nullable and may span multiple lines, and leaving it out (or sending null)
+	// preserves the existing save behavior exactly. A value containing only
+	// whitespace is stored as NULL.
+	//
+	// max=5000 is measured in runes by the validator, so a multilingual note is not
+	// rejected for being long in bytes. The service applies the same bound again for
+	// callers that reach it without this type.
+	Note *string `json:"note" validate:"omitempty,max=5000" example:"Read the section about database indexing later."`
+}
+
+// UpdateSavedItemNoteRequest is the body of PUT /saved-items/:id/note.
+//
+// The note is required here: this route adds or edits one, and clearing is the
+// separate DELETE. The field carries no `validate` constraint because the service
+// owns these rules and answers with INVALID_NOTE, so a message can say which rule
+// was broken rather than collapsing every case into a generic validation error. A
+// whitespace-only value is rejected rather than treated as a clear.
+type UpdateSavedItemNoteRequest struct {
+	Note string `json:"note" maxLength:"5000" example:"My updated context for saving this URL."`
 }
 
 // ListSavedItemsRequest is the query for the recent saved items history.

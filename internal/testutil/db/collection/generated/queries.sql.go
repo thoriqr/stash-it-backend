@@ -381,6 +381,7 @@ SELECT
     id,
     user_id,
     collection_id,
+    note,
     enrichment_status,
     last_enriched_at,
     updated_at
@@ -392,6 +393,7 @@ type GetSavedItemCollectionStateRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	CollectionID     uuid.UUID
+	Note             pgtype.Text
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
@@ -406,6 +408,7 @@ func (q *Queries) GetSavedItemCollectionState(ctx context.Context, id uuid.UUID)
 		&i.ID,
 		&i.UserID,
 		&i.CollectionID,
+		&i.Note,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,
 		&i.UpdatedAt,
@@ -499,6 +502,24 @@ func (q *Queries) SetTestSavedItemEnrichmentStateAt(ctx context.Context, arg Set
 		arg.CreatedAt,
 		arg.ID,
 	)
+	return err
+}
+
+const setTestSavedItemNote = `-- name: SetTestSavedItemNote :exec
+UPDATE saved_items
+SET note = $1
+WHERE id = $2
+`
+
+type SetTestSavedItemNoteParams struct {
+	Note pgtype.Text
+	ID   uuid.UUID
+}
+
+// Writes a note directly, so a collection-listing test can prove the note is
+// returned without going through the note endpoints. Passing NULL clears it.
+func (q *Queries) SetTestSavedItemNote(ctx context.Context, arg SetTestSavedItemNoteParams) error {
+	_, err := q.db.Exec(ctx, setTestSavedItemNote, arg.Note, arg.ID)
 	return err
 }
 

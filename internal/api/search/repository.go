@@ -95,6 +95,7 @@ func (r *repository) SearchSavedItems(
 			ID:    row.ID,
 			Title: row.Title,
 			URL:   row.Url,
+			Note:  row.Note,
 			// Domain and ImageURL are passed through with the nullability the
 			// columns have. Neither is ever replaced by a value derived from the
 			// URL, so an unread page reports what is stored and nothing else.

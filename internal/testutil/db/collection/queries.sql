@@ -112,6 +112,13 @@ UPDATE saved_items
 SET platform = sqlc.arg(platform)
 WHERE id = sqlc.arg(id);
 
+-- name: SetTestSavedItemNote :exec
+-- Writes a note directly, so a collection-listing test can prove the note is
+-- returned without going through the note endpoints. Passing NULL clears it.
+UPDATE saved_items
+SET note = sqlc.narg(note)
+WHERE id = sqlc.arg(id);
+
 -- name: GetCollectionState :one
 SELECT
     id,
@@ -236,6 +243,7 @@ SELECT
     id,
     user_id,
     collection_id,
+    note,
     enrichment_status,
     last_enriched_at,
     updated_at

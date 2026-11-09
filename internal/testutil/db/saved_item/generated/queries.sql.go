@@ -212,6 +212,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -228,6 +229,7 @@ type GetSavedItemStateRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -251,6 +253,7 @@ func (q *Queries) GetSavedItemState(ctx context.Context, id uuid.UUID) (GetSaved
 		&i.ID,
 		&i.UserID,
 		&i.Url,
+		&i.Note,
 		&i.Domain,
 		&i.Platform,
 		&i.Title,
@@ -316,6 +319,24 @@ func (q *Queries) ListSavedItemsForUser(ctx context.Context, userID uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const setTestSavedItemNote = `-- name: SetTestSavedItemNote :exec
+UPDATE saved_items
+SET note = $1
+WHERE id = $2
+`
+
+type SetTestSavedItemNoteParams struct {
+	Note pgtype.Text
+	ID   uuid.UUID
+}
+
+// Writes a note directly, so a test can seed one without going through the API.
+// Passing NULL clears it.
+func (q *Queries) SetTestSavedItemNote(ctx context.Context, arg SetTestSavedItemNoteParams) error {
+	_, err := q.db.Exec(ctx, setTestSavedItemNote, arg.Note, arg.ID)
+	return err
 }
 
 const truncateSavedItemData = `-- name: TruncateSavedItemData :exec

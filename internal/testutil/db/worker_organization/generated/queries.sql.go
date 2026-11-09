@@ -190,6 +190,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     platform,
     enrichment_status,
     last_enriched_at,
@@ -203,6 +204,7 @@ type GetWorkerOrganizationItemStateRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Platform         pgtype.Text
 	EnrichmentStatus string
 	LastEnrichedAt   pgtype.Timestamptz
@@ -219,6 +221,7 @@ func (q *Queries) GetWorkerOrganizationItemState(ctx context.Context, id uuid.UU
 		&i.ID,
 		&i.UserID,
 		&i.Url,
+		&i.Note,
 		&i.Platform,
 		&i.EnrichmentStatus,
 		&i.LastEnrichedAt,

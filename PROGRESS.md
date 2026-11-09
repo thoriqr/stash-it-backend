@@ -15,7 +15,7 @@ left. It does not describe how anything works and it does not hold rules.
 | Design decisions                      | `documentation/decisions.md`          |
 | History                               | `git log`                             |
 
-_State as of the last recorded entry: 2026-10-27._
+_State as of the last recorded entry: 2026-11-09._
 
 ## Summary
 
@@ -44,6 +44,7 @@ and a **hardening backlog**.
 | Area                                                         | State | Reference                    |
 | ------------------------------------------------------------ | ----- | ---------------------------- |
 | Saved items: save, Inbox, detail, delete                     | done  | `internal/api/saved_item`    |
+| Saved item notes: optional note on save, add/edit, delete    | done  | `internal/api/saved_item`, migration `000031` |
 | Collections: list with bounded counts, filing with intent, items listing, delete with disposition | done | `internal/api/collection` |
 | Search                                                       | done  | —                            |
 

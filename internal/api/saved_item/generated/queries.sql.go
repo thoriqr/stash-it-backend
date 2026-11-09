@@ -12,6 +12,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearSavedItemNote = `-- name: ClearSavedItemNote :one
+UPDATE saved_items
+SET note = NULL
+WHERE id = $1
+  AND user_id = $2
+RETURNING id
+`
+
+type ClearSavedItemNoteParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Clears the note on one saved item of the authenticated user.
+//
+// Matching id AND user_id means an item that does not exist and an item owned by
+// another user both return no row, so both surface as the same not found error and
+// the endpoint never discloses whether an ID exists.
+//
+// The saved item itself is never removed, and no other column is touched. Clearing
+// a note is an ordinary update, not a delete of the item.
+func (q *Queries) ClearSavedItemNote(ctx context.Context, arg ClearSavedItemNoteParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, clearSavedItemNote, arg.ID, arg.UserID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const countSavedItemsInCollection = `-- name: CountSavedItemsInCollection :one
 SELECT COUNT(*)
 FROM saved_items
@@ -51,6 +79,7 @@ const createSavedItem = `-- name: CreateSavedItem :one
 INSERT INTO saved_items (
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -61,12 +90,14 @@ INSERT INTO saved_items (
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
 RETURNING
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -84,6 +115,7 @@ RETURNING
 type CreateSavedItemParams struct {
 	UserID       uuid.UUID
 	Url          string
+	Note         pgtype.Text
 	Domain       pgtype.Text
 	Platform     pgtype.Text
 	Title        pgtype.Text
@@ -94,6 +126,7 @@ type CreateSavedItemRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -130,6 +163,7 @@ func (q *Queries) CreateSavedItem(ctx context.Context, arg CreateSavedItemParams
 	row := q.db.QueryRow(ctx, createSavedItem,
 		arg.UserID,
 		arg.Url,
+		arg.Note,
 		arg.Domain,
 		arg.Platform,
 		arg.Title,
@@ -140,6 +174,7 @@ func (q *Queries) CreateSavedItem(ctx context.Context, arg CreateSavedItemParams
 		&i.ID,
 		&i.UserID,
 		&i.Url,
+		&i.Note,
 		&i.Domain,
 		&i.Platform,
 		&i.Title,
@@ -229,6 +264,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -259,6 +295,7 @@ type GetSavedItemByIDForUserRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -298,6 +335,7 @@ func (q *Queries) GetSavedItemByIDForUser(ctx context.Context, arg GetSavedItemB
 		&i.ID,
 		&i.UserID,
 		&i.Url,
+		&i.Note,
 		&i.Domain,
 		&i.Platform,
 		&i.Title,
@@ -340,6 +378,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -379,6 +418,7 @@ type ListSavedItemsAfterRowRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -428,6 +468,7 @@ func (q *Queries) ListSavedItemsAfterRow(ctx context.Context, arg ListSavedItems
 			&i.ID,
 			&i.UserID,
 			&i.Url,
+			&i.Note,
 			&i.Domain,
 			&i.Platform,
 			&i.Title,
@@ -457,6 +498,7 @@ SELECT
     si.id,
     si.user_id,
     si.url,
+    si.note,
     si.domain,
     si.platform,
     si.title,
@@ -490,6 +532,7 @@ type ListSavedItemsFirstRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -558,6 +601,7 @@ func (q *Queries) ListSavedItemsFirst(ctx context.Context, arg ListSavedItemsFir
 			&i.ID,
 			&i.UserID,
 			&i.Url,
+			&i.Note,
 			&i.Domain,
 			&i.Platform,
 			&i.Title,
@@ -580,4 +624,36 @@ func (q *Queries) ListSavedItemsFirst(ctx context.Context, arg ListSavedItemsFir
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateSavedItemNote = `-- name: UpdateSavedItemNote :one
+UPDATE saved_items
+SET note = $1
+WHERE id = $2
+  AND user_id = $3
+RETURNING note
+`
+
+type UpdateSavedItemNoteParams struct {
+	Note   pgtype.Text
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// Sets the note on one saved item of the authenticated user and reports what was
+// stored.
+//
+// Matching id AND user_id means an item that does not exist and an item owned by
+// another user both return no row, so both surface as the same not found error and
+// the endpoint never discloses whether an ID exists.
+//
+// Only note is written. Enrichment columns, collection_id and every other field
+// stay as they are: a note is user-authored data and editing it is not an
+// enrichment or organization event. The saved_items.updated_at trigger fires,
+// which is intended because the note is a real change to the item.
+func (q *Queries) UpdateSavedItemNote(ctx context.Context, arg UpdateSavedItemNoteParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, updateSavedItemNote, arg.Note, arg.ID, arg.UserID)
+	var note pgtype.Text
+	err := row.Scan(&note)
+	return note, err
 }

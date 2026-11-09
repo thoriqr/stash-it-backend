@@ -141,8 +141,8 @@ own decision.
 item reports that collection and the history is never confused with any single
 collection's contents.** This supersedes the earlier decision that there is no
 standalone saved-item listing. The reasoning it was based on still stands and is
-why the endpoint looks the way it does: it reports the full thirteen-field item
-including `enrichment_status`, `last_enriched_at`, `description` and
+why the endpoint looks the way it does: it reports the full item including
+`enrichment_status`, `last_enriched_at`, `description` and
 `image_url`, so a caller can tell a page with no title from one that had not
 been read, and it carries a nested `collection` of `id` and `name` per item
 because a listing that spans collections cannot name one collection for the
@@ -213,6 +213,25 @@ as `Unsorted` or `YouTube` resolves to that collection; it is not a name to reje
 reserved-name rule, and `COLLECTION_NAME_RESERVED` is not part of the collection API
 contract. The automatic organization worker has its own, narrower reserved-name rule
 for platform names and is a separate writer with separate behavior.
+
+19l. **A saved item has one optional plain-text note, and the note is user-authored
+data.** `saved_items.note` is nullable, limited to 5000 characters measured in runes,
+may span multiple lines, and is never derived from a page. `POST /saved-items` accepts
+it optionally; `PUT /saved-items/:id/note` adds or replaces it; `DELETE
+/saved-items/:id/note` clears it. Adding and editing share one endpoint because they
+are the same write, and clearing is separate so a whitespace-only value on the add/edit
+route is rejected rather than silently treated as a clear. Both mutation routes are
+scoped by saved item id **and** authenticated user id, so another user's note is
+unreachable and missing and foreign ids are the same not found. They share one
+per-user budget and namespace (`saved-item-note-user`) because they write the same
+column; a budget per HTTP method would let a caller double its allowance by switching
+routes.
+
+The note is independent of enrichment and automatic organization. No enrichment
+statement reads or writes `note`, and organization writes only `collection_id`, so a
+successful enrichment, a failed enrichment, and a collection move all preserve it.
+Do not add note handling to the enrichment or worker packages, and do not make note
+searchable as part of this feature.
 
 20. **A forward header is believed only behind a verified allowlist, and the
     declaration of where a client's address comes from is one setting rather than

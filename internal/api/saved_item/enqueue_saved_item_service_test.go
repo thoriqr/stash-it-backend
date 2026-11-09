@@ -44,6 +44,7 @@ func TestService_Create_EnqueuesAfterCommit(t *testing.T) {
 		context.Background(),
 		userID,
 		"https://example.com/articles/1",
+		nil,
 	)
 
 	require.NoError(t, err)
@@ -81,6 +82,7 @@ func TestService_Create_DoesNotEnqueueWhenTheWriteFails(t *testing.T) {
 		context.Background(),
 		userID,
 		"https://example.com/articles/1",
+		nil,
 	)
 
 	require.Equal(t, writeErr, err)
@@ -104,7 +106,7 @@ func TestService_Create_DoesNotEnqueueWhenTheURLIsRejected(t *testing.T) {
 		EnqueueSavedItemEnrichment(gomock.Any(), gomock.Any()).
 		Times(0)
 
-	_, err := svc.Create(context.Background(), uuid.New(), "not-a-url")
+	_, err := svc.Create(context.Background(), uuid.New(), "not-a-url", nil)
 
 	require.Error(t, err)
 }
@@ -139,6 +141,7 @@ func TestService_Create_SurvivesAnUnreachableQueue(t *testing.T) {
 		context.Background(),
 		userID,
 		"https://example.com/articles/1",
+		nil,
 	)
 
 	require.NoError(t, err)
@@ -169,6 +172,7 @@ func TestService_Create_WorksWithoutAnEnqueuer(t *testing.T) {
 		context.Background(),
 		userID,
 		"https://example.com/articles/1",
+		nil,
 	)
 
 	require.NoError(t, err)

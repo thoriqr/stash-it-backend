@@ -24,15 +24,21 @@ import (
 // enrichment state this response does not report. updated_at is absent for the
 // same reason: nothing orders by it and nothing reports it.
 //
-// Title, Domain and ImageURL keep the columns' nullable semantics exactly. None
-// of them is ever substituted for another, so an item whose page has not been
-// read reports three nulls rather than a title assembled from its URL.
+// Title, Note, Domain and ImageURL keep the columns' nullable semantics exactly.
+// None of them is ever substituted for another, so an item whose page has not been
+// read reports nulls rather than a title assembled from its URL.
 type SearchSavedItem struct {
-	ID         uuid.UUID
-	Title      pgtype.Text
-	URL        string
-	Domain     pgtype.Text
-	ImageURL   pgtype.Text
+	ID    uuid.UUID
+	Title pgtype.Text
+	URL   string
+
+	// Note is the optional plain-text note the user wrote about this item. It is
+	// reported with a result but is deliberately not searchable: this task adds the
+	// field to the projection, not to the matching or ranking rules.
+	Note     pgtype.Text
+	Domain   pgtype.Text
+	ImageURL pgtype.Text
+
 	Collection SearchCollectionRef
 
 	// EnrichmentStatus is pending, completed or failed. It is reported because a

@@ -3,6 +3,11 @@ package saved_item
 const (
 	CodeInvalidURL = "INVALID_URL"
 
+	// CodeInvalidNote is returned when a note is blank after trimming or longer
+	// than NoteMaxLength. Removing a note is a separate DELETE, so a whitespace-only
+	// value on the add/edit route is a rejected input rather than a clear.
+	CodeInvalidNote = "INVALID_NOTE"
+
 	// CodeInvalidCursor is returned when a cursor cannot be used. That covers every
 	// way a token can fail: malformed base64 or JSON, an unsupported payload version,
 	// a missing field, and a position that is not a timestamp. They share one code

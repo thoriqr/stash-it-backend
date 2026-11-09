@@ -129,6 +129,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -149,6 +150,7 @@ type GetSavedItemEnrichmentStateRow struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
 	Url              string
+	Note             pgtype.Text
 	Domain           pgtype.Text
 	Platform         pgtype.Text
 	Title            pgtype.Text
@@ -172,6 +174,7 @@ func (q *Queries) GetSavedItemEnrichmentState(ctx context.Context, id uuid.UUID)
 		&i.ID,
 		&i.UserID,
 		&i.Url,
+		&i.Note,
 		&i.Domain,
 		&i.Platform,
 		&i.Title,

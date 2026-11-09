@@ -104,6 +104,7 @@ SELECT
     id,
     user_id,
     url,
+    note,
     domain,
     platform,
     title,
@@ -113,6 +114,13 @@ SELECT
     created_at,
     updated_at
 FROM saved_items
+WHERE id = sqlc.arg(id);
+
+-- name: SetTestSavedItemNote :exec
+-- Writes a note directly, so a test can seed one without going through the API.
+-- Passing NULL clears it.
+UPDATE saved_items
+SET note = sqlc.narg(note)
 WHERE id = sqlc.arg(id);
 
 -- name: ListSavedItemsForUser :many

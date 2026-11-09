@@ -14,6 +14,7 @@ The initial Saved Item is deliberately minimal:
 | ---------------- | --------------------------------------------------------------------- |
 | Owner            | the signed-in user, always from authentication, never from the client |
 | URL              | the thing saved, supplied by the client                               |
+| Note             | optional plain text the user writes; independent of enrichment        |
 | Domain           | derived from the URL, never fetched from the remote source            |
 | Platform         | content/source platform, not set until enrichment runs                |
 | Title            | not set until enrichment runs                                         |
@@ -25,6 +26,10 @@ The initial Saved Item is deliberately minimal:
 
 - The owner comes from authentication, never from the request.
 - The URL comes from the client.
+- The note is optional, plain text, may span multiple lines, and belongs to the
+  user who owns the item. It can be supplied when saving or added and edited later,
+  and it can be cleared without deleting the item. Whitespace-only content is not a
+  note: on save it is stored as none, and on add/edit it is rejected.
 - The domain is derived from the URL: lowercase the hostname and remove one
   leading `www.`. Other subdomains are preserved; no public suffix or
   registrable-domain detection is performed.
@@ -48,11 +53,17 @@ Saving never contacts the remote source: domain derivation is local, and metadat
 enrichment happens later without blocking the initial save.
 
 **Saving answers "did it work", not "what does it look like".** It reports the new
-item's id, its URL, which collection it went to, and whether its details have been
-read yet. It deliberately does not report a title, a platform or an image: at that
-moment none of those have been looked up, and an empty-looking answer would be
-indistinguishable from a page that really has nothing. Opening the item is what shows
-the full picture.
+item's id, its URL, the note that was stored (if any), which collection it went to,
+and whether its details have been read yet. It deliberately does not report a title, a
+platform or an image: at that moment none of those have been looked up, and an
+empty-looking answer would be indistinguishable from a page that really has nothing.
+Opening the item is what shows the full picture.
+
+**The note is the user's own context and nothing else changes it.** It is shown
+wherever saved items are shown, including the Inbox and a collection's items, and in
+search results. Enrichment never reads or writes it, automatic organization never
+touches it, and moving an item between collections preserves it. It is plain text
+rather than rich text, there is one per item, and it is not itself searchable.
 
 **Opening a saved item shows everything, including what is still unknown.** It
 reports the whole item — where it came from, what has been read from it, and which

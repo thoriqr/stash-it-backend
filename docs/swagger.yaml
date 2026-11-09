@@ -207,6 +207,9 @@ definitions:
           attempt refreshes nothing, so it does not set this.
         example: "2026-10-02T10:31:00Z"
         type: string
+      note:
+        example: Read the section about database indexing later.
+        type: string
       platform:
         example: youtube
         type: string
@@ -848,6 +851,19 @@ definitions:
     type: object
   saved_item.CreateSavedItemRequest:
     properties:
+      note:
+        description: |-
+          Note is optional plain text the user wants to remember about this URL. It is
+          nullable and may span multiple lines, and leaving it out (or sending null)
+          preserves the existing save behavior exactly. A value containing only
+          whitespace is stored as NULL.
+
+          max=5000 is measured in runes by the validator, so a multilingual note is not
+          rejected for being long in bytes. The service applies the same bound again for
+          callers that reach it without this type.
+        example: Read the section about database indexing later.
+        maxLength: 5000
+        type: string
       url:
         example: https://example.com/articles/1
         maxLength: 2048
@@ -875,6 +891,13 @@ definitions:
       id:
         example: 01a0f359-093b-737a-963a-80f7ca6768ed
         type: string
+      note:
+        description: |-
+          Note is the note that was actually stored with the save, or null when none was
+          submitted or when the submitted value contained only whitespace. Reporting it
+          here lets a caller confirm what was written without opening the item.
+        example: Read the section about database indexing later.
+        type: string
       url:
         example: https://example.com/articles/1
         type: string
@@ -901,6 +924,14 @@ definitions:
         $ref: '#/definitions/saved_item.DeleteSavedItemResponse'
       message:
         example: saved item deleted successfully
+        type: string
+    type: object
+  saved_item.DeleteSavedItemNoteAPIResponse:
+    properties:
+      data:
+        type: object
+      message:
+        example: saved item note deleted successfully
         type: string
     type: object
   saved_item.DeleteSavedItemResponse:
@@ -1007,6 +1038,12 @@ definitions:
           attempt refreshes nothing, so it does not set this.
         example: "2026-10-02T10:31:00Z"
         type: string
+      note:
+        description: |-
+          Note is the user-authored plain-text note, or null when the user has not set
+          one. It is returned as stored and is never derived from enrichment.
+        example: Read the section about database indexing later.
+        type: string
       platform:
         example: youtube
         type: string
@@ -1075,6 +1112,12 @@ definitions:
           attempt refreshes nothing, so it does not set this.
         example: "2026-10-02T10:31:00Z"
         type: string
+      note:
+        description: |-
+          Note is the user-authored plain-text note, or null when the user has not set
+          one. It is independent of enrichment and never changes as a result of it.
+        example: Read the section about database indexing later.
+        type: string
       platform:
         example: youtube
         type: string
@@ -1097,6 +1140,27 @@ definitions:
         type: string
       url:
         example: https://example.com/articles/1
+        type: string
+    type: object
+  saved_item.UpdateSavedItemNoteAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/saved_item.UpdateSavedItemNoteResponse'
+      message:
+        example: saved item note saved successfully
+        type: string
+    type: object
+  saved_item.UpdateSavedItemNoteRequest:
+    properties:
+      note:
+        example: My updated context for saving this URL.
+        maxLength: 5000
+        type: string
+    type: object
+  saved_item.UpdateSavedItemNoteResponse:
+    properties:
+      note:
+        example: My updated context for saving this URL.
         type: string
     type: object
   search.SearchAPIResponse:
@@ -1154,6 +1218,9 @@ definitions:
         type: string
       image_url:
         example: https://example.org/og.png
+        type: string
+      note:
+        example: Read the section about database indexing later.
         type: string
       title:
         example: Camera Buying Guide
@@ -2875,7 +2942,7 @@ paths:
       description: |-
         Retrieve a collection and its saved items, ordered by newest first.
         The response includes collection details even when the collection contains no saved items.
-        Saved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null.
+        Saved items are returned regardless of their enrichment status. A completed enrichment does not guarantee that all metadata fields are populated; nullable fields may still be null. Each item includes its optional note, which is null when the user has not set one.
         Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
         Possible error codes:
         - BAD_REQUEST
@@ -2974,7 +3041,7 @@ paths:
     get:
       description: |-
         Retrieve the authenticated user's saved items across all collections, ordered by newest first.
-        Saved items are returned regardless of their collection or enrichment status. Each item includes its associated collection.
+        Saved items are returned regardless of their collection or enrichment status. Each item includes its associated collection and its optional note, which is null when the user has not set one.
         enrichment_status indicates the enrichment state of an item: pending, completed, or failed. A completed status does not guarantee that all metadata fields are populated.
         Pass meta.cursor.next_cursor from the previous response to retrieve the next page. A null next_cursor indicates the final page.
         Possible error codes:
@@ -3032,9 +3099,11 @@ paths:
       description: |-
         Save a URL to the authenticated user's inbox.
         The saved item is returned with an initial enrichment_status of "pending". Metadata enrichment is handled asynchronously.
+        An optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.
         Possible error codes:
         - VALIDATION_ERROR
         - INVALID_URL
+        - INVALID_NOTE
         - INVALID_AUTHORIZATION_HEADER
         - INVALID_ACCESS_TOKEN
         - ACCESS_TOKEN_EXPIRED
@@ -3052,7 +3121,7 @@ paths:
       - application/json
       responses:
         "201":
-          description: The saved item's id, url, collection_id and enrichment_status
+          description: The saved item's id, url, stored note, collection_id and enrichment_status
           schema:
             $ref: '#/definitions/saved_item.CreateSavedItemAPIResponse'
         "400":
@@ -3130,8 +3199,8 @@ paths:
       - SavedItem
     get:
       description: |-
-        Retrieve a saved item by ID, including the collection it belongs to.
-        The saved item is returned regardless of its enrichment status. A completed enrichment does not guarantee that all metadata fields are populated.
+        Retrieve a saved item by ID, including the collection it belongs to and its optional note.
+        The saved item is returned regardless of its enrichment status. A completed enrichment does not guarantee that all metadata fields are populated. note is null when the user has not set one.
         Possible error codes:
         - BAD_REQUEST (non-UUID id)
         - RESOURCE_NOT_FOUND
@@ -3298,6 +3367,131 @@ paths:
       summary: Enrich one saved item's metadata
       tags:
       - SavedItem
+  /saved-items/{id}/note:
+    delete:
+      description: |-
+        Clear the note on a saved item by setting it to null. The saved item itself is not deleted.
+        A missing saved item, an item owned by another user, and an item with no note all follow the existing not-found or success behavior: the item is scoped by both id and user, and clearing an absent note succeeds.
+        Possible error codes:
+        - BAD_REQUEST (non-UUID id)
+        - RESOURCE_NOT_FOUND
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - USER_RATE_LIMIT_EXCEEDED
+        - USER_RATE_LIMIT_UNAVAILABLE
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/saved_item.DeleteSavedItemNoteAPIResponse'
+        "400":
+          description: Invalid saved item ID
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found, or owned by another user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Note mutation rate limit exceeded for this user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting is unavailable, so the note is not cleared
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a saved item's note
+      tags:
+      - SavedItem
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Add a plain-text note to a saved item, or replace the note it already has. Adding and editing use the same endpoint.
+        The note is required and may be at most 5000 characters. It is plain text and may span multiple lines. A whitespace-only value is rejected; use DELETE /saved-items/{id}/note to remove a note.
+        The response reports the note as it was stored. A missing saved item and one owned by another user produce the same not found error.
+        Possible error codes:
+        - INVALID_NOTE
+        - BAD_REQUEST (non-UUID id or malformed body)
+        - RESOURCE_NOT_FOUND
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - USER_RATE_LIMIT_EXCEEDED
+        - USER_RATE_LIMIT_UNAVAILABLE
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Saved item ID
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Add or edit note request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/saved_item.UpdateSavedItemNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The note as it was stored
+          schema:
+            $ref: '#/definitions/saved_item.UpdateSavedItemNoteAPIResponse'
+        "400":
+          description: Invalid note, saved item ID, or body
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Saved item not found, or owned by another user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Note mutation rate limit exceeded for this user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting is unavailable, so the note is not written
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Add or edit a saved item's note
+      tags:
+      - SavedItem
   /search:
     get:
       description: |-
@@ -3305,7 +3499,7 @@ paths:
         Saved items are matched by title, domain, and URL. Collections are matched by name, including system collections.
         Search supports partial matches and typo tolerance. Results are ranked by relevance, with recency used to break ties.
         Results are limited and are not paginated.
-        Saved item results carry the item's collection and its enrichment_status, so a client can tell where it lives and whether it has been read; each result is a subset of the item shape reported by GET /collections/{id}/saved-items.
+        Saved item results carry the item's collection, its enrichment_status and its optional note, so a client can tell where it lives, whether it has been read, and what the user wrote about it; each result is a subset of the item shape reported by GET /collections/{id}/saved-items. The note is reported but is not searchable.
         Possible error codes:
         - INVALID_SEARCH_QUERY
         - INVALID_AUTHORIZATION_HEADER

@@ -13,11 +13,12 @@ import (
 // rendered, which is a different question from what a saved item detail response
 // carries.
 //
-// Title, Domain and ImageURL are pointers because the columns are nullable, and
-// null is reported rather than a value substituted for one of them: a title is
-// never assembled from the domain or the URL, so a result whose page has not
-// been read reports nulls. A client that needs a label for such a result chooses
-// its own fallback rather than being handed one that was never on the page.
+// Title, Note, Domain and ImageURL are pointers because the columns are nullable,
+// and null is reported rather than a value substituted for one of them: a title is
+// never assembled from the domain or the URL, so a result whose page has not been
+// read reports nulls. A client that needs a label for such a result chooses its
+// own fallback rather than being handed one that was never on the page. Note is
+// user-authored rather than enriched, and is reported but not searched.
 //
 // EnrichmentStatus is pending, completed or failed, and is what makes a null
 // title unambiguous: without it, a result could not say whether the page exposed
@@ -38,6 +39,7 @@ type SearchSavedItemResponse struct {
 	ID               uuid.UUID                     `json:"id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 	Title            *string                       `json:"title" example:"Camera Buying Guide"`
 	URL              string                        `json:"url" example:"https://example.org/notes/camera-buying-guide"`
+	Note             *string                       `json:"note" example:"Read the section about database indexing later."`
 	Domain           *string                       `json:"domain" example:"example.org"`
 	ImageURL         *string                       `json:"image_url" example:"https://example.org/og.png"`
 	EnrichmentStatus string                        `json:"enrichment_status" example:"completed"`

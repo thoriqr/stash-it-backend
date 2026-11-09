@@ -8,7 +8,7 @@ import (
 
 // mapCreatedSavedItemResponse builds the minimal create representation.
 //
-// Only the four fields that mean something at save time are mapped. The remaining
+// Only the fields that mean something at save time are mapped. The remaining
 // columns are not read here and not reported: domain is derived locally and is
 // obtainable from the URL the caller just submitted, while platform, title,
 // description, image_url and last_enriched_at are still NULL because enrichment
@@ -17,6 +17,7 @@ func mapCreatedSavedItemResponse(savedItem SavedItem) CreatedSavedItemResponse {
 	return CreatedSavedItemResponse{
 		ID:           savedItem.ID,
 		URL:          savedItem.Url,
+		Note:         mapOptionalText(savedItem.Note),
 		CollectionID: savedItem.CollectionID,
 		// The stored value, not a constant this mapper assumes. It comes back from
 		// the INSERT, so a future change to the column's default is reported rather
@@ -46,6 +47,7 @@ func mapSavedItemDetailResponse(
 		Domain:   mapOptionalText(savedItem.Domain),
 		Platform: mapOptionalText(savedItem.Platform),
 		Title:    mapOptionalText(savedItem.Title),
+		Note:     mapOptionalText(savedItem.Note),
 		// Passed through as stored, including when still NULL. A page is not
 		// required to expose either, and one that did not is an ordinary result.
 		Description:   mapOptionalText(savedItem.Description),
@@ -107,6 +109,7 @@ func mapListedSavedItemResponse(
 		Domain:           mapOptionalText(savedItem.Domain),
 		Platform:         mapOptionalText(savedItem.Platform),
 		Title:            mapOptionalText(savedItem.Title),
+		Note:             mapOptionalText(savedItem.Note),
 		Description:      mapOptionalText(savedItem.Description),
 		ImageURL:         mapOptionalText(savedItem.ImageURL),
 		PriceAmount:      mapOptionalNumeric(savedItem.PriceAmount),
@@ -150,6 +153,14 @@ func mapGetSavedItemResponse(result GetResult) GetSavedItemResponse {
 	return GetSavedItemResponse{
 		SavedItem:  mapSavedItemDetailResponse(result.SavedItem),
 		Collection: mapSavedItemCollectionResponse(result.Collection),
+	}
+}
+
+func mapUpdateSavedItemNoteResponse(
+	result NoteResult,
+) UpdateSavedItemNoteResponse {
+	return UpdateSavedItemNoteResponse{
+		Note: result.Note,
 	}
 }
 

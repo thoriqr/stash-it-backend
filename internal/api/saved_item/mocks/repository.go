@@ -44,6 +44,44 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
 }
 
+// ClearSavedItemNote mocks base method.
+func (m *MockRepository) ClearSavedItemNote(ctx context.Context, userID, savedItemID uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearSavedItemNote", ctx, userID, savedItemID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ClearSavedItemNote indicates an expected call of ClearSavedItemNote.
+func (mr *MockRepositoryMockRecorder) ClearSavedItemNote(ctx, userID, savedItemID any) *MockRepositoryClearSavedItemNoteCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearSavedItemNote", reflect.TypeOf((*MockRepository)(nil).ClearSavedItemNote), ctx, userID, savedItemID)
+	return &MockRepositoryClearSavedItemNoteCall{Call: call}
+}
+
+// MockRepositoryClearSavedItemNoteCall wrap *gomock.Call
+type MockRepositoryClearSavedItemNoteCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryClearSavedItemNoteCall) Return(arg0 error) *MockRepositoryClearSavedItemNoteCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryClearSavedItemNoteCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryClearSavedItemNoteCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryClearSavedItemNoteCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockRepositoryClearSavedItemNoteCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // CountSavedItemsInCollection mocks base method.
 func (m *MockRepository) CountSavedItemsInCollection(ctx context.Context, userID, collectionID uuid.UUID) (int64, error) {
 	m.ctrl.T.Helper()
@@ -314,6 +352,45 @@ func (c *MockRepositoryListSavedItemsCall) Do(f func(context.Context, saved_item
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockRepositoryListSavedItemsCall) DoAndReturn(f func(context.Context, saved_item.ListSavedItemsParams) (saved_item.ListSavedItemsResult, error)) *MockRepositoryListSavedItemsCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// UpdateSavedItemNote mocks base method.
+func (m *MockRepository) UpdateSavedItemNote(ctx context.Context, userID, savedItemID uuid.UUID, note pgtype.Text) (pgtype.Text, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSavedItemNote", ctx, userID, savedItemID, note)
+	ret0, _ := ret[0].(pgtype.Text)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateSavedItemNote indicates an expected call of UpdateSavedItemNote.
+func (mr *MockRepositoryMockRecorder) UpdateSavedItemNote(ctx, userID, savedItemID, note any) *MockRepositoryUpdateSavedItemNoteCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSavedItemNote", reflect.TypeOf((*MockRepository)(nil).UpdateSavedItemNote), ctx, userID, savedItemID, note)
+	return &MockRepositoryUpdateSavedItemNoteCall{Call: call}
+}
+
+// MockRepositoryUpdateSavedItemNoteCall wrap *gomock.Call
+type MockRepositoryUpdateSavedItemNoteCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryUpdateSavedItemNoteCall) Return(arg0 pgtype.Text, arg1 error) *MockRepositoryUpdateSavedItemNoteCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryUpdateSavedItemNoteCall) Do(f func(context.Context, uuid.UUID, uuid.UUID, pgtype.Text) (pgtype.Text, error)) *MockRepositoryUpdateSavedItemNoteCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryUpdateSavedItemNoteCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID, pgtype.Text) (pgtype.Text, error)) *MockRepositoryUpdateSavedItemNoteCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
