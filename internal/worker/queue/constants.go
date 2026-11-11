@@ -49,12 +49,12 @@ const (
 const (
 	// EnrichmentTaskTimeout bounds one attempt.
 	//
-	// It has to clear security.OutboundFetchTimeout, which is 10s and covers the
-	// whole outbound request including redirects and body reads, with room left
-	// for the database writes either side of it. A smaller value would make Asynq
-	// abandon attempts that were about to succeed, which Asynq then treats as a
-	// failure and retries.
-	EnrichmentTaskTimeout = 30 * time.Second
+	// It has to clear the largest outbound fetch policy the worker can use. The
+	// generic ceiling is security.OutboundFetchTimeout (20s); the Tokopedia
+	// profile allows 25s. Sixty seconds leaves at least 35s for the database
+	// reads and writes around the fetch, so Asynq does not abandon an attempt
+	// that was about to finish and then retry the whole fetch.
+	EnrichmentTaskTimeout = 60 * time.Second
 
 	// EnrichmentMaxRetry is how many times a retryable attempt is repeated after
 	// the first one, so an item is fetched at most three times in total.

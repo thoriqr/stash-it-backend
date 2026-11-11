@@ -7,6 +7,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 
+	"github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/worker/queue"
 )
@@ -130,17 +131,27 @@ func TestEnrichmentTaskTimeout_ClearsTheOutboundFetchCeiling(t *testing.T) {
 	)
 }
 
-// The task timeout has to clear the fetch ceiling with room for the database
-// writes on either side of it, not merely exceed it. An attempt that was
-// abandoned while writing its result would have done the outbound work for
-// nothing and would be retried from the start.
+// The task timeout has to clear the largest outbound fetch policy with room for
+// the database writes on either side, not merely exceed the generic ceiling. The
+// Tokopedia profile currently allows 25s, so both derived policies are checked.
 func TestEnrichmentTaskTimeout_LeavesRoomForTheDatabaseWrites(t *testing.T) {
-	require.Greater(
-		t,
-		queue.EnrichmentTaskTimeout,
-		2*security.OutboundFetchTimeout,
-		"the task timeout must clear the fetch ceiling with room to spare",
-	)
+	base := security.DefaultOutboundFetchPolicy()
+
+	policies := map[string]security.OutboundFetchPolicy{
+		"generic":   base,
+		"tokopedia": enrichment.TokopediaOutboundFetchPolicy(base),
+	}
+
+	for name, policy := range policies {
+		t.Run(name, func(t *testing.T) {
+			require.Greater(
+				t,
+				queue.EnrichmentTaskTimeout,
+				2*policy.Timeout,
+				"the task timeout must clear the fetch ceiling with room to spare",
+			)
+		})
+	}
 }
 
 // Retries are bounded. An unbounded retry policy on a queue that only fills when
