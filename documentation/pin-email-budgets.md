@@ -202,6 +202,40 @@ an operational condition a client can do nothing clever about.
 ability to switch the ceiling off by causing the failure that produces it. It is
 a visible, recoverable outage rather than a silently removed ceiling.
 
+## Delivery provider
+
+Brevo, through its transactional email **REST API** (`POST /v3/smtp/email`)
+rather than SMTP. The reasons are deployment-shaped: the API is HTTPS on 443, so
+it does not depend on outbound SMTP ports that VPS providers commonly block, and a
+VPS with a static public IP needs its address authorized in Brevo once instead of
+being re-authorized every time an ephemeral egress address changes.
+
+The sender classifies what Brevo returned:
+
+| Outcome                                             | Marker         | Global slot |
+| --------------------------------------------------- | -------------- | ----------- |
+| 2xx                                                 | success        | kept        |
+| 4xx, including 401/403/IP rejection and 429         | `NotAttempted` | refunded    |
+| 5xx                                                 | attempted      | kept        |
+| DNS, dial or TLS handshake failure                  | `NotAttempted` | refunded    |
+| timeout, reset or write failure after the request   | attempted      | kept        |
+
+A 4xx is evidence that Brevo did not accept the message, so returning the slot
+is safe. It is not evidence that no socket was opened, which is why the marker's
+meaning is "no delivery was accepted" rather than "the provider was never
+contacted".
+
+At startup, `BrevoSender.Check` calls `GET /v3/account`. A 401/403 stops the
+process, because a wrong key or an unauthorized source address will not repair
+itself and would make every PIN issuance fail. A network error or 5xx is logged
+and the API still starts; mail being unavailable must not take down endpoints
+that do not send it.
+
+A 2xx means Brevo accepted the message, not that it reached the mailbox. Bounce,
+blocked and spam outcomes are only visible through Brevo's event webhooks, which
+this application does not consume. That is a known gap, not something the sender
+pretends to know.
+
 ## The sender contract
 
 `email.Sender` has one method, `Send(ctx, Message) error`.
@@ -213,12 +247,12 @@ treated as attempted**, which is the safe direction.
 
 Reporting this from the sender rather than inferring it keeps provider-specific
 knowledge — which failures prove non-delivery — inside whichever sender is
-eventually written, where it can be decided against real responses instead of
+chosen, where it can be decided against real responses instead of
 guessed at in the budget.
 
-`UnconfiguredSender` reports `NotAttempted`. Every non-development build is wired
-with it, so every PIN email it is asked to deliver fails. If that failure looked
-like a failed delivery,
+`UnconfiguredSender` reports `NotAttempted`. A non-development build that has not
+chosen a provider is wired with it, so every PIN email it is asked to deliver
+fails. If that failure looked like a failed delivery,
 each attempt would consume a slot of the deployment-wide budget while delivering
 nothing, and a staging deployment would exhaust the budget meant to protect a
 real provider account before anyone had chosen a provider. It makes no network
@@ -231,9 +265,10 @@ other.
 
 ## What is deliberately not here
 
-- **No provider.** Brevo is a candidate, not a decision. Selecting and integrating
-  one would change `email.Sender`'s implementation and nothing here: the budget,
-  the namespaces, the ordering and the refund rule would all be unchanged.
+- **No provider logic inside the budget.** The provider is selected behind
+  `email.Sender`, so the budget, the namespaces, the ordering and the refund rule
+  are unchanged. A provider rejection that proves the message was not accepted is
+  reported as `NotAttempted`; an ambiguous failure keeps its slot.
 - **No migration, no outbox, no queue, and no send-before-persist.** The database
   issuance ordering and the one-active-PIN constraint stay as they are. The code is
   persisted before the sender is called, which is exactly what makes the global
@@ -262,8 +297,9 @@ which is a schema and security change of its own. It is recorded rather than fix
 | Fixed-window limiter   | `internal/ratelimit/limiter.go`             |
 | Budget, namespaces     | `internal/email/budget.go`                  |
 | Sender marker          | `internal/email/budget.go`, `sender.go`     |
-| Configuration          | `internal/config/email_budget.go`           |
-| Wiring                 | `cmd/api/main.go`, `internal/api/auth/module.go` |
+| Senders                | `internal/email/{dev,brevo,unconfigured}_sender.go` |
+| Configuration          | `internal/config/email_budget.go`, `email_sender.go` |
+| Wiring                 | `cmd/api/main.go`, `cmd/api/email_sender.go`, `internal/api/auth/module.go` |
 | Feature interfaces     | `internal/api/auth/registration/types.go`, `.../password_reset/types.go` |
 | Fakes                  | `internal/testutil/pin_email_budget.go`     |
 

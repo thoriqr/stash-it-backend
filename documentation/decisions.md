@@ -707,3 +707,26 @@ searchable as part of this feature.
     extraction contract and in the database, and the API reports it as a string so
     no client routes money through a floating point value. Price tracking, history,
     alerts and currency conversion are out of scope.
+
+## Email delivery
+
+66. **Brevo is the email provider, through its REST API rather than SMTP.** The
+    application calls `POST https://api.brevo.com/v3/smtp/email` with the API key
+    in the `api-key` header. HTTPS on 443 avoids outbound SMTP port restrictions
+    that VPS providers commonly apply, and a static VPS address is authorized in
+    Brevo once instead of being re-authorized whenever an ephemeral egress address
+    changes. The base URL is not configurable: the API key travels with every
+    request, so an environment variable would let a deployment send it to a host
+    nobody intended.
+
+    The sender's marker follows what the provider proved: a 4xx, including a wrong
+    key, an unauthorized IP, an exhausted quota and a 429, means no message was
+    accepted, so the global budget slot is refunded; a 5xx, timeout, reset or write
+    failure after the request is ambiguous and keeps its slot. `GET /v3/account`
+    runs at startup, and a 401/403 refuses to boot because a wrong key or blocked
+    IP will not repair itself. Other startup failures are logged and the API
+    starts, because mail being unavailable must not take down endpoints that do
+    not send it. Persist-before-send and the budget ordering are unchanged. A 2xx
+    means Brevo accepted the message, not that it was delivered; bounce, blocked
+    and spam outcomes require webhooks, which this application does not consume
+    yet.

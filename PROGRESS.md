@@ -15,15 +15,15 @@ left. It does not describe how anything works and it does not hold rules.
 | Design decisions                      | `documentation/decisions.md`          |
 | History                               | `git log`                             |
 
-_State as of the last recorded entry: 2026-11-09._
+_State as of the last recorded entry: 2026-11-11._
 
 ## Summary
 
 The backend covers steps 1 to 3 of the roadmap in `product.md`: authentication,
 saving, the Inbox, collections, search, and enrichment with automatic
-organization. What remains is **deployment** (hosting platform and email provider
-are not chosen), **client catch-up** (Flutter is behind several backend changes),
-and a **hardening backlog**.
+organization. What remains is **deployment** (hosting platform is not chosen;
+Brevo is selected for email), **client catch-up** (Flutter is behind several
+backend changes), and a **hardening backlog**.
 
 ## Done
 
@@ -92,8 +92,12 @@ each needs information only a chosen environment can supply.
 - [ ] Verify forwarding-header behaviour on a deployed instance, then set
       `CLIENT_IP_SOURCE` and `TRUSTED_PROXIES` from what was observed. Left at
       the default behind a proxy, every client shares one counter.
-- [ ] Choose the email provider (Brevo is a candidate). Until then non-development
-      builds use `email.NewUnconfiguredSender()`, which errors on send.
+- [x] Choose the email provider: Brevo REST API v3
+      (`internal/email/brevo_sender.go`).
+- [ ] Configure Brevo for the deployment: authenticate the sender domain
+      (SPF/DKIM/DMARC), create the API key, authorize the VPS static IP, and set
+      `EMAIL_PROVIDER=brevo` with `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` and
+      `EMAIL_FROM_NAME`.
 - [ ] Confirm Redis availability and TLS. Limiters fail closed, so an outage
       blocks login, Google authentication, PIN issuance and refresh.
 - [ ] Size `PASSWORD_WORK_CONCURRENCY` and the Argon2id parameters to the real

@@ -68,6 +68,15 @@ type Config struct {
 	// requiring a release.
 	PINEmailBudget PINEmailBudget
 
+	// EmailSender is how outbound mail leaves the process.
+	//
+	// It is loaded and validated here rather than at the composition root so a
+	// deployment that names a provider but cannot use it refuses to start. The
+	// alternative is a process that serves every other route while every PIN
+	// issuance fails, which looks like a working deployment until somebody tries
+	// to register.
+	EmailSender EmailSenderConfig
+
 	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
 	// external scheduler calls and which no user credential reaches.
 	//
@@ -160,6 +169,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	emailSender, err := loadEmailSender(appEnv)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -176,6 +190,8 @@ func Load() (Config, error) {
 		PasswordWorkWait:        passwordWorkWait,
 
 		PINEmailBudget: pinEmailBudget,
+
+		EmailSender: emailSender,
 
 		SessionCleanupSecret: sessionCleanupSecret,
 	}, nil

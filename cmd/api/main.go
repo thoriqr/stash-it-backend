@@ -123,12 +123,11 @@ func main() {
 		cfg.GoogleDesktopClientID,
 	)
 
-	var emailSender email.Sender
+	emailSender, err := newEmailSender(ctx, cfg, log)
+	if err != nil {
+		log.Error("email sender unavailable at startup", zap.Error(err))
 
-	if cfg.AppEnv == "development" {
-		emailSender = email.NewDevSender(log)
-	} else {
-		emailSender = email.NewUnconfiguredSender()
+		return
 	}
 
 	// The queue client the API uses for one thing only: putting a saved item id on
@@ -355,6 +354,12 @@ func main() {
 		zap.String("client_ip_source", string(cfg.ClientIPSource)),
 		zap.Strings("trusted_proxies", proxySettings.Proxies),
 		zap.String("proxy_header", proxySettings.ProxyHeader),
+		// The provider and the sender identity are recorded because they decide
+		// whether registration can work at all, and a deployment that resolved a
+		// different one from what it expected would otherwise leave no trace. The
+		// API key is deliberately absent; the identity is not a secret.
+		zap.String("email_provider", string(cfg.EmailSender.Provider)),
+		zap.String("email_from", cfg.EmailSender.FromAddress),
 		// Whether the maintenance route can be called at all, never the secret
 		// itself. An absent secret is an ordinary deployment: the route stays
 		// registered and refuses every request, so the useful thing to record is
