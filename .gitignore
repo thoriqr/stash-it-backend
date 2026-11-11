@@ -21,6 +21,9 @@ coverage.html
 .idea/
 *.iml
 
+# Local agent taste preferences (auto-updated)
+.commandcode/taste/
+
 # OS
 .DS_Store
 Thumbs.db
