@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -107,14 +105,8 @@ func Load() (Config, error) {
 		appEnv = "development"
 	}
 
-	envFile := fmt.Sprintf(".env.%s", appEnv)
-
-	if err := godotenv.Load(envFile); err != nil {
-		return Config{}, fmt.Errorf(
-			"failed to load environment file %q: %w",
-			envFile,
-			err,
-		)
+	if err := loadEnvFile(appEnv); err != nil {
+		return Config{}, err
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")

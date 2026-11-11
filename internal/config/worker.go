@@ -1,12 +1,9 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
-
-	"github.com/joho/godotenv"
 )
 
 // WorkerConfig is the configuration cmd/worker loads. It is a separate type
@@ -70,28 +67,19 @@ const (
 // LoadWorker reads the worker configuration from the environment.
 //
 // It follows the same convention as Load: APP_ENV selects .env.<APP_ENV>, and
-// the file is read from the working directory the same way. One deliberate
-// difference is that a missing env file is not an error here. godotenv does not
-// override variables that are already set, so a deployment that supplies real
-// environment variables (Cloud Run, a systemd unit, a container) works without a
-// checked-in or mounted file, while local development still picks up .env
-// automatically. Config.Load keeps its stricter behavior for the API and was
-// not changed.
+// the file is read from the working directory the same way. A missing env file
+// is not an error for either loader: godotenv does not override variables that
+// are already set, so a deployment that supplies real environment variables
+// (a systemd unit, a container or a hosting platform) works without a checked-in
+// or mounted file, while local development still picks up .env automatically.
 func LoadWorker() (WorkerConfig, error) {
 	appEnv := os.Getenv("APP_ENV")
 	if appEnv == "" {
 		appEnv = "development"
 	}
 
-	envFile := fmt.Sprintf(".env.%s", appEnv)
-
-	if err := godotenv.Load(envFile); err != nil &&
-		!errors.Is(err, os.ErrNotExist) {
-		return WorkerConfig{}, fmt.Errorf(
-			"failed to load environment file %q: %w",
-			envFile,
-			err,
-		)
+	if err := loadEnvFile(appEnv); err != nil {
+		return WorkerConfig{}, err
 	}
 
 	workerConcurrency, err := loadWorkerConcurrency()
