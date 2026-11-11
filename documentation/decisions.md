@@ -730,3 +730,24 @@ searchable as part of this feature.
     means Brevo accepted the message, not that it was delivered; bounce, blocked
     and spam outcomes require webhooks, which this application does not consume
     yet.
+
+## Observability
+
+67. **Sentry receives unexpected server faults and panics, not expected
+    outcomes.** `AppError.Reportable()` is true only for a 5xx other than 503.
+    A 4xx is an outcome the API exists to produce, and a 503 is known
+    operational unavailability (Redis, password-work capacity, email delivery),
+    so neither reaches Sentry. The structured logger still records every error;
+    Sentry is additive and its event id is added to the log line when one is
+    produced.
+
+    `SENTRY_DSN` is optional. An empty value disables the reporter, which is how
+    local development and a deployment that has not created a project behave.
+    The reporter never attaches the raw request: no body, query string, cookie
+    or header is sent, because those can carry a password, PIN or continuation
+    token. Panics are captured through Fiber's recoverer, where the panic value
+    and stack still exist, rather than through the error handler, which only
+    sees the resulting `*fiber.Error`. `Internal` and `InternalWith` capture the
+    caller stack and expose it through `StackTrace()`, which Sentry uses instead
+    of the capture point; a 4xx and a 503 carry no stack. Worker capture is not
+    wired yet; the current scope is HTTP 500 and panic only.

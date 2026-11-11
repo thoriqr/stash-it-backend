@@ -3,6 +3,7 @@ module github.com/thoriqr/stash-it-backend
 go 1.27.0
 
 require (
+	github.com/getsentry/sentry-go v0.50.0
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/gofiber/contrib/v3/swaggo v1.0.11
 	github.com/gofiber/fiber/v3 v3.5.0

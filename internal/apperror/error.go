@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"runtime"
 	"time"
 )
 
@@ -42,6 +43,18 @@ type AppError struct {
 	Message string
 	Fields  []ErrorField
 	Err     error
+
+	// stack is the caller stack of an internal error, captured where
+	// Internal or InternalWith was called.
+	//
+	// It exists for error reporters, not for the response. Sentry's
+	// ExtractStacktrace recognizes a StackTrace() []uintptr method and uses it
+	// instead of the stack at the capture point, which would otherwise point at
+	// the HTTP boundary rather than the repository or service that failed.
+	//
+	// It is empty for every 4xx and for 503, so the cost of capturing a stack is
+	// paid only when an unexpected fault actually occurs.
+	stack []uintptr
 
 	// retryAfterSeconds, when set, is written to the response as a `Retry-After`
 	// header.
@@ -106,6 +119,34 @@ func (e *AppError) Error() string {
 
 func (e *AppError) Unwrap() error {
 	return e.Err
+}
+
+// StackTrace returns the callers of the internal constructor that created this
+// error, or nil for a client or operational error.
+//
+// The method is an error-reporter hook rather than an API concern. Sentry's
+// ExtractStacktrace recognizes it and uses the frames it returns, which makes
+// the reported stack start at the repository or service that failed instead of
+// at the HTTP handler that captured the error.
+func (e *AppError) StackTrace() []uintptr {
+	return e.stack
+}
+
+// Reportable reports whether this error is an unexpected fault worth sending to
+// an error reporter.
+//
+// The rule is deliberately one line: a 5xx is a fault, except 503, which this
+// application uses for known operational unavailability such as an unreachable
+// limiter, exhausted password-work capacity, or a provider that could not be
+// reached. Capturing those would turn a Redis outage into a flood of identical
+// events that say nothing about a defect.
+//
+// 4xx is never reportable. Those are outcomes the API is supposed to produce:
+// validation, missing credentials, ownership failures, conflicts and rate
+// limits. The logger still records every one of them.
+func (e *AppError) Reportable() bool {
+	return e.Status >= http.StatusInternalServerError &&
+		e.Status != http.StatusServiceUnavailable
 }
 
 func FromError(err error) *AppError {
@@ -381,12 +422,15 @@ func ServiceUnavailableWithRetryAfter(
 
 // Internal returns a generic 500 Internal Server Error.
 func Internal(err error) *AppError {
-	return New(
+	appErr := New(
 		http.StatusInternalServerError,
 		CodeInternal,
 		MessageInternal,
 		err,
 	)
+	appErr.stack = captureStack(3)
+
+	return appErr
 }
 
 func InternalWith(code, message string, err error) *AppError {
@@ -398,10 +442,27 @@ func InternalWith(code, message string, err error) *AppError {
 		message = MessageInternal
 	}
 
-	return New(
+	appErr := New(
 		http.StatusInternalServerError,
 		code,
 		message,
 		err,
 	)
+	appErr.stack = captureStack(3)
+
+	return appErr
+}
+
+// captureStack records the caller frames above this helper.
+//
+// The skip count is a property of the call shape: 0 is runtime.Callers, 1 is
+// this helper, 2 is Internal or InternalWith, and 3 is the repository or
+// service that called it. Changing either constructor to call a shared helper
+// changes the depth and would need this value revisited; the test that asserts
+// the first frame is the caller exists to catch that.
+func captureStack(skip int) []uintptr {
+	pcs := make([]uintptr, 64)
+	n := runtime.Callers(skip, pcs)
+
+	return pcs[:n]
 }

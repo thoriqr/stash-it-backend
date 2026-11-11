@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	swaggo "github.com/gofiber/contrib/v3/swaggo"
 	"github.com/gofiber/fiber/v3"
@@ -30,6 +31,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/health"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
+	"github.com/thoriqr/stash-it-backend/internal/observability"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
@@ -78,6 +80,24 @@ func main() {
 		_ = log.Sync()
 	}()
 
+	// Sentry is optional and additive. An empty SENTRY_DSN leaves the reporter
+	// disabled, so local development behaves exactly as it did before; the
+	// structured logger remains the only error sink in that case.
+	sentryReporter, err := observability.Init(observability.Config{
+		DSN:              cfg.Sentry.DSN,
+		Environment:      cfg.Sentry.Environment,
+		Release:          cfg.Sentry.Release,
+		SampleRate:       cfg.Sentry.SampleRate,
+		TracesSampleRate: cfg.Sentry.TracesSampleRate,
+		Debug:            cfg.Sentry.Debug,
+	}, log)
+	if err != nil {
+		log.Warn("sentry disabled", zap.Error(err))
+
+		sentryReporter = observability.Disabled(log)
+	}
+	defer sentryReporter.Flush(2 * time.Second)
+
 	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fmt.Println("Database error:", err)
@@ -100,7 +120,7 @@ func main() {
 	proxySettings := cfg.ProxySettings()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler:       httpx.NewErrorHandler(log),
+		ErrorHandler:       httpx.NewErrorHandlerWithReporter(log, sentryReporter),
 		StructValidator:    validate,
 		TrustProxy:         proxySettings.TrustProxy,
 		TrustProxyConfig:   fiber.TrustProxyConfig{Proxies: proxySettings.Proxies},
@@ -108,7 +128,23 @@ func main() {
 		EnableIPValidation: proxySettings.EnableIPValidation,
 	})
 
-	app.Use(recoverer.New())
+	// Panics are captured here rather than in the error handler because Fiber
+	// converts them into a *fiber.Error before the handler sees them. The panic
+	// value and its stack are what makes the event useful.
+	//
+	// PanicHandler is overridden so the recoverer returns a plain *fiber.Error
+	// instead of the panic value. The default returns the value itself, which the
+	// error handler would then treat as an unexpected 500 and report a second
+	// time, producing two near-identical panic issues.
+	app.Use(recoverer.New(recoverer.Config{
+		EnableStackTrace: true,
+		StackTraceHandler: func(c fiber.Ctx, recovered any) {
+			sentryReporter.CapturePanic(c, recovered)
+		},
+		PanicHandler: func(_ fiber.Ctx, _ any) error {
+			return fiber.ErrInternalServerError
+		},
+	}))
 	app.Use(requestid.New())
 
 	app.Get("/docs/*", swaggo.New(swaggo.Config{
@@ -345,6 +381,8 @@ func main() {
 	log.Info(
 		"api started",
 		zap.String("app_env", cfg.AppEnv),
+		zap.Bool("sentry_enabled", sentryReporter.Enabled()),
+		zap.String("sentry_environment", cfg.Sentry.Environment),
 		zap.String("addr", listenAddr),
 		// Recorded because it is what any IP-based rate limit keys on, and a
 		// deployment that resolved it differently from what it expected would

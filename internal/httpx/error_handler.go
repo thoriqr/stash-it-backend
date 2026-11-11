@@ -21,7 +21,32 @@ type errorBody struct {
 	Fields  []apperror.ErrorField `json:"fields"`
 }
 
+// ErrorReporter captures an unexpected server fault and returns the reporter's
+// identifier for it, if any. A nil reporter or an empty identifier means the
+// deployment has no reporter configured.
+//
+// The interface lives here rather than in the reporter package so this package
+// names what it consumes and does not depend on Sentry.
+type ErrorReporter interface {
+	CaptureHTTP(
+		c fiber.Ctx,
+		appErr *apperror.AppError,
+	) string
+}
+
+// NewErrorHandler builds the handler without an error reporter. It is the form
+// every test that is not about reporting uses.
 func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
+	return NewErrorHandlerWithReporter(log, nil)
+}
+
+// NewErrorHandlerWithReporter builds the handler with an optional error
+// reporter. A nil reporter and a disabled reporter behave identically: every
+// error is logged and none is reported.
+func NewErrorHandlerWithReporter(
+	log *zap.Logger,
+	reporter ErrorReporter,
+) fiber.ErrorHandler {
 	return func(c fiber.Ctx, err error) error {
 		var fiberErr *fiber.Error
 
@@ -30,6 +55,16 @@ func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
 		}
 
 		appErr := apperror.FromError(err)
+
+		// Capture before logging so the log line can carry the event id. The
+		// policy lives on the error: a 5xx is a fault, a 4xx is an expected
+		// outcome, and a 503 is known operational unavailability rather than a
+		// defect.
+		var sentryEventID string
+
+		if appErr.Reportable() && reporter != nil {
+			sentryEventID = reporter.CaptureHTTP(c, appErr)
+		}
 
 		requestID := requestid.FromContext(c)
 
@@ -40,6 +75,13 @@ func NewErrorHandler(log *zap.Logger) fiber.ErrorHandler {
 			zap.Int("status", appErr.Status),
 			zap.String("code", appErr.Code),
 			zap.Error(err),
+		}
+
+		if sentryEventID != "" {
+			fields = append(
+				fields,
+				zap.String("sentry_event_id", sentryEventID),
+			)
 		}
 
 		if appErr.Status >= 500 {

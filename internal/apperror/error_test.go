@@ -3,6 +3,7 @@ package apperror_test
 import (
 	"errors"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -149,4 +150,155 @@ func TestTooManyRequestsWithRetryAfter_IsUnchanged(t *testing.T) {
 
 	require.NotNil(t, appErr.RetryAfterSeconds())
 	require.Equal(t, 90, *appErr.RetryAfterSeconds())
+}
+
+// What an error reporter should receive.
+//
+// The boundary is the HTTP status rather than the constructor: an unexpected
+// 5xx is a defect, a 4xx is an outcome the API exists to produce, and a 503 is
+// known operational unavailability. Sending the last two would make a Redis
+// outage or a burst of bad input look like a bug.
+func TestAppError_ReportableIsLimitedToUnexpectedServerFaults(t *testing.T) {
+	underlying := errors.New("database is unavailable")
+
+	cases := map[string]struct {
+		appErr *apperror.AppError
+		want   bool
+	}{
+		"internal fault": {
+			appErr: apperror.Internal(underlying),
+			want:   true,
+		},
+		"custom internal fault": {
+			appErr: apperror.InternalWith(
+				"CUSTOM_INTERNAL",
+				"internal failure",
+				underlying,
+			),
+			want: true,
+		},
+		"plain error converted to internal": {
+			appErr: apperror.FromError(underlying),
+			want:   true,
+		},
+		"service unavailable": {
+			appErr: apperror.ServiceUnavailable(underlying),
+			want:   false,
+		},
+		"service unavailable with wait": {
+			appErr: apperror.ServiceUnavailableWithRetryAfter(
+				"CAPACITY_UNAVAILABLE",
+				"busy",
+				time.Second,
+				underlying,
+			),
+			want: false,
+		},
+		"bad request": {
+			appErr: apperror.BadRequest(underlying),
+			want:   false,
+		},
+		"validation": {
+			appErr: apperror.Validation(nil, underlying),
+			want:   false,
+		},
+		"unauthorized": {
+			appErr: apperror.Unauthorized(underlying),
+			want:   false,
+		},
+		"forbidden": {
+			appErr: apperror.Forbidden(underlying),
+			want:   false,
+		},
+		"not found": {
+			appErr: apperror.NotFound(underlying),
+			want:   false,
+		},
+		"conflict": {
+			appErr: apperror.Conflict(underlying),
+			want:   false,
+		},
+		"too many requests": {
+			appErr: apperror.TooManyRequests(underlying),
+			want:   false,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, tc.appErr.Reportable())
+		})
+	}
+}
+
+//go:noinline
+func internalErrorFromHelper() *apperror.AppError {
+	return apperror.Internal(errors.New("database is unavailable"))
+}
+
+//go:noinline
+func internalWithErrorFromHelper() *apperror.AppError {
+	return apperror.InternalWith(
+		"CUSTOM_INTERNAL",
+		"internal failure",
+		errors.New("database is unavailable"),
+	)
+}
+
+// The stack an internal error carries starts at the caller of the constructor,
+// not at the constructor itself and not at the HTTP handler that later reports
+// it. This is what lets Sentry point at the repository or service line that
+// failed.
+func TestInternal_CapturesTheCallerStack(t *testing.T) {
+	pcs := internalErrorFromHelper().StackTrace()
+
+	require.NotEmpty(t, pcs)
+
+	frames := runtime.CallersFrames(pcs)
+	first, _ := frames.Next()
+
+	require.Contains(t, first.Function, "internalErrorFromHelper")
+	require.NotContains(t, first.Function, "apperror.Internal")
+}
+
+func TestInternalWith_CapturesTheCallerStack(t *testing.T) {
+	pcs := internalWithErrorFromHelper().StackTrace()
+
+	require.NotEmpty(t, pcs)
+
+	frames := runtime.CallersFrames(pcs)
+	first, _ := frames.Next()
+
+	require.Contains(t, first.Function, "internalWithErrorFromHelper")
+	require.NotContains(t, first.Function, "apperror.InternalWith")
+}
+
+// Capturing a stack is reserved for unexpected faults. A 4xx or a 503 is an
+// outcome the API is supposed to produce, and paying for a stack there would be
+// wasted work on every rejected request.
+func TestAppError_ExpectedOutcomesCarryNoStack(t *testing.T) {
+	cases := map[string]*apperror.AppError{
+		"bad request":  apperror.BadRequest(errors.New("bad")),
+		"validation":   apperror.Validation(nil, errors.New("bad")),
+		"unauthorized": apperror.Unauthorized(nil),
+		"forbidden":    apperror.Forbidden(nil),
+		"not found":    apperror.NotFound(nil),
+		"conflict":     apperror.Conflict(nil),
+		"rate limit":   apperror.TooManyRequests(nil),
+		"service unavailable": apperror.ServiceUnavailable(
+			errors.New("redis down"),
+		),
+		"service unavailable with wait": apperror.ServiceUnavailableWithRetryAfter(
+			"CAPACITY_UNAVAILABLE",
+			"busy",
+			time.Second,
+			nil,
+		),
+	}
+
+	for name, appErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.Empty(t, appErr.StackTrace())
+		})
+	}
 }

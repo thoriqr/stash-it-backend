@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,42 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 )
+
+type fakeErrorReporter struct {
+	mutex    sync.Mutex
+	captured []*apperror.AppError
+	eventID  string
+}
+
+func (r *fakeErrorReporter) CaptureHTTP(
+	_ fiber.Ctx,
+	appErr *apperror.AppError,
+) string {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	r.captured = append(r.captured, appErr)
+
+	return r.eventID
+}
+
+func (r *fakeErrorReporter) count() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	return len(r.captured)
+}
+
+func (r *fakeErrorReporter) last() *apperror.AppError {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	if len(r.captured) == 0 {
+		return nil
+	}
+
+	return r.captured[len(r.captured)-1]
+}
 
 // Retry-After is the one header this handler writes, and it is written only when
 // the error it was handed was built carrying a wait.
@@ -28,10 +65,23 @@ import (
 func testApp(t *testing.T, appErr error) *fiber.App {
 	t.Helper()
 
+	return testAppWithReporter(t, appErr, nil)
+}
+
+func testAppWithReporter(
+	t *testing.T,
+	appErr error,
+	reporter httpx.ErrorReporter,
+) *fiber.App {
+	t.Helper()
+
 	app := fiber.New(fiber.Config{
 		// The handler logs every failure it writes, and what is under test here is
 		// the response rather than the log line, so the records go nowhere.
-		ErrorHandler: httpx.NewErrorHandler(zap.NewNop()),
+		ErrorHandler: httpx.NewErrorHandlerWithReporter(
+			zap.NewNop(),
+			reporter,
+		),
 	})
 
 	app.Get("/fail", func(_ fiber.Ctx) error {
@@ -195,4 +245,78 @@ func decodeError(t *testing.T, resp *http.Response) errorEnvelope {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 
 	return body
+}
+
+// An unexpected server fault is reported. This is the only HTTP category the
+// reporter receives, and the event id it returns is what the log line carries.
+func TestErrorHandler_ReportsAnInternalFault(t *testing.T) {
+	reporter := &fakeErrorReporter{eventID: "event-123"}
+
+	resp := doRequest(t, testAppWithReporter(
+		t,
+		apperror.Internal(errors.New("database is unavailable")),
+		reporter,
+	))
+
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	require.Equal(t, 1, reporter.count())
+	require.Equal(t, apperror.CodeInternal, reporter.last().Code)
+}
+
+// A plain error that was never an AppError becomes a 500 and is reported for the
+// same reason: it is a fault nothing in the application named.
+func TestErrorHandler_ReportsAPlainErrorAsAnInternalFault(t *testing.T) {
+	reporter := &fakeErrorReporter{}
+
+	resp := doRequest(t, testAppWithReporter(
+		t,
+		errors.New("something went wrong"),
+		reporter,
+	))
+
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	require.Equal(t, 1, reporter.count())
+}
+
+// Everything the API is supposed to answer with stays out of the reporter. A
+// Redis outage is a 503, and a burst of bad input is a 4xx; neither is a defect,
+// and sending them would bury real faults under expected traffic.
+func TestErrorHandler_DoesNotReportExpectedOutcomes(t *testing.T) {
+	cases := map[string]*apperror.AppError{
+		"bad request":  apperror.BadRequest(errors.New("bad")),
+		"validation":   apperror.Validation(nil, errors.New("bad")),
+		"unauthorized": apperror.Unauthorized(nil),
+		"forbidden":    apperror.Forbidden(nil),
+		"not found":    apperror.NotFound(nil),
+		"conflict":     apperror.Conflict(nil),
+		"rate limit":   apperror.TooManyRequests(nil),
+		"service unavailable": apperror.ServiceUnavailable(
+			errors.New("redis down"),
+		),
+		"service unavailable with wait": apperror.ServiceUnavailableWithRetryAfter(
+			"CAPACITY_UNAVAILABLE",
+			"busy",
+			time.Second,
+			nil,
+		),
+	}
+
+	for name, appErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			reporter := &fakeErrorReporter{}
+
+			resp := doRequest(t, testAppWithReporter(
+				t,
+				appErr,
+				reporter,
+			))
+
+			require.Equal(t, appErr.Status, resp.StatusCode)
+			require.Zero(
+				t,
+				reporter.count(),
+				"an expected outcome must not reach the reporter",
+			)
+		})
+	}
 }

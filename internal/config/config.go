@@ -77,6 +77,11 @@ type Config struct {
 	// to register.
 	EmailSender EmailSenderConfig
 
+	// Sentry is the optional error reporter. An empty DSN disables it, which is
+	// an ordinary state for local development and for a deployment that has not
+	// created a Sentry project yet.
+	Sentry SentryConfig
+
 	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
 	// external scheduler calls and which no user credential reaches.
 	//
@@ -174,6 +179,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	sentry, err := loadSentry(appEnv)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -192,6 +202,8 @@ func Load() (Config, error) {
 		PINEmailBudget: pinEmailBudget,
 
 		EmailSender: emailSender,
+
+		Sentry: sentry,
 
 		SessionCleanupSecret: sessionCleanupSecret,
 	}, nil

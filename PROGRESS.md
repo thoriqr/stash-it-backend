@@ -67,6 +67,18 @@ backend changes), and a **hardening backlog**.
 | Per-user budgets on `POST /saved-items` and `/enrich`       | done, thresholds unmeasured  | `internal/middleware`                      |
 | Bounded Argon2id capacity (`PASSWORD_WORK_CONCURRENCY`)     | done                         | `internal/security`                        |
 
+### Observability
+
+| Area                                                    | State       | Reference                                      |
+| ------------------------------------------------------- | ----------- | ---------------------------------------------- |
+| Sentry HTTP 500 and panic reporting, optional DSN       | done        | `internal/observability`, `internal/httpx`     |
+| Origin stack trace for `Internal`/`InternalWith` errors | done        | `internal/apperror/error.go`                   |
+| Worker failure reporting                                | not started | `cmd/worker`, `internal/worker`                |
+
+The debug routes used to verify the reporter were development-only and have been
+removed. Sentry is optional: an empty `SENTRY_DSN` leaves the logger as the only
+error sink.
+
 Migrations recorded as applied to the development database: `000025`, `000026`.
 The state of `000027` to `000029` is not recorded here.
 
@@ -85,8 +97,8 @@ The state of `000027` to `000029` is not recorded here.
 
 ### Blocked on a deployment decision
 
-Hosting platform and email provider are not selected. Nothing here is a code gap;
-each needs information only a chosen environment can supply.
+Hosting platform is not selected. Nothing here is a code gap; each needs
+information only a chosen environment can supply.
 
 - [ ] Choose the hosting platform.
 - [ ] Verify forwarding-header behaviour on a deployed instance, then set
@@ -98,6 +110,9 @@ each needs information only a chosen environment can supply.
       (SPF/DKIM/DMARC), create the API key, authorize the VPS static IP, and set
       `EMAIL_PROVIDER=brevo` with `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` and
       `EMAIL_FROM_NAME`.
+- [ ] Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT=production` on the VPS. An empty
+      DSN disables reporting; HTTP 500 and panic are the only events currently
+      captured.
 - [ ] Confirm Redis availability and TLS. Limiters fail closed, so an outage
       blocks login, Google authentication, PIN issuance and refresh.
 - [ ] Size `PASSWORD_WORK_CONCURRENCY` and the Argon2id parameters to the real
@@ -132,6 +147,8 @@ The two breaking changes must ship with, or before, the backend.
 
 ### Backend backlog
 
+- [ ] Capture worker failures in Sentry: panics, exhausted retries, and
+      integrity/programming failures. HTTP 500 and panic are already covered.
 - [ ] Password reset has no per-address budget on PIN issuance, and the per-IP
       budget does not bound guessing across several codes for one address. A
       threshold was deliberately not invented.
