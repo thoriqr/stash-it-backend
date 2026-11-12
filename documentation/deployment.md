@@ -52,9 +52,17 @@ installation—is outside this document.
 the service user. `config.Load()` reads `.env.<APP_ENV>` from the process working
 directory, and the systemd units set `WorkingDirectory=/opt/stash-it`.
 
-```env
-APP_ENV=production
+**`APP_ENV` must be supplied by the systemd unit, not by this file.** The loader
+reads `APP_ENV` from the process environment to decide which file to load, so a
+value inside `.env.production` is read only after that decision has already been
+made. With no `APP_ENV` in the environment the loader defaults to `development`,
+looks for `.env.development`, finds nothing, and starts with every variable
+missing — the first symptom is `Config error: DATABASE_URL is required` even
+though the file is correct. Both units below therefore set
+`Environment=APP_ENV=production`. An `APP_ENV` line inside the file is harmless
+but does nothing, so the sample below omits it to avoid implying otherwise.
 
+```env
 DATABASE_URL=postgres://<NEON_USER>:<NEON_PASSWORD>@<NEON_DIRECT_HOST>/<NEON_DB>?sslmode=require
 REDIS_URL=redis://:<STRONG_REDIS_PASSWORD>@127.0.0.1:6379/0
 
@@ -105,6 +113,8 @@ Configuration constraints:
 - **Neon must be PostgreSQL 18.** The migrations use the built-in `uuidv7()`
   column default. PostgreSQL 17 and earlier fail with
   `function uuidv7() does not exist`.
+- **`APP_ENV` comes from the systemd unit**, not from `.env.production`. See
+  Configuration for why the file cannot select itself.
 - Choose the Neon region nearest the VPS. Free-plan computes suspend after about
   five minutes of inactivity and wake in a few hundred milliseconds; the API
   startup `Ping` wakes the compute.
@@ -241,6 +251,8 @@ Wants=network-online.target
 Type=simple
 User=stashit
 Group=stashit
+# Selects .env.production. It cannot come from the file itself; see Configuration.
+Environment=APP_ENV=production
 WorkingDirectory=/opt/stash-it
 ExecStart=/opt/stash-it/bin/stash-it-api
 Restart=on-failure
@@ -268,6 +280,8 @@ Wants=network-online.target
 Type=simple
 User=stashit
 Group=stashit
+# Selects .env.production. It cannot come from the file itself; see Configuration.
+Environment=APP_ENV=production
 WorkingDirectory=/opt/stash-it
 ExecStart=/opt/stash-it/bin/stash-it-worker
 Restart=on-failure
@@ -324,7 +338,12 @@ External services:
 
 - **Brevo** — authenticate the sending domain, verify `EMAIL_FROM_ADDRESS`,
   create a transactional API key, and authorize the VPS IP. Keep
-  `PIN_EMAIL_BUDGET_GLOBAL_MAX` below the plan's daily quota.
+  `PIN_EMAIL_BUDGET_GLOBAL_MAX` below the plan's daily quota. Brevo binds a key
+  to an IP allowlist once one is configured, so the API refuses to start with
+  `brevo rejected the api key or the caller's ip address` until the VPS address
+  is added at `app.brevo.com/security/authorised_ips`. The startup check is
+  deliberate: a key that cannot send is a deployment that cannot register
+  anybody.
 - **Sentry** — optional. Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT`; an empty DSN
   disables reporting.
 
@@ -343,6 +362,8 @@ Operational references:
 | Migration fails with `function uuidv7() does not exist` | Neon project is not PostgreSQL 18 | Neon project settings |
 | `pg_dump` fails with a server version mismatch | Client is older than PostgreSQL 18 | `pg_dump --version`; install `postgresql-client-18` |
 | API exits with a config error | `.env.production` is missing from `WorkingDirectory` | `ls -l /opt/stash-it/.env.production` |
+| `Config error: DATABASE_URL is required` although the file is correct | `APP_ENV` is not set in the unit, so the loader looked for `.env.development` | `systemctl cat stash-it-api \| grep Environment` |
+| `email sender unavailable at startup`, Brevo 401 `unrecognised IP address` | The VPS address is not in the key's IP allowlist | `app.brevo.com/security/authorised_ips`, then restart the API |
 | Startup cannot reach PostgreSQL | Wrong Neon URL, SSL mode, region or network | `psql "$DATABASE_URL" -c 'select 1;'`, Neon dashboard |
 | 503s during a Redis outage | Redis is down or unreachable | `systemctl status redis-server`, `redis-cli -a '<PASSWORD>' ping` |
 | First request after idle is slower | Neon scale-to-zero wake-up | Neon compute activity |
