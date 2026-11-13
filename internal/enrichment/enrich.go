@@ -44,6 +44,11 @@ type enricher struct {
 	// policy supplies the response body limit. It is the generic policy, whose
 	// size limit is shared by both transports.
 	policy security.OutboundFetchPolicy
+
+	// youtubeOEmbedURL is the endpoint YouTube metadata is read from. It is a
+	// field so a test can point it at a local server; production always leaves it
+	// at youtubeOEmbedEndpoint.
+	youtubeOEmbedURL string
 }
 
 // enrichAcceptHeader asks for HTML and accepts a little more, so that an XHTML
@@ -92,9 +97,10 @@ func NewEnricherWithTransports(
 	policy security.OutboundFetchPolicy,
 ) *enricher {
 	return &enricher{
-		genericClient:   genericClient,
-		tokopediaClient: tokopediaClient,
-		policy:          policy,
+		genericClient:    genericClient,
+		tokopediaClient:  tokopediaClient,
+		policy:           policy,
+		youtubeOEmbedURL: youtubeOEmbedEndpoint,
 	}
 }
 
@@ -149,6 +155,15 @@ func (e *enricher) Enrich(
 	// whole request, so neither a redirect hop nor the header fallback can move the
 	// fetch to a different client.
 	client := e.clientFor(transportFor(hostname))
+
+	// YouTube is read through oEmbed rather than as HTML, and the reasoning is in
+	// youtube.go. The guarded client is still the one that carries the request, so
+	// this path is subject to the same dialer, redirect limit and size limits as
+	// every other fetch.
+	if videoID, ok := youtubeVideoID(parsed); ok {
+		return e.enrichYouTube(ctx, client, videoID)
+	}
+
 	profiles := requestProfilesFor(hostname)
 
 	var lastFailure error
