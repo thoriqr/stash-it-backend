@@ -15,15 +15,15 @@ left. It does not describe how anything works and it does not hold rules.
 | Design decisions                      | `documentation/decisions.md`          |
 | History                               | `git log`                             |
 
-_State as of the last recorded entry: 2026-11-11._
+_State as of the last recorded entry: 2026-11-14._
 
 ## Summary
 
 The backend covers steps 1 to 3 of the roadmap in `product.md`: authentication,
 saving, the Inbox, collections, search, and enrichment with automatic
-organization. What remains is **deployment** (hosting platform is not chosen;
-Brevo is selected for email), **client catch-up** (Flutter is behind several
-backend changes), and a **hardening backlog**.
+organization, and it now runs in production. What remains is **client catch-up**
+(Flutter is behind several backend changes) and a **hardening backlog**, plus the
+operational tasks a live deployment brings.
 
 ## Done
 
@@ -32,7 +32,7 @@ backend changes), and a **hardening backlog**.
 | Area                                                   | State                        | Reference                              |
 | ------------------------------------------------------ | ---------------------------- | -------------------------------------- |
 | Registration, manual and social, with finalization     | done                         | `internal/api/auth/registration`       |
-| Registration recovery after verification              | done, **uncommitted**        | same                                   |
+| Registration recovery after verification              | done                         | same                                   |
 | Login, manual and Google, with enumeration resistance  | done                         | `internal/api/auth/login`              |
 | Account-link confirmation                              | done                         | same                                   |
 | Sessions: rotation, reuse detection, listing, cleanup  | done                         | `auth-sessions.md`, `session-cleanup.md` |
@@ -57,6 +57,15 @@ backend changes), and a **hardening backlog**.
 | Automatic organization                          | done  | `internal/worker/organization`                     |
 | Guarded outbound fetching                       | done  | `internal/security`                                |
 | Optional product price (amount + currency)      | done  | `internal/enrichment`, `internal/api/enrichment`, `internal/worker/enrichment` |
+| YouTube metadata through oEmbed                 | done  | `internal/enrichment/youtube.go`                   |
+
+YouTube is the one host not read as HTML. Its watch pages are served without any
+Open Graph tags when the request comes from a datacenter address, and with them
+when it comes from a residential one; the same User-Agent produced both, so no
+header recovers the first. oEmbed answers the same question for a few kilobytes
+and is not gated by source address, so `youtube.com`, `youtu.be`, `m.`, `music.`
+and `youtube-nocookie.com` are read through it. Channel, playlist and search URLs
+still take the HTML path. Verified against three live links from the VPS.
 
 ### Abuse protection
 
@@ -75,55 +84,74 @@ backend changes), and a **hardening backlog**.
 | Origin stack trace for `Internal`/`InternalWith` errors | done        | `internal/apperror/error.go`                   |
 | Worker failure reporting                                | not started | `cmd/worker`, `internal/worker`                |
 
-The debug routes used to verify the reporter were development-only and have been
-removed. Sentry is optional: an empty `SENTRY_DSN` leaves the logger as the only
-error sink.
+The reporter is verified on production, not only in development: both a deliberate
+500 and a deliberate panic produced events with a `sentry_event_id` in the log and
+a matching issue in the project, environment `production`.
+
+`internal/api/debug` mounts `POST /debug/sentry/error` and
+`POST /debug/sentry/panic` **only** while `SENTRY_DEBUG=true`. They exist because a
+5xx is otherwise close to unreachable on demand: every bad input is a 4xx and
+every dependency outage is a 503, which is deliberately not reported. With the
+flag false the routes are not registered at all, so a normal deployment has 109
+handlers and no debug surface. Turn the flag on, verify, turn it off.
 
 Migrations recorded as applied to the development database: `000025`, `000026`.
 The state of `000027` to `000029` is not recorded here.
 
 ## In flight
 
-**Uncommitted work.** Run `git status` first; this list may be incomplete.
+Nothing uncommitted. Run `git status` first; this list may be stale.
 
-- Registration recovery: `POST /auth/register/recovery/manual` eligibility,
-  `verification_status` on `POST /auth/register/manual`, migration
-  `000029_add_registration_recovery_purpose`. Verified 2026-10-27.
-- Login timing-test fix in `internal/api/auth/login/` (`types.go`, `service.go`,
-  `dummy_verification_seam_test.go`, `login_rate_limit_service_test.go`).
-  Verified, including `-race` twice.
+Recently landed and deployed: registration recovery (`3fc5405`), the Google
+Desktop OAuth client (`013020c`), YouTube enrichment through oEmbed (`8789c62`),
+and the gated Sentry verification routes (`e5180d9`).
 
 ## Remaining
 
-### Blocked on a deployment decision
+### Deployment
 
-Hosting platform is not selected. Nothing here is a code gap; each needs
-information only a chosen environment can supply.
+Live since 2026-11-13: Tencent Cloud Lighthouse, Singapore, Ubuntu 24.04,
+2 vCPU / 2 GB / 40 GB, behind Caddy on `api.stashit.thoriqr.my.id`. PostgreSQL 18
+is Neon in Singapore; Redis and Caddy run on the VPS; binaries are built on the
+development machine with `CGO_ENABLED=0` and copied over `scp`. Schema is at
+`000031`. The first end-to-end registration delivered a PIN through Brevo, and
+enrichment plus automatic organization ran in the worker.
 
-- [ ] Choose the hosting platform.
-- [ ] Verify forwarding-header behaviour on a deployed instance, then set
-      `CLIENT_IP_SOURCE` and `TRUSTED_PROXIES` from what was observed. Left at
-      the default behind a proxy, every client shares one counter.
+Settled:
+
+- [x] Choose the hosting platform.
 - [x] Choose the email provider: Brevo REST API v3
       (`internal/email/brevo_sender.go`).
-- [ ] Configure Brevo for the deployment: authenticate the sender domain
-      (SPF/DKIM/DMARC), create the API key, authorize the VPS static IP, and set
-      `EMAIL_PROVIDER=brevo` with `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` and
-      `EMAIL_FROM_NAME`.
-- [ ] Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT=production` on the VPS. An empty
-      DSN disables reporting; HTTP 500 and panic are the only events currently
-      captured.
-- [ ] Confirm Redis availability and TLS. Limiters fail closed, so an outage
-      blocks login, Google authentication, PIN issuance and refresh.
+- [x] Configure Brevo: sending domain `stashit.thoriqr.my.id` authenticated,
+      transactional API key created, the VPS address added to the key's IP
+      allowlist. An address outside that list makes the API refuse to start.
+- [x] Set `CLIENT_IP_SOURCE=proxy` with `TRUSTED_PROXIES=127.0.0.1,::1` behind
+      Caddy; confirmed in the startup line.
+- [x] Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT=production`, and verify reporting
+      on production with the gated debug routes.
+- [x] Confirm Redis is reachable with `appendonly yes` and
+      `maxmemory-policy noeviction`.
+- [x] `APP_ENV` is supplied by the systemd unit, not by `.env.production`
+      (`deployment.md`, Configuration).
+
+Open:
+
+- [ ] Configure an external scheduler to call
+      `POST /internal/maintenance/sessions/cleanup` daily
+      (`session-cleanup.md`). `SESSION_CLEANUP_SECRET` is set, so the route is
+      live, but nothing calls it and dead sessions are never removed.
 - [ ] Size `PASSWORD_WORK_CONCURRENCY` and the Argon2id parameters to the real
-      instance.
-- [ ] Decide Cloud Run specifics for the worker.
-- [ ] Set `SESSION_CLEANUP_SECRET` and configure an external scheduler to call
-      `POST /internal/maintenance/sessions/cleanup` daily (`session-cleanup.md`).
-      Nothing in the process schedules it, so until then dead sessions and their
-      refresh tokens are never removed.
+      instance; both are still the conservative defaults.
 - [ ] Replace every rate-limit threshold estimate with a value based on real
       traffic.
+- [ ] Keep `SENTRY_RELEASE` in step with the deployed binary. It is set from a
+      commit that predates the current build.
+- [ ] Watch memory under real load. `stash-it-api` idles around 8 MB and the
+      worker around 3 MB, so 2 GB is ample today; Redis AOF growth and
+      `WORKER_CONCURRENCY` are the levers if that changes.
+- [ ] Re-enrich items saved while YouTube pages were being served without
+      metadata, through `POST /saved-items/:id/enrich`. There is no backfill; it
+      is per item and on demand.
 
 ### Flutter client
 
