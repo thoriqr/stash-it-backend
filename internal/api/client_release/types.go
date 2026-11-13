@@ -33,6 +33,7 @@ type Release struct {
 	SHA256        string
 	FileSizeBytes int64
 	ReleaseNotes  string
+	GitTag        string
 	PublishedAt   time.Time
 }
 

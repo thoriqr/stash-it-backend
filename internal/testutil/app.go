@@ -38,6 +38,11 @@ const TestAccessTokenSecret = "integration-test-access-token-secret"
 // without it.
 const TestSessionCleanupSecret = "integration-test-session-cleanup-secret"
 
+// TestClientReleaseSecret is the maintenance secret the integration test app is
+// built with. It is exported so tests can present the header the release
+// maintenance routes accept.
+const TestClientReleaseSecret = "integration-test-client-release-secret"
+
 // testConfig is the Config every test app starts from unless it is deliberately
 // exercising a different one.
 //
@@ -48,8 +53,9 @@ const TestSessionCleanupSecret = "integration-test-session-cleanup-secret"
 // is not one.
 func testConfig() config.Config {
 	return config.Config{
-		ClientIPSource:      config.ClientIPSourcePeer,
+		ClientIPSource:       config.ClientIPSourcePeer,
 		SessionCleanupSecret: TestSessionCleanupSecret,
+		ClientReleaseSecret:  TestClientReleaseSecret,
 	}
 }
 
@@ -271,10 +277,11 @@ func NewAppWithTrustedProxyAndBudget(
 		pinEmailBudget,
 		NewPasswordWorkLimiter(),
 		config.Config{
-			ClientIPSource:      config.ClientIPSourceProxy,
-			TrustedProxies:      []string{"0.0.0.0"},
-			TrustedProxyHeader:  "X-Forwarded-For",
+			ClientIPSource:       config.ClientIPSourceProxy,
+			TrustedProxies:       []string{"0.0.0.0"},
+			TrustedProxyHeader:   "X-Forwarded-For",
 			SessionCleanupSecret: TestSessionCleanupSecret,
+			ClientReleaseSecret:  TestClientReleaseSecret,
 		},
 	)
 }
@@ -481,6 +488,7 @@ func newApp(
 		app,
 		pool,
 		log,
+		cfg.ClientReleaseSecret,
 	)
 
 	enrichment.RegisterModule(

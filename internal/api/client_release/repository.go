@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	clientreleasedb "github.com/thoriqr/stash-it-backend/internal/api/client_release/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
@@ -12,6 +13,10 @@ import (
 
 type repository struct {
 	queries *clientreleasedb.Queries
+
+	// pool is set only by NewAdminRepository. The read path never opens a
+	// transaction, so its constructor leaves this nil.
+	pool *pgxpool.Pool
 }
 
 func NewRepository(queries *clientreleasedb.Queries) Repository {

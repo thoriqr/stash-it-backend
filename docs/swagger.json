@@ -1867,6 +1867,270 @@
                 }
             }
         },
+        "/internal/maintenance/client-releases": {
+            "get": {
+                "description": "List a platform's releases newest first together with its current policy.\nReleases is always an array; latest and min_supported are null when the platform has no channel yet.\nPossible error codes:\n- INVALID_RELEASE_SECRET\n- INVALID_PLATFORM\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "List client releases",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Release maintenance secret",
+                        "name": "X-Release-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "android",
+                            "windows"
+                        ],
+                        "type": "string",
+                        "example": "android",
+                        "description": "Client platform",
+                        "name": "platform",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/client_release.ListReleasesAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid platform",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or missing release secret",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Record an immutable client release and make it the platform's latest.\nThe release must have a build above the current latest. force also makes it the minimum supported build; it is false by default.\nPossible error codes:\n- INVALID_RELEASE_SECRET\n- INVALID_PLATFORM\n- INVALID_RELEASE_METADATA\n- CLIENT_RELEASE_ALREADY_EXISTS\n- INVALID_RELEASE_POLICY\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "Publish a client release",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Release maintenance secret",
+                        "name": "X-Release-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Release to publish",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/client_release.PublishReleaseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/client_release.PublishReleaseAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid platform or release metadata",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or missing release secret",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Release already exists or would violate the release policy",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/maintenance/client-releases/force": {
+            "post": {
+                "description": "Set the platform's minimum supported build to an existing release.\nThe target build must not be above the current latest release.\nPossible error codes:\n- INVALID_RELEASE_SECRET\n- INVALID_PLATFORM\n- INVALID_RELEASE_METADATA\n- RELEASE_NOT_FOUND\n- INVALID_RELEASE_POLICY\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "Force a client release",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Release maintenance secret",
+                        "name": "X-Release-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Release to force",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/client_release.ReleaseActionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/client_release.ReleasePolicyAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid platform or build",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or missing release secret",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Release not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Release policy would be invalid",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/maintenance/client-releases/rollback": {
+            "post": {
+                "description": "Move the platform's latest pointer back to an existing release.\nThe target must not be above the current latest. The minimum is lowered only when it would otherwise be above the new latest.\nPossible error codes:\n- INVALID_RELEASE_SECRET\n- INVALID_PLATFORM\n- INVALID_RELEASE_METADATA\n- RELEASE_NOT_FOUND\n- INVALID_RELEASE_POLICY\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "Roll back a client release",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Release maintenance secret",
+                        "name": "X-Release-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Release to roll back to",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/client_release.ReleaseActionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/client_release.ReleasePolicyAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid platform or build",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or missing release secret",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Release not found",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Release policy would be invalid",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/maintenance/sessions/cleanup": {
             "post": {
                 "description": "Remove sessions that are revoked, past their absolute expiry, or beyond the allowed idle period, together with their associated refresh tokens.\nIntended to be invoked periodically by an external scheduler.\nPossible error codes:\n- CLEANUP_SECRET_INVALID\n- INTERNAL_SERVER_ERROR",
@@ -2693,6 +2957,43 @@
         }
     },
     "definitions": {
+        "client_release.AdminReleaseResponse": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "download_url": {
+                    "type": "string",
+                    "example": "https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk"
+                },
+                "file_size_bytes": {
+                    "type": "integer",
+                    "example": 48231001
+                },
+                "git_tag": {
+                    "type": "string",
+                    "example": "client-v1.5.0-6"
+                },
+                "published_at": {
+                    "type": "string",
+                    "example": "2026-11-01T10:00:00Z"
+                },
+                "release_notes": {
+                    "type": "string",
+                    "example": "- Perbaikan sinkronisasi koleksi"
+                },
+                "sha256": {
+                    "type": "string",
+                    "example": "9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.5.0"
+                }
+            }
+        },
         "client_release.CheckAPIResponse": {
             "type": "object",
             "properties": {
@@ -2761,6 +3062,35 @@
                 }
             }
         },
+        "client_release.ListReleasesAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/client_release.ListReleasesResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "client releases retrieved successfully"
+                }
+            }
+        },
+        "client_release.ListReleasesResponse": {
+            "type": "object",
+            "properties": {
+                "latest": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                },
+                "min_supported": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                },
+                "releases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/client_release.AdminReleaseResponse"
+                    }
+                }
+            }
+        },
         "client_release.MinSupportedReleaseResponse": {
             "type": "object",
             "properties": {
@@ -2771,6 +3101,127 @@
                 "version": {
                     "type": "string",
                     "example": "1.3.0"
+                }
+            }
+        },
+        "client_release.PublishReleaseAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/client_release.PublishReleaseResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "client release published successfully"
+                }
+            }
+        },
+        "client_release.PublishReleaseRequest": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "download_url": {
+                    "type": "string",
+                    "example": "https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk"
+                },
+                "file_size_bytes": {
+                    "type": "integer",
+                    "example": 48231001
+                },
+                "force": {
+                    "description": "Force also makes the new release the minimum supported build. It is false by\ndefault: publishing a release must not force every client unless the\noperator says so.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "git_tag": {
+                    "type": "string",
+                    "example": "client-v1.5.0-6"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "android"
+                },
+                "release_notes": {
+                    "type": "string",
+                    "example": "- Perbaikan sinkronisasi koleksi"
+                },
+                "sha256": {
+                    "type": "string",
+                    "example": "9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.5.0"
+                }
+            }
+        },
+        "client_release.PublishReleaseResponse": {
+            "type": "object",
+            "properties": {
+                "forced": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "latest": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                },
+                "min_supported": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                },
+                "release": {
+                    "$ref": "#/definitions/client_release.AdminReleaseResponse"
+                }
+            }
+        },
+        "client_release.ReleaseActionRequest": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "android"
+                }
+            }
+        },
+        "client_release.ReleasePolicyAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/client_release.ReleasePolicyResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "client release policy updated successfully"
+                }
+            }
+        },
+        "client_release.ReleasePolicyResponse": {
+            "type": "object",
+            "properties": {
+                "latest": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                },
+                "min_supported": {
+                    "$ref": "#/definitions/client_release.ReleaseRefResponse"
+                }
+            }
+        },
+        "client_release.ReleaseRefResponse": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.5.0"
                 }
             }
         },

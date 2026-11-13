@@ -366,6 +366,7 @@ func main() {
 		app,
 		pool,
 		log,
+		cfg.ClientReleaseSecret,
 	)
 
 	// Enrichment fetches a URL the user supplied, so it goes through the guarded
@@ -419,6 +420,10 @@ func main() {
 		// whether a scheduler is expected to be able to reach it. The value is
 		// what would be a live credential if it were logged.
 		zap.Bool("session_cleanup_enabled", cfg.SessionCleanupSecret != ""),
+		// Whether the maintenance release surface can be called at all, never the
+		// secret itself. An absent secret is an ordinary deployment: the public
+		// check still works and the maintenance routes refuse every request.
+		zap.Bool("client_release_admin_enabled", cfg.ClientReleaseSecret != ""),
 		// Only the parsed connection endpoint, never cfg.RedisURL itself. A Redis
 		// URL may carry a password in its userinfo section, and logging it would
 		// write a live credential into the log stream. The address and the database

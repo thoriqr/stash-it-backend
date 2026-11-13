@@ -1,5 +1,32 @@
 basePath: /
 definitions:
+  client_release.AdminReleaseResponse:
+    properties:
+      build:
+        example: 6
+        type: integer
+      download_url:
+        example: https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk
+        type: string
+      file_size_bytes:
+        example: 48231001
+        type: integer
+      git_tag:
+        example: client-v1.5.0-6
+        type: string
+      published_at:
+        example: "2026-11-01T10:00:00Z"
+        type: string
+      release_notes:
+        example: '- Perbaikan sinkronisasi koleksi'
+        type: string
+      sha256:
+        example: 9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef
+        type: string
+      version:
+        example: 1.5.0
+        type: string
+    type: object
   client_release.CheckAPIResponse:
     properties:
       data:
@@ -48,6 +75,25 @@ definitions:
         example: 1.5.0
         type: string
     type: object
+  client_release.ListReleasesAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/client_release.ListReleasesResponse'
+      message:
+        example: client releases retrieved successfully
+        type: string
+    type: object
+  client_release.ListReleasesResponse:
+    properties:
+      latest:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+      min_supported:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+      releases:
+        items:
+          $ref: '#/definitions/client_release.AdminReleaseResponse'
+        type: array
+    type: object
   client_release.MinSupportedReleaseResponse:
     properties:
       build:
@@ -55,6 +101,93 @@ definitions:
         type: integer
       version:
         example: 1.3.0
+        type: string
+    type: object
+  client_release.PublishReleaseAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/client_release.PublishReleaseResponse'
+      message:
+        example: client release published successfully
+        type: string
+    type: object
+  client_release.PublishReleaseRequest:
+    properties:
+      build:
+        example: 6
+        type: integer
+      download_url:
+        example: https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk
+        type: string
+      file_size_bytes:
+        example: 48231001
+        type: integer
+      force:
+        description: |-
+          Force also makes the new release the minimum supported build. It is false by
+          default: publishing a release must not force every client unless the
+          operator says so.
+        example: false
+        type: boolean
+      git_tag:
+        example: client-v1.5.0-6
+        type: string
+      platform:
+        example: android
+        type: string
+      release_notes:
+        example: '- Perbaikan sinkronisasi koleksi'
+        type: string
+      sha256:
+        example: 9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef
+        type: string
+      version:
+        example: 1.5.0
+        type: string
+    type: object
+  client_release.PublishReleaseResponse:
+    properties:
+      forced:
+        example: false
+        type: boolean
+      latest:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+      min_supported:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+      release:
+        $ref: '#/definitions/client_release.AdminReleaseResponse'
+    type: object
+  client_release.ReleaseActionRequest:
+    properties:
+      build:
+        example: 6
+        type: integer
+      platform:
+        example: android
+        type: string
+    type: object
+  client_release.ReleasePolicyAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/client_release.ReleasePolicyResponse'
+      message:
+        example: client release policy updated successfully
+        type: string
+    type: object
+  client_release.ReleasePolicyResponse:
+    properties:
+      latest:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+      min_supported:
+        $ref: '#/definitions/client_release.ReleaseRefResponse'
+    type: object
+  client_release.ReleaseRefResponse:
+    properties:
+      build:
+        example: 6
+        type: integer
+      version:
+        example: 1.5.0
         type: string
     type: object
   collection.CollectionIntent:
@@ -3108,6 +3241,215 @@ paths:
       summary: List a collection's saved items
       tags:
       - Collection
+  /internal/maintenance/client-releases:
+    get:
+      description: |-
+        List a platform's releases newest first together with its current policy.
+        Releases is always an array; latest and min_supported are null when the platform has no channel yet.
+        Possible error codes:
+        - INVALID_RELEASE_SECRET
+        - INVALID_PLATFORM
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Release maintenance secret
+        in: header
+        name: X-Release-Secret
+        required: true
+        type: string
+      - description: Client platform
+        enum:
+        - android
+        - windows
+        example: android
+        in: query
+        name: platform
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/client_release.ListReleasesAPIResponse'
+        "400":
+          description: Invalid platform
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or missing release secret
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: List client releases
+      tags:
+      - Internal
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Record an immutable client release and make it the platform's latest.
+        The release must have a build above the current latest. force also makes it the minimum supported build; it is false by default.
+        Possible error codes:
+        - INVALID_RELEASE_SECRET
+        - INVALID_PLATFORM
+        - INVALID_RELEASE_METADATA
+        - CLIENT_RELEASE_ALREADY_EXISTS
+        - INVALID_RELEASE_POLICY
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Release maintenance secret
+        in: header
+        name: X-Release-Secret
+        required: true
+        type: string
+      - description: Release to publish
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/client_release.PublishReleaseRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/client_release.PublishReleaseAPIResponse'
+        "400":
+          description: Invalid platform or release metadata
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or missing release secret
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Release already exists or would violate the release policy
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Publish a client release
+      tags:
+      - Internal
+  /internal/maintenance/client-releases/force:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Set the platform's minimum supported build to an existing release.
+        The target build must not be above the current latest release.
+        Possible error codes:
+        - INVALID_RELEASE_SECRET
+        - INVALID_PLATFORM
+        - INVALID_RELEASE_METADATA
+        - RELEASE_NOT_FOUND
+        - INVALID_RELEASE_POLICY
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Release maintenance secret
+        in: header
+        name: X-Release-Secret
+        required: true
+        type: string
+      - description: Release to force
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/client_release.ReleaseActionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/client_release.ReleasePolicyAPIResponse'
+        "400":
+          description: Invalid platform or build
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or missing release secret
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Release not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Release policy would be invalid
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Force a client release
+      tags:
+      - Internal
+  /internal/maintenance/client-releases/rollback:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Move the platform's latest pointer back to an existing release.
+        The target must not be above the current latest. The minimum is lowered only when it would otherwise be above the new latest.
+        Possible error codes:
+        - INVALID_RELEASE_SECRET
+        - INVALID_PLATFORM
+        - INVALID_RELEASE_METADATA
+        - RELEASE_NOT_FOUND
+        - INVALID_RELEASE_POLICY
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Release maintenance secret
+        in: header
+        name: X-Release-Secret
+        required: true
+        type: string
+      - description: Release to roll back to
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/client_release.ReleaseActionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/client_release.ReleasePolicyAPIResponse'
+        "400":
+          description: Invalid platform or build
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "401":
+          description: Invalid or missing release secret
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "404":
+          description: Release not found
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "409":
+          description: Release policy would be invalid
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Roll back a client release
+      tags:
+      - Internal
   /internal/maintenance/sessions/cleanup:
     post:
       description: |-

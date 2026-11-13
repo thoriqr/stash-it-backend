@@ -97,6 +97,16 @@ type Config struct {
 	// because a route that cannot be distinguished from a wrong secret is a route
 	// that tells an unauthenticated caller whether the feature is enabled.
 	SessionCleanupSecret string
+
+	// ClientReleaseSecret guards the internal client-release maintenance routes,
+	// which publish, force and roll back client releases. No user credential
+	// reaches them.
+	//
+	// Optional by design, like SessionCleanupSecret: an unset value leaves the
+	// public release check working while the maintenance routes refuse every
+	// request. It is never defaulted, because an invented secret would look
+	// configured and would not be.
+	ClientReleaseSecret string
 }
 
 func Load() (Config, error) {
@@ -151,6 +161,11 @@ func Load() (Config, error) {
 	// that looks configured and is not.
 	sessionCleanupSecret := os.Getenv("SESSION_CLEANUP_SECRET")
 
+	// Optional for the same reason: an unset value closes the maintenance routes
+	// by construction rather than stopping the API, and it is never given a
+	// default that would look configured.
+	clientReleaseSecret := os.Getenv("CLIENT_RELEASE_SECRET")
+
 	clientIPSource, trustedProxies, trustedProxyHeader, err := loadClientIP()
 	if err != nil {
 		return Config{}, err
@@ -198,5 +213,6 @@ func Load() (Config, error) {
 		Sentry: sentry,
 
 		SessionCleanupSecret: sessionCleanupSecret,
+		ClientReleaseSecret:  clientReleaseSecret,
 	}, nil
 }

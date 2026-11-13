@@ -8,8 +8,64 @@ package clientreleasedb
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const getClientReleaseByPlatformAndBuild = `-- name: GetClientReleaseByPlatformAndBuild :one
+SELECT
+    id,
+    platform,
+    version,
+    build,
+    download_url,
+    sha256,
+    file_size_bytes,
+    release_notes,
+    git_tag,
+    published_at
+FROM client_releases
+WHERE platform = $1
+  AND build = $2
+`
+
+type GetClientReleaseByPlatformAndBuildParams struct {
+	Platform string
+	Build    int32
+}
+
+type GetClientReleaseByPlatformAndBuildRow struct {
+	ID            uuid.UUID
+	Platform      string
+	Version       string
+	Build         int32
+	DownloadUrl   string
+	Sha256        string
+	FileSizeBytes int64
+	ReleaseNotes  string
+	GitTag        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+// Resolves a release for force and rollback actions, which address it by the
+// pair an operator knows.
+func (q *Queries) GetClientReleaseByPlatformAndBuild(ctx context.Context, arg GetClientReleaseByPlatformAndBuildParams) (GetClientReleaseByPlatformAndBuildRow, error) {
+	row := q.db.QueryRow(ctx, getClientReleaseByPlatformAndBuild, arg.Platform, arg.Build)
+	var i GetClientReleaseByPlatformAndBuildRow
+	err := row.Scan(
+		&i.ID,
+		&i.Platform,
+		&i.Version,
+		&i.Build,
+		&i.DownloadUrl,
+		&i.Sha256,
+		&i.FileSizeBytes,
+		&i.ReleaseNotes,
+		&i.GitTag,
+		&i.PublishedAt,
+	)
+	return i, err
+}
 
 const getClientReleaseChannel = `-- name: GetClientReleaseChannel :one
 SELECT
@@ -72,4 +128,249 @@ func (q *Queries) GetClientReleaseChannel(ctx context.Context, platform string) 
 		&i.MinSupportedBuild,
 	)
 	return i, err
+}
+
+const getClientReleaseChannelForUpdate = `-- name: GetClientReleaseChannelForUpdate :one
+SELECT
+    channels.platform,
+    channels.latest_release_id,
+    channels.min_supported_release_id,
+    latest.version AS latest_version,
+    latest.build AS latest_build,
+    minimum.version AS min_supported_version,
+    minimum.build AS min_supported_build
+FROM client_release_channels AS channels
+JOIN client_releases AS latest
+  ON latest.id = channels.latest_release_id
+JOIN client_releases AS minimum
+  ON minimum.id = channels.min_supported_release_id
+WHERE channels.platform = $1
+FOR UPDATE OF channels
+`
+
+type GetClientReleaseChannelForUpdateRow struct {
+	Platform              string
+	LatestReleaseID       uuid.UUID
+	MinSupportedReleaseID uuid.UUID
+	LatestVersion         string
+	LatestBuild           int32
+	MinSupportedVersion   string
+	MinSupportedBuild     int32
+}
+
+// Locks the platform's channel row for a read-modify-write.
+//
+// Only the channel row is locked: the release rows it points at are immutable, so
+// there is nothing to gain from locking them. The returned ids are what an update
+// writes back when the release is deliberately kept rather than replaced.
+func (q *Queries) GetClientReleaseChannelForUpdate(ctx context.Context, platform string) (GetClientReleaseChannelForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getClientReleaseChannelForUpdate, platform)
+	var i GetClientReleaseChannelForUpdateRow
+	err := row.Scan(
+		&i.Platform,
+		&i.LatestReleaseID,
+		&i.MinSupportedReleaseID,
+		&i.LatestVersion,
+		&i.LatestBuild,
+		&i.MinSupportedVersion,
+		&i.MinSupportedBuild,
+	)
+	return i, err
+}
+
+const insertClientRelease = `-- name: InsertClientRelease :one
+INSERT INTO client_releases (
+    platform,
+    version,
+    build,
+    download_url,
+    sha256,
+    file_size_bytes,
+    release_notes,
+    git_tag
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8
+)
+ON CONFLICT DO NOTHING
+RETURNING
+    id,
+    platform,
+    version,
+    build,
+    download_url,
+    sha256,
+    file_size_bytes,
+    release_notes,
+    git_tag,
+    published_at
+`
+
+type InsertClientReleaseParams struct {
+	Platform      string
+	Version       string
+	Build         int32
+	DownloadUrl   string
+	Sha256        string
+	FileSizeBytes int64
+	ReleaseNotes  string
+	GitTag        string
+}
+
+type InsertClientReleaseRow struct {
+	ID            uuid.UUID
+	Platform      string
+	Version       string
+	Build         int32
+	DownloadUrl   string
+	Sha256        string
+	FileSizeBytes int64
+	ReleaseNotes  string
+	GitTag        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+// Inserts one immutable release row.
+//
+// ON CONFLICT DO NOTHING is deliberate: every unique constraint on the table
+// means the same thing to the operator — this release or artifact is already
+// recorded. A suppressed conflict returns no row, which the repository maps to
+// CLIENT_RELEASE_ALREADY_EXISTS. Constraint names are not read into the API.
+func (q *Queries) InsertClientRelease(ctx context.Context, arg InsertClientReleaseParams) (InsertClientReleaseRow, error) {
+	row := q.db.QueryRow(ctx, insertClientRelease,
+		arg.Platform,
+		arg.Version,
+		arg.Build,
+		arg.DownloadUrl,
+		arg.Sha256,
+		arg.FileSizeBytes,
+		arg.ReleaseNotes,
+		arg.GitTag,
+	)
+	var i InsertClientReleaseRow
+	err := row.Scan(
+		&i.ID,
+		&i.Platform,
+		&i.Version,
+		&i.Build,
+		&i.DownloadUrl,
+		&i.Sha256,
+		&i.FileSizeBytes,
+		&i.ReleaseNotes,
+		&i.GitTag,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const insertClientReleaseChannel = `-- name: InsertClientReleaseChannel :exec
+INSERT INTO client_release_channels (
+    platform,
+    latest_release_id,
+    min_supported_release_id
+) VALUES (
+    $1,
+    $2,
+    $3
+)
+`
+
+type InsertClientReleaseChannelParams struct {
+	Platform              string
+	LatestReleaseID       uuid.UUID
+	MinSupportedReleaseID uuid.UUID
+}
+
+// Creates a platform's channel with the first release as both bounds.
+func (q *Queries) InsertClientReleaseChannel(ctx context.Context, arg InsertClientReleaseChannelParams) error {
+	_, err := q.db.Exec(ctx, insertClientReleaseChannel, arg.Platform, arg.LatestReleaseID, arg.MinSupportedReleaseID)
+	return err
+}
+
+const listClientReleases = `-- name: ListClientReleases :many
+SELECT
+    id,
+    platform,
+    version,
+    build,
+    download_url,
+    sha256,
+    file_size_bytes,
+    release_notes,
+    git_tag,
+    published_at
+FROM client_releases
+WHERE platform = $1
+ORDER BY build DESC
+`
+
+type ListClientReleasesRow struct {
+	ID            uuid.UUID
+	Platform      string
+	Version       string
+	Build         int32
+	DownloadUrl   string
+	Sha256        string
+	FileSizeBytes int64
+	ReleaseNotes  string
+	GitTag        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+// Lists a platform's releases newest first for the operator.
+func (q *Queries) ListClientReleases(ctx context.Context, platform string) ([]ListClientReleasesRow, error) {
+	rows, err := q.db.Query(ctx, listClientReleases, platform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListClientReleasesRow
+	for rows.Next() {
+		var i ListClientReleasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Version,
+			&i.Build,
+			&i.DownloadUrl,
+			&i.Sha256,
+			&i.FileSizeBytes,
+			&i.ReleaseNotes,
+			&i.GitTag,
+			&i.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateClientReleaseChannelPolicy = `-- name: UpdateClientReleaseChannelPolicy :exec
+UPDATE client_release_channels
+SET latest_release_id = $1,
+    min_supported_release_id = $2
+WHERE platform = $3
+`
+
+type UpdateClientReleaseChannelPolicyParams struct {
+	LatestReleaseID       uuid.UUID
+	MinSupportedReleaseID uuid.UUID
+	Platform              string
+}
+
+// Moves one or both pointers. The caller passes the value it wants to keep
+// unchanged for the other pointer.
+func (q *Queries) UpdateClientReleaseChannelPolicy(ctx context.Context, arg UpdateClientReleaseChannelPolicyParams) error {
+	_, err := q.db.Exec(ctx, updateClientReleaseChannelPolicy, arg.LatestReleaseID, arg.MinSupportedReleaseID, arg.Platform)
+	return err
 }

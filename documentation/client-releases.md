@@ -11,17 +11,20 @@ Implemented:
 - `migrations/000032_create_client_releases.{up,down}.sql` (proposal; **not applied
   automatically**)
 - `GET /client-releases/latest`
+- the maintenance routes under `/internal/maintenance/client-releases`, guarded by
+  `X-Release-Secret`
 - unit tests in `internal/api/client_release`
-- integration tests in `internal/integration/client_release_api_test.go`
+- integration tests in `internal/integration/client_release_api_test.go` and
+  `client_release_admin_api_test.go`
 - Swagger annotations and generated `docs/`
 
 Not implemented yet:
 
-- the admin publish route under `/internal/maintenance/client-releases`
 - the `release` CLI
 - R2 upload tooling
 
-Until those exist, publish rows with the SQL in "Publishing a release" below.
+The maintenance routes are the supported publish path. The SQL in this document
+is a manual fallback.
 
 ## Endpoint
 
@@ -100,6 +103,87 @@ by paginated endpoints through `OKWithMeta`.
 A valid platform with no channel is `200` with `status: none`, never `404`. A
 deployment that has not published anything yet is an ordinary state.
 
+## Maintenance API
+
+The maintenance routes are operator routes, not user routes. They require:
+
+```http
+X-Release-Secret: <CLIENT_RELEASE_SECRET>
+```
+
+and are mounted under `/internal/maintenance`, the same prefix as session
+cleanup. `CLIENT_RELEASE_SECRET` is optional: when it is empty the routes stay
+registered and refuse every request with `401 INVALID_RELEASE_SECRET`. There is no
+rate limiter on them deliberately; the existing limiter fails closed when Redis is
+unreachable, and this is exactly the surface an operator needs while something
+else is broken.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/internal/maintenance/client-releases` | Publish a release and move `latest`; `force` also moves `min_supported` |
+| `POST` | `/internal/maintenance/client-releases/force` | Set `min_supported` to an existing build |
+| `POST` | `/internal/maintenance/client-releases/rollback` | Move `latest` back to an existing build |
+| `GET` | `/internal/maintenance/client-releases?platform=android` | List releases newest first with the current policy |
+
+Publish rules:
+
+- the build must be above the current latest; a publish never moves backwards;
+- the first release for a platform becomes both latest and minimum;
+- `force: false` (the default) leaves `min_supported` unchanged;
+- `force: true` makes the new release the minimum as well;
+- a duplicate `(platform, build)`, `(platform, version)` or `download_url` is
+  `409 CLIENT_RELEASE_ALREADY_EXISTS`;
+- a policy conflict is `409 INVALID_RELEASE_POLICY`.
+
+Force and rollback address a release by `platform` + `build`. Force refuses a
+build above the current latest. Rollback refuses a target above the current latest
+and lowers the minimum only when it would otherwise sit above the new latest.
+
+Example publish:
+
+```sh
+curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases \
+  -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "android",
+    "version": "1.5.0",
+    "build": 6,
+    "download_url": "https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk",
+    "sha256": "9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef",
+    "file_size_bytes": 48231001,
+    "release_notes": "- Perbaikan sinkronisasi koleksi",
+    "git_tag": "client-v1.5.0-6",
+    "force": false
+  }'
+```
+
+Force and rollback:
+
+```sh
+curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases/force \
+  -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","build":6}'
+
+curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases/rollback \
+  -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","build":5}'
+```
+
+Admin error codes:
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 401 | `INVALID_RELEASE_SECRET` | missing or wrong secret, or no secret configured |
+| 400 | `INVALID_PLATFORM` | unsupported platform |
+| 400 | `INVALID_RELEASE_METADATA` | invalid version, build, URL, digest or size |
+| 404 | `RELEASE_NOT_FOUND` | force/rollback target or channel not found |
+| 409 | `CLIENT_RELEASE_ALREADY_EXISTS` | duplicate release or URL |
+| 409 | `INVALID_RELEASE_POLICY` | publish/force/rollback would break the bounds |
+| 500 | `INTERNAL_SERVER_ERROR` | database or internal fault |
+
 ## Tables
 
 `client_releases` is one immutable artifact per platform and build:
@@ -117,8 +201,8 @@ deployment that has not published anything yet is an ordinary state.
 - Composite foreign keys over `(release_id, platform)` prevent a Windows channel
   from pointing at an Android release.
 
-`min_supported.build` must not exceed `latest.build`. The publish flow below
-keeps that true; the endpoint also clamps and logs a misconfiguration rather
+`min_supported.build` must not exceed `latest.build`. The maintenance routes keep
+that true; the public endpoint also clamps and logs a misconfiguration rather
 than sending a forced update to a build with no newer artifact.
 
 Version strings are display values only. Every comparison is on `build` integers:
@@ -145,8 +229,29 @@ publish the row**. Never publish a row before the file exists at its URL.
    `android/stash-it-1.1.0-2.apk` or `windows/stash-it-1.1.0-2.zip`.
 7. Download the public URL and hash the served bytes; it must equal the local
    hash.
-8. Insert the release and move the channel's `latest` pointer in one
-   transaction:
+8. Publish through the maintenance route:
+
+   ```sh
+   curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases \
+     -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "platform": "android",
+       "version": "1.1.0",
+       "build": 2,
+       "download_url": "https://downloads.stashit.thoriqr.my.id/android/stash-it-1.1.0-2.apk",
+       "sha256": "9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef",
+       "file_size_bytes": 48231001,
+       "release_notes": "- Perbaikan sinkronisasi koleksi",
+       "git_tag": "client-v1.1.0-2",
+       "force": false
+     }'
+   ```
+
+   The route inserts the row and moves `latest` in one transaction. `force` is
+   false by default. Use the SQL below only when the route cannot be called.
+
+### Manual SQL fallback
 
 ```sql
 BEGIN;
@@ -212,32 +317,28 @@ WHERE minimum.build > latest.build;
 
 Only after the new build has been verified:
 
-```sql
-UPDATE client_release_channels
-SET min_supported_release_id = (
-    SELECT id
-    FROM client_releases
-    WHERE platform = 'android'
-      AND build = 2
-)
-WHERE platform = 'android';
+```sh
+curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases/force \
+  -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","build":2}'
 ```
+
+The target must not be above the current latest.
 
 ### Rolling back a bad release
 
 Move `latest` back to the previous good build. The artifact stays in R2; fix
 forward with a new build rather than overwriting it.
 
-```sql
-UPDATE client_release_channels
-SET latest_release_id = (
-    SELECT id
-    FROM client_releases
-    WHERE platform = 'android'
-      AND build = 1
-)
-WHERE platform = 'android';
+```sh
+curl -X POST https://api.stashit.thoriqr.my.id/internal/maintenance/client-releases/rollback \
+  -H "X-Release-Secret: $CLIENT_RELEASE_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","build":1}'
 ```
+
+The minimum is lowered only when it would otherwise be above the new latest.
 
 ## R2 layout and security
 

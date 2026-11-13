@@ -16,4 +16,8 @@ const (
 
 	// StatusRequired means the client's build is below the minimum supported build.
 	StatusRequired = "required"
+
+	// releaseSecretHeader carries the shared secret that guards the internal
+	// client-release maintenance routes. It follows the X-Cleanup-Secret family.
+	releaseSecretHeader = "X-Release-Secret"
 )
