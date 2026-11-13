@@ -20,6 +20,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
+	"github.com/thoriqr/stash-it-backend/internal/api/debug"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
@@ -153,6 +154,10 @@ func main() {
 
 	healthHandler := health.NewHandler()
 	health.Routes(app, healthHandler)
+
+	// Mounted only when SENTRY_DEBUG is true, so a normal deployment has no such
+	// routes at all. See internal/api/debug/module.go for why they exist.
+	debug.RegisterModule(app, cfg)
 
 	googleTokenVerifier := login.NewGoogleTokenVerifier(
 		cfg.GoogleClientID,
