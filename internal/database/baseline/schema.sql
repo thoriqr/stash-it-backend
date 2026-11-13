@@ -3,7 +3,7 @@
 -- used only by the test-only sqlc targets and by the throwaway Postgres
 -- containers that integration tests start. It is not used at runtime and can
 -- drift from the migrations; migrations/ remains the production source of truth.
--- This file represents the cumulative effect of migrations/000001..000031 (up
+-- This file represents the cumulative effect of migrations/000001..000032 (up
 -- only).
 
 -- ============================================================
@@ -416,6 +416,80 @@ CREATE TABLE registration_continuations (
 );
 
 
+CREATE TABLE client_releases (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+
+    platform TEXT NOT NULL,
+    version  TEXT NOT NULL,
+    build    INTEGER NOT NULL,
+
+    download_url    TEXT NOT NULL,
+    sha256          TEXT NOT NULL,
+    file_size_bytes BIGINT NOT NULL,
+    release_notes   TEXT NOT NULL,
+    git_tag         TEXT NOT NULL,
+
+    published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT client_releases_platform_check
+        CHECK (platform IN ('android', 'windows')),
+
+    CONSTRAINT client_releases_version_check
+        CHECK (version ~ '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$'),
+
+    CONSTRAINT client_releases_build_check
+        CHECK (build > 0),
+
+    CONSTRAINT client_releases_sha256_check
+        CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+
+    CONSTRAINT client_releases_size_check
+        CHECK (file_size_bytes > 0),
+
+    CONSTRAINT client_releases_download_url_https_check
+        CHECK (download_url ~ '^https://'),
+
+    CONSTRAINT client_releases_platform_build_unique
+        UNIQUE (platform, build),
+
+    CONSTRAINT client_releases_platform_version_unique
+        UNIQUE (platform, version),
+
+    CONSTRAINT client_releases_download_url_unique
+        UNIQUE (download_url),
+
+    -- Composite uniqueness required by the channel foreign keys below. id is
+    -- already the primary key; the pair exists because a composite foreign key
+    -- needs a target of exactly this shape.
+    CONSTRAINT client_releases_id_platform_unique
+        UNIQUE (id, platform)
+);
+
+
+CREATE TABLE client_release_channels (
+    platform TEXT PRIMARY KEY,
+
+    latest_release_id        UUID NOT NULL,
+    min_supported_release_id UUID NOT NULL,
+
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT client_release_channels_platform_check
+        CHECK (platform IN ('android', 'windows')),
+
+    CONSTRAINT client_release_channels_latest_fkey
+        FOREIGN KEY (latest_release_id, platform)
+        REFERENCES client_releases (id, platform)
+        ON DELETE RESTRICT,
+
+    CONSTRAINT client_release_channels_min_supported_fkey
+        FOREIGN KEY (min_supported_release_id, platform)
+        REFERENCES client_releases (id, platform)
+        ON DELETE RESTRICT
+);
+
+
 -- ============================================================
 -- Indexes
 -- ============================================================
@@ -523,5 +597,17 @@ EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER saved_items_set_updated_at
 BEFORE UPDATE ON saved_items
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+CREATE TRIGGER client_releases_set_updated_at
+BEFORE UPDATE ON client_releases
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+CREATE TRIGGER client_release_channels_set_updated_at
+BEFORE UPDATE ON client_release_channels
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();

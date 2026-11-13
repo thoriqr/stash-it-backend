@@ -1581,6 +1581,61 @@
                 }
             }
         },
+        "/client-releases/latest": {
+            "get": {
+                "description": "Reports whether the calling client should update.\nstatus is none, optional or required and is computed by the server from the client's build, the platform's minimum supported build and the latest release. Clients must not compare version strings.\nWhen the platform has no release yet, status is none and latest and min_supported are null.\nLatest.build may be lower than current_build when the client is ahead of the published release; status is none in that case and means no action.\nPossible error codes:\n- INVALID_PLATFORM\n- INVALID_CLIENT_BUILD\n- INTERNAL_SERVER_ERROR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Client Release"
+                ],
+                "summary": "Check for a client release",
+                "parameters": [
+                    {
+                        "enum": [
+                            "android",
+                            "windows"
+                        ],
+                        "type": "string",
+                        "example": "android",
+                        "description": "Client platform",
+                        "name": "platform",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "example": 4,
+                        "description": "Client build number (Android versionCode)",
+                        "name": "build",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/client_release.CheckAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid platform or build",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/collections": {
             "get": {
                 "security": [
@@ -2638,6 +2693,87 @@
         }
     },
     "definitions": {
+        "client_release.CheckAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/client_release.CheckResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "client release check completed successfully"
+                }
+            }
+        },
+        "client_release.CheckResponse": {
+            "type": "object",
+            "properties": {
+                "current_build": {
+                    "type": "integer",
+                    "example": 4
+                },
+                "latest": {
+                    "$ref": "#/definitions/client_release.LatestReleaseResponse"
+                },
+                "min_supported": {
+                    "$ref": "#/definitions/client_release.MinSupportedReleaseResponse"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "android"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "optional"
+                }
+            }
+        },
+        "client_release.LatestReleaseResponse": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "download_url": {
+                    "type": "string",
+                    "example": "https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk"
+                },
+                "file_size_bytes": {
+                    "type": "integer",
+                    "example": 48231001
+                },
+                "published_at": {
+                    "type": "string",
+                    "example": "2026-11-01T10:00:00Z"
+                },
+                "release_notes": {
+                    "type": "string",
+                    "example": "- Perbaikan sinkronisasi koleksi"
+                },
+                "sha256": {
+                    "type": "string",
+                    "example": "9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.5.0"
+                }
+            }
+        },
+        "client_release.MinSupportedReleaseResponse": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.3.0"
+                }
+            }
+        },
         "collection.CollectionIntent": {
             "type": "string",
             "enum": [

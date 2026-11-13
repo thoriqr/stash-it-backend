@@ -1,5 +1,62 @@
 basePath: /
 definitions:
+  client_release.CheckAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/client_release.CheckResponse'
+      message:
+        example: client release check completed successfully
+        type: string
+    type: object
+  client_release.CheckResponse:
+    properties:
+      current_build:
+        example: 4
+        type: integer
+      latest:
+        $ref: '#/definitions/client_release.LatestReleaseResponse'
+      min_supported:
+        $ref: '#/definitions/client_release.MinSupportedReleaseResponse'
+      platform:
+        example: android
+        type: string
+      status:
+        example: optional
+        type: string
+    type: object
+  client_release.LatestReleaseResponse:
+    properties:
+      build:
+        example: 6
+        type: integer
+      download_url:
+        example: https://downloads.stashit.thoriqr.my.id/android/stash-it-1.5.0-6.apk
+        type: string
+      file_size_bytes:
+        example: 48231001
+        type: integer
+      published_at:
+        example: "2026-11-01T10:00:00Z"
+        type: string
+      release_notes:
+        example: '- Perbaikan sinkronisasi koleksi'
+        type: string
+      sha256:
+        example: 9f2c4a7b1e8d3f605a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef
+        type: string
+      version:
+        example: 1.5.0
+        type: string
+    type: object
+  client_release.MinSupportedReleaseResponse:
+    properties:
+      build:
+        example: 3
+        type: integer
+      version:
+        example: 1.3.0
+        type: string
+    type: object
   collection.CollectionIntent:
     enum:
     - existing
@@ -2804,6 +2861,52 @@ paths:
       summary: Revoke session
       tags:
       - Session
+  /client-releases/latest:
+    get:
+      description: |-
+        Reports whether the calling client should update.
+        status is none, optional or required and is computed by the server from the client's build, the platform's minimum supported build and the latest release. Clients must not compare version strings.
+        When the platform has no release yet, status is none and latest and min_supported are null.
+        Latest.build may be lower than current_build when the client is ahead of the published release; status is none in that case and means no action.
+        Possible error codes:
+        - INVALID_PLATFORM
+        - INVALID_CLIENT_BUILD
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Client platform
+        enum:
+        - android
+        - windows
+        example: android
+        in: query
+        name: platform
+        required: true
+        type: string
+      - description: Client build number (Android versionCode)
+        example: 4
+        in: query
+        minimum: 1
+        name: build
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/client_release.CheckAPIResponse'
+        "400":
+          description: Invalid platform or build
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      summary: Check for a client release
+      tags:
+      - Client Release
   /collections:
     get:
       description: |-

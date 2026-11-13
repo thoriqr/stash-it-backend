@@ -11,6 +11,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	clientrelease "github.com/thoriqr/stash-it-backend/internal/api/client_release"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
@@ -474,6 +475,12 @@ func newApp(
 		pool,
 		cfg,
 		pinRateLimiter,
+	)
+
+	clientrelease.RegisterModule(
+		app,
+		pool,
+		log,
 	)
 
 	enrichment.RegisterModule(

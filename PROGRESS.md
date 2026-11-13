@@ -13,6 +13,7 @@ left. It does not describe how anything works and it does not hold rules.
 | PIN email budgets                     | `documentation/pin-email-budgets.md`  |
 | Dead-session cleanup                  | `documentation/session-cleanup.md`    |
 | Design decisions                      | `documentation/decisions.md`          |
+| Client releases and update flow       | `documentation/client-releases.md`    |
 | History                               | `git log`                             |
 
 _State as of the last recorded entry: 2026-11-14._
@@ -20,10 +21,10 @@ _State as of the last recorded entry: 2026-11-14._
 ## Summary
 
 The backend covers steps 1 to 3 of the roadmap in `product.md`: authentication,
-saving, the Inbox, collections, search, and enrichment with automatic
-organization, and it now runs in production. What remains is **client catch-up**
-(Flutter is behind several backend changes) and a **hardening backlog**, plus the
-operational tasks a live deployment brings.
+saving, the Inbox, collections, search, enrichment with automatic organization,
+and the client release check, and it now runs in production. What remains is
+**client catch-up** (Flutter is behind several backend changes) and a
+**hardening backlog**, plus the operational tasks a live deployment brings.
 
 ## Done
 
@@ -47,6 +48,16 @@ operational tasks a live deployment brings.
 | Saved item notes: optional note on save, add/edit, delete    | done  | `internal/api/saved_item`, migration `000031` |
 | Collections: list with bounded counts, filing with intent, items listing, delete with disposition | done | `internal/api/collection` |
 | Search                                                       | done  | —                            |
+
+### Client releases
+
+| Area                                                 | State                      | Reference              |
+| ---------------------------------------------------- | -------------------------- | ---------------------- |
+| Public release check (`GET /client-releases/latest`) | done, publish tooling open | `client-releases.md`   |
+
+Release-specific details, the publish checklist, R2 layout and the client
+contract live in `documentation/client-releases.md`. This file only records that
+the feature exists; individual releases are not recorded here.
 
 ### Enrichment
 
@@ -172,6 +183,10 @@ Backend changes already live that the client does not yet handle:
       the Google token.
 
 The two breaking changes must ship with, or before, the backend.
+
+- [ ] Client update check: consume `GET /client-releases/latest`, verify the
+      downloaded `sha256`, and add the update dialog. See
+      `client-releases.md` for the contract and the publish flow.
 
 ### Backend backlog
 

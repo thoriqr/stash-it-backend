@@ -19,6 +19,7 @@ import (
 
 	"github.com/thoriqr/stash-it-backend/internal/api/auth"
 	"github.com/thoriqr/stash-it-backend/internal/api/auth/login"
+	clientrelease "github.com/thoriqr/stash-it-backend/internal/api/client_release"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/debug"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
@@ -356,6 +357,15 @@ func main() {
 		pool,
 		cfg,
 		pinRateLimiter,
+	)
+
+	// The client release check is public and depends on nothing but Postgres. It
+	// is registered outside the auth and enrichment paths on purpose: it must
+	// remain reachable while either of those is being diagnosed.
+	clientrelease.RegisterModule(
+		app,
+		pool,
+		log,
 	)
 
 	// Enrichment fetches a URL the user supplied, so it goes through the guarded

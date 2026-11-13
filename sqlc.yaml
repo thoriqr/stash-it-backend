@@ -108,6 +108,19 @@ sql:
 
   - engine: "postgresql"
     schema: "migrations"
+    queries: "internal/api/client_release/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "clientreleasedb"
+        out: "internal/api/client_release/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  - engine: "postgresql"
+    schema: "migrations"
     queries: "internal/api/enrichment/queries.sql"
     gen:
       go:
