@@ -1,8 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "REST API for Stash It.",
-        "title": "Stash It API",
+        "description": "REST API for Stash-it.",
+        "title": "Stash-it API",
         "contact": {},
         "version": "1.0"
     },

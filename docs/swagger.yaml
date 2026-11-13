@@ -1492,8 +1492,8 @@ definitions:
     type: object
 info:
   contact: {}
-  description: REST API for Stash It.
-  title: Stash It API
+  description: REST API for Stash-it.
+  title: Stash-it API
   version: "1.0"
 paths:
   /auth/login:

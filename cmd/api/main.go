@@ -39,9 +39,9 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/worker/queue"
 )
 
-// @title Stash It API
+// @title Stash-it API
 // @version 1.0
-// @description REST API for Stash It.
+// @description REST API for Stash-it.
 // @BasePath /
 // @securityDefinitions.apikey BearerAuth
 // @in header

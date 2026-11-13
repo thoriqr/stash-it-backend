@@ -76,7 +76,7 @@ SESSION_CLEANUP_SECRET=<RANDOM_SECRET_3>
 EMAIL_PROVIDER=brevo
 BREVO_API_KEY=xkeysib-<BREVO_API_KEY>
 EMAIL_FROM_ADDRESS=noreply@example.com
-EMAIL_FROM_NAME=Stash It
+EMAIL_FROM_NAME=Stash-it
 EMAIL_TIMEOUT_SECONDS=10
 
 SENTRY_DSN=<SENTRY_DSN_OR_EMPTY>
@@ -243,7 +243,7 @@ Install the units as `/etc/systemd/system/stash-it-api.service` and
 
 ```ini
 [Unit]
-Description=Stash It API
+Description=Stash-it API
 After=network-online.target redis-server.service
 Wants=network-online.target
 
@@ -272,7 +272,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=Stash It Worker
+Description=Stash-it Worker
 After=network-online.target redis-server.service
 Wants=network-online.target
 

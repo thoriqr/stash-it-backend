@@ -1,6 +1,6 @@
-# Stash It Backend
+# Stash-it Backend
 
-Go API and worker for Stash It.
+Go API and worker for Stash-it.
 
 ## Requirements
 
