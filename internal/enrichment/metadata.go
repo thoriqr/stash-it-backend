@@ -1,5 +1,7 @@
 package enrichment
 
+import "strings"
+
 // Metadata is what enrichment discovered about a saved item's page.
 //
 // It is deliberately shaped around what saved_items can actually store. Title and
@@ -101,4 +103,28 @@ func (m Metadata) IsEmpty() bool {
 		m.SiteName == nil &&
 		m.Author == nil &&
 		m.Price == nil
+}
+
+// dropDuplicateDescription removes a description that is the title repeated.
+//
+// Some pages publish the document title as the meta description, which stores the
+// same text twice and makes the description look like a real one. Amazon is the
+// measured case. The comparison is whitespace-normalized and case-insensitive
+// because markup routinely pads or capitalizes one copy.
+//
+// Only an exact repeat is dropped. A description that merely overlaps the title is
+// still a description the page chose to publish.
+func dropDuplicateDescription(metadata Metadata) Metadata {
+	if metadata.Title == nil || metadata.Description == nil {
+		return metadata
+	}
+
+	title := normalizeText(*metadata.Title)
+	description := normalizeText(*metadata.Description)
+
+	if strings.EqualFold(title, description) {
+		metadata.Description = nil
+	}
+
+	return metadata
 }

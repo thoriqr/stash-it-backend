@@ -207,6 +207,7 @@ func (e *enricher) Enrich(
 			true,
 		)
 
+		metadata = dropDuplicateDescription(metadata)
 		metadata = dropGenericTitle(parsed, metadata)
 
 		switch {
@@ -253,6 +254,7 @@ func (e *enricher) Enrich(
 				discoveryURL,
 			)
 			metadata = mergeMetadata(metadata, oembedMetadata)
+			metadata = dropDuplicateDescription(metadata)
 
 			return dropGenericTitle(parsed, metadata), nil
 		}
@@ -471,6 +473,8 @@ func (e *enricher) enrichWithProfile(
 
 	metadata := selectMetadata(doc, finalURL)
 	metadata = applyTikTokUniversalData(doc, finalURL, metadata)
+	metadata = applyAmazonProductImage(doc, finalURL, metadata)
+	metadata = dropDuplicateDescription(metadata)
 	metadata = dropGenericTitle(finalURL, metadata)
 
 	return metadata,

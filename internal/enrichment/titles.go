@@ -54,6 +54,15 @@ var youtubeGenericTitles = map[string]struct{}{
 	"youtube": {},
 }
 
+var amazonGenericTitles = map[string]struct{}{
+	"amazon":       {},
+	"amazon.com":   {},
+	"amazon.co.uk": {},
+	"amazon.de":    {},
+	"amazon.sg":    {},
+	"amazon.co.jp": {},
+}
+
 var genericTitlesByHost = map[string]map[string]struct{}{
 	"tiktok.com":     tiktokGenericTitles,
 	"www.tiktok.com": tiktokGenericTitles,
@@ -79,6 +88,17 @@ var genericTitlesByHost = map[string]map[string]struct{}{
 	"m.youtube.com":   youtubeGenericTitles,
 	"youtu.be":        youtubeGenericTitles,
 	"www.youtu.be":    youtubeGenericTitles,
+
+	"amazon.com":       amazonGenericTitles,
+	"www.amazon.com":   amazonGenericTitles,
+	"amazon.co.uk":     amazonGenericTitles,
+	"www.amazon.co.uk": amazonGenericTitles,
+	"amazon.de":        amazonGenericTitles,
+	"www.amazon.de":    amazonGenericTitles,
+	"amazon.sg":        amazonGenericTitles,
+	"www.amazon.sg":    amazonGenericTitles,
+	"amazon.co.jp":     amazonGenericTitles,
+	"www.amazon.co.jp": amazonGenericTitles,
 }
 
 // dropGenericTitle removes a title that is only the page's shell.

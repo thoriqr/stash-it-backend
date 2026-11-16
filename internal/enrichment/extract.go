@@ -26,6 +26,11 @@ type document struct {
 	// some fields appear. Capturing only the allowlisted ids keeps an ordinary
 	// page from doubling its memory use in scripts nobody reads.
 	scriptPayloads map[string]string
+
+	// productImages holds the image attributes of product image elements, keyed
+	// by id. Only elements that carry one of those attributes are kept, so an
+	// ordinary page stores nothing here.
+	productImages map[string]productImageAttributes
 }
 
 // set records a candidate value.
@@ -64,6 +69,7 @@ func extract(
 	doc := &document{
 		candidates:     make(map[string]string),
 		scriptPayloads: make(map[string]string),
+		productImages:  make(map[string]productImageAttributes),
 	}
 
 	tokenizer := html.NewTokenizer(reader)
@@ -121,6 +127,9 @@ func extract(
 
 			case "meta":
 				collectMeta(doc, token.Attr)
+
+			case "img":
+				collectProductImage(doc, token.Attr)
 
 			case "link":
 				collectLink(doc, token.Attr)
@@ -202,6 +211,45 @@ func scriptElementID(attrs []html.Attribute) string {
 	}
 
 	return ""
+}
+
+// collectProductImage records the image attributes of a product image element.
+//
+// A page that publishes a preview through metadata does not need this. It exists
+// for pages that publish one only as markup, and the caller decides whether the
+// host it belongs to is relevant. Only elements carrying one of the attributes are
+// kept, so an ordinary image is ignored.
+func collectProductImage(
+	doc *document,
+	attrs []html.Attribute,
+) {
+	var (
+		id            string
+		oldHires      string
+		dynamicImages string
+	)
+
+	for _, attr := range attrs {
+		switch attr.Key {
+		case "id":
+			id = strings.TrimSpace(attr.Val)
+
+		case "data-old-hires":
+			oldHires = strings.TrimSpace(attr.Val)
+
+		case "data-a-dynamic-image":
+			dynamicImages = strings.TrimSpace(attr.Val)
+		}
+	}
+
+	if id == "" || (oldHires == "" && dynamicImages == "") {
+		return
+	}
+
+	doc.productImages[id] = productImageAttributes{
+		oldHires:     oldHires,
+		dynamicImage: dynamicImages,
+	}
 }
 
 // collectMeta records a meta tag.
