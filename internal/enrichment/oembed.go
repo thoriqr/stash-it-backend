@@ -203,7 +203,7 @@ func (e *enricher) enrichWithOEmbed(
 		imageBase, _ = url.Parse(payload.ProviderURL)
 	}
 
-	return Metadata{
+	metadata := Metadata{
 		Title: optionalText(payload.Title),
 		Platform: optionalPlatformName(
 			firstNonEmpty(payload.ProviderName, endpoint.ProviderName),
@@ -211,7 +211,9 @@ func (e *enricher) enrichWithOEmbed(
 		Description: optionalText(payload.Description),
 		ImageURL:    optionalURL(image, imageBase),
 		Author:      optionalText(payload.AuthorName),
-	}, nil
+	}
+
+	return applyInstagramTitle(parsed, metadata), nil
 }
 
 // photoOEmbedImage returns the image of a photo response.

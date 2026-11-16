@@ -472,6 +472,7 @@ func (e *enricher) enrichWithProfile(
 	}
 
 	metadata := selectMetadata(doc, finalURL)
+	metadata = applyInstagramTitle(finalURL, metadata)
 	metadata = applyTikTokUniversalData(doc, finalURL, metadata)
 	metadata = applyAmazonProductImage(doc, finalURL, metadata)
 	metadata = dropDuplicateDescription(metadata)
