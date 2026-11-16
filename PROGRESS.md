@@ -252,6 +252,11 @@ The two breaking changes must ship with, or before, the backend.
 - [ ] Decide whether preview images from Instagram, TikTok and Facebook need
       proxying. Their URLs are signed and expire within days, so a stored
       `image_url` goes dead even though the item is fine.
+- [ ] Decide whether Amazon prices are worth a PA-API integration. Amazon
+      publishes no Open Graph price tags, and its buybox price is withheld from an
+      unauthenticated request (`priceNotAvailable`); the `.a-offscreen` values on
+      the page belong to other sellers, bundles or carousel products. Do not scrape
+      one of those and store it as the item's price.
 
 ### Next on the roadmap
 
