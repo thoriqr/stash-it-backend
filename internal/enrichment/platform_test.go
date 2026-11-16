@@ -80,3 +80,34 @@ func TestExtract_UnknownPlatformIsUnchanged(t *testing.T) {
 
 	requireMetadata(t, metadata, "platform", "Example App")
 }
+
+// Steam publishes og:site rather than og:site_name or application-name.
+func TestExtract_OpenGraphSiteIsPlatform(t *testing.T) {
+	metadata := extractFrom(
+		t,
+		`<html><head>
+			<meta property="og:site" content="Steam">
+		</head></html>`,
+		"https://store.steampowered.com/app/2058190/Lost_Judgment/",
+	)
+
+	requireMetadata(t, metadata, "platform", "Steam")
+}
+
+// GOG's JSON-LD publisher is the game's publisher. The storefront's own name is
+// in og:site_name, and that is what the platform must be.
+func TestExtract_GOGPrefersStorefrontName(t *testing.T) {
+	metadata := extractFrom(
+		t,
+		`<html><head>
+			<meta property="og:site_name" content="GOG.com">
+			<script type="application/ld+json">
+				{"@context":"https://schema.org","@type":"Product",
+				 "publisher":{"@type":"Organization","name":"CD PROJEKT RED"}}
+			</script>
+		</head></html>`,
+		"https://www.gog.com/en/game/cyberpunk_2077",
+	)
+
+	requireMetadata(t, metadata, "platform", "GOG.com")
+}

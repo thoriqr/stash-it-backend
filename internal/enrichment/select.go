@@ -19,7 +19,7 @@ func selectMetadata(
 ) Metadata {
 	return Metadata{
 		Title:        optionalText(firstCandidate(doc, titlePrecedence)),
-		Platform:     optionalPlatformName(firstCandidate(doc, platformPrecedence)),
+		Platform:     optionalPlatformName(selectPlatform(doc, baseURL)),
 		Description:  optionalText(firstCandidate(doc, descriptionPrecedence)),
 		ImageURL:     optionalURL(firstCandidate(doc, imagePrecedence), baseURL),
 		CanonicalURL: optionalURL(firstCandidate(doc, canonicalPrecedence), baseURL),
@@ -27,6 +27,34 @@ func selectMetadata(
 		Author:       optionalText(firstCandidate(doc, authorPrecedence)),
 		Price:        selectPrice(doc),
 	}
+}
+
+// storefrontSiteNameHosts are hosts whose JSON-LD publisher names the game's
+// publisher rather than the storefront. On these hosts og:site_name is the
+// storefront's own name and is the only correct platform source.
+//
+// The value still comes from the page. The hostname only decides which declared
+// field to trust, in the same way the Amazon and Instagram rules are host-scoped.
+var storefrontSiteNameHosts = map[string]struct{}{
+	"gog.com":     {},
+	"www.gog.com": {},
+}
+
+func selectPlatform(
+	doc *document,
+	baseURL *url.URL,
+) string {
+	platform := firstCandidate(doc, platformPrecedence)
+
+	if baseURL != nil {
+		if _, ok := storefrontSiteNameHosts[normalizeHostname(baseURL.Hostname())]; ok {
+			if siteName := firstCandidate(doc, []string{metaOpenGraphSiteName}); siteName != "" {
+				return siteName
+			}
+		}
+	}
+
+	return platform
 }
 
 // firstCandidate returns the first candidate present in the given precedence

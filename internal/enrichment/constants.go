@@ -69,18 +69,21 @@ var (
 	// application-name comes first because it is the page making a claim about
 	// itself. The JSON-LD publisher and organisation names follow for the same
 	// reason. og:site_name is last because it is frequently a marketing name
-	// rather than the name of the platform the content belongs to.
+	// rather than the name of the platform the content belongs to. og:site is a
+	// non-standard variant used by Steam and is treated the same way.
 	platformPrecedence = []string{
 		metaApplicationName,
 		jsonLDPublisherName,
 		jsonLDOrganizationName,
 		jsonLDWebSiteName,
 		metaOpenGraphSiteName,
+		metaOpenGraphSite,
 	}
 
 	// siteNamePrecedence is the order site name candidates are taken from.
 	siteNamePrecedence = []string{
 		metaOpenGraphSiteName,
+		metaOpenGraphSite,
 		metaApplicationName,
 		jsonLDWebSiteName,
 		jsonLDPublisherName,
@@ -129,6 +132,7 @@ const (
 	metaOpenGraphURL         = "og:url"
 	metaOpenGraphImage       = "og:image"
 	metaOpenGraphSiteName    = "og:site_name"
+	metaOpenGraphSite        = "og:site"
 	metaOpenGraphAuthor      = "og:author"
 	metaOpenGraphDescription = "og:description"
 	metaTwitterTitle         = "twitter:title"
@@ -141,6 +145,15 @@ const (
 	// consumed by selectPrice rather than through a precedence order.
 	metaProductPriceAmount   = "product:price:amount"
 	metaProductPriceCurrency = "product:price:currency"
+
+	// Structured prices published as schema.org offers, in JSON-LD or as meta
+	// microdata. They are namespaced separately from the Open Graph tags so the
+	// extractor can prefer the tag published for this exact purpose while still
+	// falling back to a storefront's structured data.
+	jsonLDPriceAmount      = "jsonld:offers.price"
+	jsonLDPriceCurrency    = "jsonld:offers.priceCurrency"
+	microdataPriceAmount   = "itemprop:price"
+	microdataPriceCurrency = "itemprop:priceCurrency"
 
 	jsonLDName             = "jsonld:name"
 	jsonLDHeadline         = "jsonld:headline"
@@ -180,17 +193,21 @@ const scriptTypeJSONLD = "application/ld+json"
 // caller makes are read. This is not a Schema.org implementation and does not
 // attempt to be one.
 const (
-	jsonPropName        = "name"
-	jsonPropHeadline    = "headline"
-	jsonPropDescription = "description"
-	jsonPropImage       = "image"
-	jsonPropURL         = "url"
-	jsonPropAuthor      = "author"
-	jsonPropPublisher   = "publisher"
-	jsonPropGraph       = "@graph"
-	jsonPropValue       = "@value"
-	jsonPropType        = "@type"
-	jsonPropContentURL  = "contentUrl"
+	jsonPropName          = "name"
+	jsonPropHeadline      = "headline"
+	jsonPropDescription   = "description"
+	jsonPropImage         = "image"
+	jsonPropURL           = "url"
+	jsonPropAuthor        = "author"
+	jsonPropPublisher     = "publisher"
+	jsonPropGraph         = "@graph"
+	jsonPropValue         = "@value"
+	jsonPropType          = "@type"
+	jsonPropContentURL    = "contentUrl"
+	jsonPropOffers        = "offers"
+	jsonPropPrice         = "price"
+	jsonPropPriceCurrency = "priceCurrency"
+	jsonPropLowPrice      = "lowPrice"
 
 	// jsonTypeOrganization and jsonTypeWebSite are the @type values that make an
 	// entity usable as a platform signal.

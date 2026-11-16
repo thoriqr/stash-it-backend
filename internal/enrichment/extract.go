@@ -262,27 +262,44 @@ func collectMeta(
 	doc *document,
 	attrs []html.Attribute,
 ) {
-	key := ""
+	var (
+		key      string
+		itemprop string
+		content  string
+	)
 
 	for _, attr := range attrs {
 		switch attr.Key {
-		case "name", "property", "itemprop":
+		case "name", "property":
 			key = strings.ToLower(strings.TrimSpace(attr.Val))
+
+		case "itemprop":
+			itemprop = strings.ToLower(strings.TrimSpace(attr.Val))
+
+		case "content":
+			content = attr.Val
 		}
 	}
 
-	if key == "" {
-		return
+	// A tag with only itemprop keeps the old behaviour for every property except
+	// the price fields, which are namespaced below rather than becoming a generic
+	// "price" candidate.
+	if key == "" && itemprop != "price" && itemprop != "pricecurrency" {
+		key = itemprop
 	}
 
-	for _, attr := range attrs {
-		if attr.Key != "content" {
-			continue
-		}
+	doc.set(key, content)
 
-		doc.set(key, attr.Val)
+	// itemprop is a separate namespace from name/property. Only the price
+	// properties are read, because a price published as microdata is still a
+	// price the page declared, while other itemprop values would collide with
+	// the meta vocabulary.
+	switch itemprop {
+	case "price":
+		doc.set(microdataPriceAmount, content)
 
-		return
+	case "pricecurrency":
+		doc.set(microdataPriceCurrency, content)
 	}
 }
 
@@ -383,8 +400,11 @@ func collectJSONLD(
 		return
 	}
 
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+
 	var decoded any
-	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+	if err := decoder.Decode(&decoded); err != nil {
 		return
 	}
 
@@ -465,6 +485,13 @@ func walkJSONLDObject(
 		doc.set(jsonLDAuthorName, jsonLDNestedName(object, jsonPropAuthor))
 	}
 
+	// offers is the only place a storefront publishes its price in JSON-LD.
+	// It is read explicitly because it is a reference-shaped property whose
+	// nested price fields would otherwise be skipped as another entity.
+	if offers, ok := object[jsonPropOffers]; ok {
+		collectJSONLDOffers(doc, offers)
+	}
+
 	// @graph holds the page's entities as a list, and is by far the most common
 	// container once a site uses JSON-LD at all.
 	if graph, ok := object[jsonPropGraph]; ok {
@@ -480,7 +507,7 @@ func walkJSONLDObject(
 			continue
 		}
 
-		if key == jsonPropGraph {
+		if key == jsonPropGraph || key == jsonPropOffers {
 			continue
 		}
 
@@ -548,6 +575,80 @@ func jsonLDString(
 		if inner, ok := value[jsonPropValue].(string); ok {
 			return inner
 		}
+	}
+
+	return ""
+}
+
+// collectJSONLDOffers reads the first usable price from an offers property.
+//
+// offers is written as a single Offer, a list of Offers, or an AggregateOffer
+// carrying lowPrice and a nested list. The first offer with a price is used
+// because it is the store's default offer; a price range's low end is used only
+// when the aggregate itself declares no simple price.
+func collectJSONLDOffers(
+	doc *document,
+	value any,
+) {
+	switch offers := value.(type) {
+	case map[string]any:
+		if amount, currency := jsonLDOfferPrice(offers); amount != "" {
+			doc.set(jsonLDPriceAmount, amount)
+			doc.set(jsonLDPriceCurrency, currency)
+
+			return
+		}
+
+		if nested, ok := offers[jsonPropOffers]; ok {
+			collectJSONLDOffers(doc, nested)
+		}
+
+	case []any:
+		for _, item := range offers {
+			offer, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			if amount, currency := jsonLDOfferPrice(offer); amount != "" {
+				doc.set(jsonLDPriceAmount, amount)
+				doc.set(jsonLDPriceCurrency, currency)
+
+				return
+			}
+		}
+	}
+}
+
+// jsonLDOfferPrice returns an offer's price as an exact decimal string and its
+// declared currency. lowPrice is the AggregateOffer fallback.
+func jsonLDOfferPrice(offer map[string]any) (string, string) {
+	amount := firstNonEmpty(
+		jsonLDScalar(offer[jsonPropPrice]),
+		jsonLDScalar(offer[jsonPropLowPrice]),
+	)
+	if amount == "" {
+		return "", ""
+	}
+
+	return amount, jsonLDScalar(offer[jsonPropPriceCurrency])
+}
+
+// jsonLDScalar reads a scalar property as a string.
+//
+// A JSON-LD block is decoded with UseNumber, so a price written as a JSON number
+// arrives as json.Number and keeps its exact decimal text. The {"@value": ...}
+// form is accepted for the same reason as in jsonLDString.
+func jsonLDScalar(value any) string {
+	switch scalar := value.(type) {
+	case string:
+		return strings.TrimSpace(scalar)
+
+	case json.Number:
+		return scalar.String()
+
+	case map[string]any:
+		return jsonLDScalar(scalar[jsonPropValue])
 	}
 
 	return ""

@@ -1404,3 +1404,18 @@ func TestExtract_JavaScriptShellIsAnEmptySuccess(t *testing.T) {
 	requireNoMetadata(t, metadata, "platform")
 	requireNoMetadata(t, metadata, "canonical")
 }
+
+// A meta tag that carries only itemprop is still a metadata candidate for the
+// non-price vocabularies; the price fields are the only ones namespaced
+// separately.
+func TestExtract_MicrodataDescriptionIsStillRead(t *testing.T) {
+	metadata := extractFrom(
+		t,
+		`<html><head>
+			<meta itemprop="description" content="A product description">
+		</head></html>`,
+		"https://example.com/product",
+	)
+
+	requireMetadata(t, metadata, "description", "A product description")
+}
