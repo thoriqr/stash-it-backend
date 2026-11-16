@@ -17,7 +17,9 @@ column, the code and its comments hold the detail.
    never be used by Saved Item enrichment.
 
 3. **`platform` is metadata-derived.** It must not be inferred from the URL
-   hostname, client input, or an implicit domain-to-platform mapping.
+   hostname, client input, or an implicit domain-to-platform mapping. Recognizing a
+   host to choose an oEmbed endpoint is not an inference about `platform`: the value
+   still comes from what the provider answers (49c).
 
 4. **`domain` is derived and normalized server-side.** Only lowercase and one
    leading `www.` are removed. Do not add public-suffix or registrable-domain
@@ -525,6 +527,87 @@ searchable as part of this feature.
     platform and an item the user already filed are all finished tasks. An
     ownership mismatch is reported and archived, because it cannot happen through
     any real path and would otherwise hide a bug.
+
+49a. **The provider list is data, not code, and enrichment never fetches it.**
+    The list of oEmbed endpoints is the community registry at
+    `oembed.com/providers.json`. `internal/oembedregistry` owns reading and caching
+    it; `internal/enrichment` consumes the narrow `ProviderResolver` interface and
+    knows nothing about where an endpoint came from. That keeps the registry
+    swappable and keeps persistence out of the extraction package.
+
+    The copy is cached in Redis for a day and refreshed lazily on demand, so there
+    is no scheduler and no cron. A cache or fetch failure degrades to the last good
+    copy and then to the HTML path; it never fails an enrichment. Do not cache an
+    individual oEmbed response in Redis as well. The result is already persisted on
+    the saved item, and a second copy would create a second truth.
+
+    The registry is a directory, not a metadata service. It publishes an endpoint
+    for a URL pattern and nothing else. Endpoints that need an access token, that
+    are stale, or that answer XML simply fail, and the HTML path runs.
+
+49b. **oEmbed is asked first, and the HTML path is a fallback rather than a last
+    resort.** A known provider is asked before the page is fetched, because a page
+    is expensive and some hosts answer a datacenter with a bot challenge or a
+    client-side shell. The page is still read when the endpoint fails, returns
+    nothing, or returns only a platform name.
+
+    Results are merged, not replaced: the HTML result wins for every field it
+    supplied and oEmbed fills what is empty. A page's own discovery link
+    (`rel="alternate"`, `application/json+oembed`) is followed only when the merged
+    result is still missing a title or a platform, so a complete page costs one
+    request.
+
+49c. **A host may be a built-in provider, and that is not a platform inference.**
+    YouTube and TikTok are recognized by exact hostname so their URLs can be
+    normalized and their short links resolved: a video id, not the submitted URL,
+    determines the oEmbed request. The platform still comes from `provider_name` in
+    the response, never from the hostname. `SkipHTMLFallback` exists for a host whose
+    page is known to be useless from a datacenter, and it is the only case where a
+    failed oEmbed is final. Tokopedia's request profile and transport are separate
+    from all of this and stay as measured; do not fold it into the registry.
+
+49d. **A platform name is reduced to its brand, and a request's language is
+    fixed.** A provider may localize the name it publishes: the same Facebook group
+    permalink answered `Grup Facebook`, `Facebook Groups` and `Facebook 小组`
+    depending on where the request came from. `platform` is therefore reduced to the
+    brand the name contains, so one platform cannot become several collections by
+    locale. This is still metadata-derived: the page's own value is the input, and
+    nothing is inferred from the URL.
+
+    Every outbound request also sends a fixed `Accept-Language`. Without it the
+    language an origin answers in is chosen from the server's address, which would
+    make stored metadata a property of the datacenter. The header goes on the HTML
+    profiles and on the oEmbed request, and a new outbound path must set it too.
+
+    Canonicalization narrows the value that reaches 48's `system_key`, so it is the
+    reason one platform cannot produce several collections. It is not a new
+    grouping rule: the known names are only the localized forms of a brand the page
+    published, and an unrecognized name is stored exactly as published.
+
+49e. **A shell title and a provider's not-found page are not metadata.** A page
+    that is a login wall, a client-side shell or a not-found route still has a
+    title, and it is frequently the product's name (`TikTok - Make Your Day`,
+    `Instagram`, `Facebook Groups`). Storing that looks like a real title and hides
+    the fact that nothing was read, so it is dropped. The list is host-scoped, so a
+    page genuinely titled `Instagram` elsewhere is unaffected.
+
+    A provider that answers its not-found route with a success status is a content
+    failure, not an empty success. An expired TikTok short link does exactly this,
+    and it must not be recorded as a completed enrichment.
+
+49f. **A discovery link is read, never trusted.** Following it means one more
+    request to an address the page chose, so it is resolved like any other metadata
+    URL (http and https only), fetched only through the guarded client, and its
+    failure is swallowed because the HTML result is already valid. It supplies only
+    fields the page itself left empty.
+
+49g. **A preview image URL is stored as published, and may expire.** Instagram,
+    TikTok and Facebook serve signed URLs that stop working within days. Storing
+    them is still right: the URL was the page's own answer at enrichment time, and
+    a re-enrichment reads a fresh one. Do not silently drop the image to avoid a
+    dead link, and do not treat a later 403 on it as an enrichment problem. Proxying
+    or re-hosting those images is a separate product decision that has not been
+    made.
 
 ## Collections, ownership and listings
 

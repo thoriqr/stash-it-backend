@@ -16,7 +16,7 @@ left. It does not describe how anything works and it does not hold rules.
 | Client releases and update flow       | `documentation/client-releases.md`    |
 | History                               | `git log`                             |
 
-_State as of the last recorded entry: 2026-11-14._
+_State as of the last recorded entry: 2026-11-16._
 
 ## Summary
 
@@ -68,15 +68,27 @@ the feature exists; individual releases are not recorded here.
 | Automatic organization                          | done  | `internal/worker/organization`                     |
 | Guarded outbound fetching                       | done  | `internal/security`                                |
 | Optional product price (amount + currency)      | done  | `internal/enrichment`, `internal/api/enrichment`, `internal/worker/enrichment` |
-| YouTube metadata through oEmbed                 | done  | `internal/enrichment/youtube.go`                   |
+| oEmbed provider registry, oEmbed-first path     | done  | `internal/oembedregistry`, `internal/enrichment/oembed.go` |
+| oEmbed discovery link as a fallback             | done  | `internal/enrichment/extract.go`                    |
+| YouTube, TikTok, and short-link hosts through oEmbed | done | `internal/enrichment/{youtube,tiktok}.go`, `internal/oembedregistry` |
+| TikTok caption and cover from the page state blob | done | `internal/enrichment/tiktok.go`                   |
+| Canonical platform names, locale-stable requests | done | `internal/enrichment/platform.go`, `request.go`    |
+| Shell-title and not-found-page filtering        | done  | `internal/enrichment/titles.go`                     |
+| Tokopedia request profile and transport         | done  | `internal/enrichment/request.go`                    |
 
-YouTube is the one host not read as HTML. Its watch pages are served without any
-Open Graph tags when the request comes from a datacenter address, and with them
-when it comes from a residential one; the same User-Agent produced both, so no
-header recovers the first. oEmbed answers the same question for a few kilobytes
-and is not gated by source address, so `youtube.com`, `youtu.be`, `m.`, `music.`
-and `youtube-nocookie.com` are read through it. Channel, playlist and search URLs
-still take the HTML path. Verified against three live links from the VPS.
+Enrichment asks oEmbed first when a provider is known, falls back to the page, and
+uses a page's own discovery link when the result is still incomplete. The provider
+list is the community registry at `oembed.com/providers.json`, cached for a day, so
+adding a provider is not a code change. Tokopedia keeps its own request profile and
+transport; it was measured against real product pages and is deliberately not folded
+into the registry.
+
+Platform is reduced to a brand name when a page publishes a localized product name
+(`Grup Facebook`, `Facebook Groups`, `Facebook 小组` all become `Facebook`), and
+every outbound request sends a fixed `Accept-Language`, so stored metadata does not
+depend on where the worker runs. Shell titles and provider not-found pages are
+discarded rather than stored. Verified from the development machine against live
+Instagram, TikTok, Facebook page, post and group links, and Tokopedia.
 
 ### Abuse protection
 
@@ -111,7 +123,17 @@ The state of `000027` to `000029` is not recorded here.
 
 ## In flight
 
-Nothing uncommitted. Run `git status` first; this list may be stale.
+Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
+oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
+requests, title filtering). It is verified on the development machine only, with
+`go build ./...`, `go vet ./...` and the full `go test ./...`. Run `git status`
+first; this list may be stale.
+
+Since the provider list is cached and the platform is now canonical, two things
+change for existing data once it is deployed: a `Grup Facebook` collection created
+by an earlier run stops being a target (new items file under `Facebook`), and items
+enriched before this change keep whatever metadata they already hold, because there
+is no backfill.
 
 Recently landed and deployed: registration recovery (`3fc5405`), the Google
 Desktop OAuth client (`013020c`), YouTube enrichment through oEmbed (`8789c62`),
@@ -163,6 +185,11 @@ Open:
 - [ ] Re-enrich items saved while YouTube pages were being served without
       metadata, through `POST /saved-items/:id/enrich`. There is no backfill; it
       is per item and on demand.
+- [ ] Deploy the enrichment rework (registry, oEmbed-first, TikTok, platform
+      canonicalization) to the VPS, then re-enrich the items that were stored with
+      a shell title, a missing platform, or a localized platform name.
+- [ ] Remove any `Grup Facebook` (or other localized-platform) collection left in
+      production by the pre-canonicalization run; new items no longer file there.
 
 ### Flutter client
 
@@ -217,6 +244,12 @@ The two breaking changes must ship with, or before, the backend.
 - [ ] Align password length validation: registration and reset use `min=8`; login
       and `PUT /users/me/password` use `min=8,max=128`.
 - [ ] Idle-window clock mix in the refresh path (`auth-sessions.md`, Open items).
+- [ ] Decide whether a failed `providers.json` refresh should be surfaced
+      anywhere beyond a log line. Today it degrades to the last good copy, or to
+      the HTML path, and nothing reports that the registry has been stale for days.
+- [ ] Decide whether preview images from Instagram, TikTok and Facebook need
+      proxying. Their URLs are signed and expire within days, so a stored
+      `image_url` goes dead even though the item is fine.
 
 ### Next on the roadmap
 
