@@ -627,6 +627,35 @@ searchable as part of this feature.
     remains whatever the page declares, and a page that declares none still
     enriches without one.
 
+49j. **A price is read from the structured data the page publishes, never from
+    arbitrary numbers.** After the Open Graph product tags, the extractor reads a
+    schema.org offer from JSON-LD (`offers.price`, or `lowPrice` for an
+    `AggregateOffer`) and from microdata (`itemprop=price` / `priceCurrency`). Open
+    Graph wins when both exist. JSON-LD is decoded with `UseNumber`, so a price
+    written as a JSON number keeps its exact decimal text. A structured price is
+    stored only when its currency maps to one the product supports (`USD`, `IDR`);
+    a bare amount from a multi-currency storefront is more misleading than no
+    price. The Open Graph rule is unchanged: a valid amount with an unknown
+    currency is still a price with an empty currency. Steam groups IDR with spaces
+    or dots and writes EUR with a comma decimal; the normalizer uses the declared
+    currency and refuses to guess without one.
+
+49k. **On GOG the platform comes from `og:site_name`, not the JSON-LD
+    publisher.** GOG's `publisher` is the game's publisher (`CD PROJEKT RED`), so
+    the ordinary precedence would store a publisher as the platform. The page's
+    `og:site_name` is `GOG.com`. The hostname only chooses which declared field to
+    trust; the value still comes from the page, and no hostname-derived label is
+    invented. Steam's non-standard `og:site` is read as a platform candidate for
+    the same reason. PlayStation publishes no platform signal, so PSN items keep
+    `platform` NULL and stay in `Unsorted`.
+
+49l. **Nintendo is not scraped, and Epic is best-effort.** `nintendo.com`'s
+    `robots.txt` reserves all rights, explicitly prohibits web scraping and
+    text/data mining, and disallows GPTBot, Claude-Web, Claudebot, CCBot and other
+    agents; no Nintendo extractor is added. Epic's product HTML is bot-protected
+    from some networks (403 or an auth redirect); its JSON-LD price is captured
+    when the page is readable, but no cookie jar or browser workaround is added.
+
 ## Collections, ownership and listings
 
 50. **Ownership is established by `id AND user_id`, never by a foreign key

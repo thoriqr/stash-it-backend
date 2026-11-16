@@ -68,6 +68,9 @@ the feature exists; individual releases are not recorded here.
 | Automatic organization                          | done  | `internal/worker/organization`                     |
 | Guarded outbound fetching                       | done  | `internal/security`                                |
 | Optional product price (amount + currency)      | done  | `internal/enrichment`, `internal/api/enrichment`, `internal/worker/enrichment` |
+| Structured storefront prices (JSON-LD offers, microdata) | done | `internal/enrichment/{extract,price}.go` |
+| Steam `og:site` and GOG storefront platform     | done  | `internal/enrichment/{constants,select}.go`         |
+| Nintendo storefront                             | excluded | `robots.txt` prohibits scraping (`decisions.md` 49l) |
 | oEmbed provider registry, oEmbed-first path     | done  | `internal/oembedregistry`, `internal/enrichment/oembed.go` |
 | oEmbed discovery link as a fallback             | done  | `internal/enrichment/extract.go`                    |
 | YouTube, TikTok, and short-link hosts through oEmbed | done | `internal/enrichment/{youtube,tiktok}.go`, `internal/oembedregistry` |
@@ -91,6 +94,15 @@ every outbound request sends a fixed `Accept-Language`, so stored metadata does 
 depend on where the worker runs. Shell titles and provider not-found pages are
 discarded rather than stored. Verified from the development machine against live
 Instagram, TikTok, Facebook page, post and group links, and Tokopedia.
+
+Prices are read from Open Graph product tags first, then from a schema.org offer in
+JSON-LD or microdata. Steam publishes microdata; Epic, GOG and PSN publish JSON-LD.
+Only `USD` and `IDR` are stored for structured prices, so a page served in another
+currency yields no price. Steam's platform comes from `og:site`; GOG's platform is
+its `og:site_name`, because its JSON-LD publisher is the game's publisher. Nintendo
+is not scraped: its `robots.txt` explicitly prohibits it. Epic is best-effort; its
+product HTML is bot-protected from some networks (403 or an auth redirect), while
+Steam, GOG and PSN were fetched successfully.
 
 ### Abuse protection
 
@@ -127,9 +139,11 @@ The state of `000027` to `000029` is not recorded here.
 
 Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
 oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
-requests, title filtering, Amazon preview images and Instagram titles). It is
-verified on the development machine only, with `go build ./...`, `go vet ./...`
-and the full `go test ./...`. Run `git status` first; this list may be stale.
+requests, title filtering, Amazon preview images, Instagram titles, structured
+storefront prices, and the Steam/GOG platform rules). It is verified on the
+development machine only, with `go build ./...`, `go vet ./...` and the full
+`go test ./...`. Live checks succeeded for Steam, GOG and PSN; Epic answered 403
+from this network. Run `git status` first; this list may be stale.
 
 Since the provider list is cached and the platform is now canonical, two things
 change for existing data once it is deployed: a `Grup Facebook` collection created
@@ -188,8 +202,11 @@ Open:
       metadata, through `POST /saved-items/:id/enrich`. There is no backfill; it
       is per item and on demand.
 - [ ] Deploy the enrichment rework (registry, oEmbed-first, TikTok, platform
-      canonicalization) to the VPS, then re-enrich the items that were stored with
-      a shell title, a missing platform, or a localized platform name.
+      canonicalization, structured prices) to the VPS, then re-enrich the items
+      that were stored with a shell title, a missing platform, or a localized
+      platform name.
+- [ ] Re-enrich storefront items (Steam, GOG, PSN, and Epic when readable) to
+      backfill prices. Prices are snapshots; existing rows have none.
 - [ ] Remove any `Grup Facebook` (or other localized-platform) collection left in
       production by the pre-canonicalization run; new items no longer file there.
 
