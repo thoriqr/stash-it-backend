@@ -74,6 +74,8 @@ the feature exists; individual releases are not recorded here.
 | TikTok caption and cover from the page state blob | done | `internal/enrichment/tiktok.go`                   |
 | Canonical platform names, locale-stable requests | done | `internal/enrichment/platform.go`, `request.go`    |
 | Shell-title and not-found-page filtering        | done  | `internal/enrichment/titles.go`                     |
+| Amazon product image and duplicate-description rule | done | `internal/enrichment/{amazon,metadata}.go`        |
+| Instagram caption title                         | done  | `internal/enrichment/instagram.go`                  |
 | Tokopedia request profile and transport         | done  | `internal/enrichment/request.go`                    |
 
 Enrichment asks oEmbed first when a provider is known, falls back to the page, and
@@ -125,9 +127,9 @@ The state of `000027` to `000029` is not recorded here.
 
 Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
 oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
-requests, title filtering). It is verified on the development machine only, with
-`go build ./...`, `go vet ./...` and the full `go test ./...`. Run `git status`
-first; this list may be stale.
+requests, title filtering, Amazon preview images and Instagram titles). It is
+verified on the development machine only, with `go build ./...`, `go vet ./...`
+and the full `go test ./...`. Run `git status` first; this list may be stale.
 
 Since the provider list is cached and the platform is now canonical, two things
 change for existing data once it is deployed: a `Grup Facebook` collection created

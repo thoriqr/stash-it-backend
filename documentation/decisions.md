@@ -609,6 +609,24 @@ searchable as part of this feature.
     or re-hosting those images is a separate product decision that has not been
     made.
 
+49h. **A description that repeats the title is not a description.** Amazon
+    publishes the document title as the meta description, which stores the same
+    text twice and makes the description look like real content. When the two are
+    equal after whitespace normalization and case folding, the description is
+    dropped; a description that only overlaps the title is kept. This is a generic
+    rule, not a host rule.
+
+49i. **Host-scoped presentation rules stay narrow and never decide platform.**
+    Amazon publishes no Open Graph and no JSON-LD, so its preview image is read
+    from `#landingImage` (`data-old-hires`, then the largest product URL in
+    `data-a-dynamic-image`) and only from the `/images/I/` path, because a page can
+    answer with a share preview whose landing image is a brand icon. Instagram
+    publishes `Author on Instagram: "<caption>"` as its title, so the title is
+    reduced to `Author on Instagram` and the caption stays in the description. Any
+    other format is left alone. Both rules change a field's value only: `platform`
+    remains whatever the page declares, and a page that declares none still
+    enriches without one.
+
 ## Collections, ownership and listings
 
 50. **Ownership is established by `id AND user_id`, never by a foreign key
