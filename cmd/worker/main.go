@@ -15,6 +15,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
+	"github.com/thoriqr/stash-it-backend/internal/oembedregistry"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	workerenrichment "github.com/thoriqr/stash-it-backend/internal/worker/enrichment"
 	workerenrichmentdb "github.com/thoriqr/stash-it-backend/internal/worker/enrichment/generated"
@@ -107,10 +108,23 @@ func main() {
 		genericOutboundFetchPolicy,
 	)
 
-	metadataEnricher := enrichmentcore.NewEnricherWithTransports(
-		security.NewGuardedHTTPClient(genericOutboundFetchPolicy),
+	genericOutboundClient := security.NewGuardedHTTPClient(
+		genericOutboundFetchPolicy,
+	)
+
+	// The registry is cached in the worker's own Redis, so a restart does not
+	// force a fetch and the API and worker converge on the same daily copy.
+	providerRegistry := oembedregistry.New(
+		genericOutboundClient,
+		oembedregistry.NewRedisCache(redisClient),
+		log,
+	)
+
+	metadataEnricher := enrichmentcore.NewEnricherWithResolver(
+		genericOutboundClient,
 		security.NewGuardedHTTPClient(tokopediaOutboundFetchPolicy),
 		genericOutboundFetchPolicy,
+		providerRegistry,
 	)
 
 	enrichmentQueries := workerenrichmentdb.New(pool)

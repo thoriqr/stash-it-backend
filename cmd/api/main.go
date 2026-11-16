@@ -34,6 +34,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/observability"
+	"github.com/thoriqr/stash-it-backend/internal/oembedregistry"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
@@ -379,10 +380,25 @@ func main() {
 		genericOutboundFetchPolicy,
 	)
 
-	metadataEnricher := enrichmentcore.NewEnricherWithTransports(
-		security.NewGuardedHTTPClient(genericOutboundFetchPolicy),
+	genericOutboundClient := security.NewGuardedHTTPClient(
+		genericOutboundFetchPolicy,
+	)
+
+	// The provider registry is a directory of oEmbed endpoints, not a metadata
+	// source. It is cached in the same Redis the API already owns, so the
+	// synchronous endpoint and the worker share one daily copy instead of each
+	// fetching the list on its own schedule.
+	providerRegistry := oembedregistry.New(
+		genericOutboundClient,
+		oembedregistry.NewRedisCache(redisClient),
+		log,
+	)
+
+	metadataEnricher := enrichmentcore.NewEnricherWithResolver(
+		genericOutboundClient,
 		security.NewGuardedHTTPClient(tokopediaOutboundFetchPolicy),
 		genericOutboundFetchPolicy,
+		providerRegistry,
 	)
 
 	enrichment.RegisterModule(

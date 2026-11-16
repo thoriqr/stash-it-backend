@@ -49,6 +49,19 @@ var (
 	ErrUnsupportedContentType = errors.New(
 		"response is not an html document",
 	)
+
+	// ErrInvalidOEmbedResponse is returned when an oEmbed endpoint answered with
+	// something that is not a usable JSON document. It is a content failure: the
+	// endpoint is reachable and will answer the same way again.
+	ErrInvalidOEmbedResponse = errors.New(
+		"oembed response is not usable",
+	)
+
+	// ErrNotFoundPage is returned when a page redirects to a provider's
+	// not-found page while still answering with a success status. An expired
+	// short link does this, and the page would otherwise be stored as a generic
+	// title with no platform.
+	ErrNotFoundPage = errors.New("page resolved to a not found page")
 )
 
 // FailureKind classifies an enrichment failure so that callers can react without

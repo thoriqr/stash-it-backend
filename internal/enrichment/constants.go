@@ -116,6 +116,12 @@ const (
 	titleElement      = "<title>"
 	metaLinkCanonical = "<link rel=canonical>"
 
+	// oembedDiscoveryKey is not a metadata field. It records the href of a
+	// page's oEmbed discovery link so the enricher can follow it after the page
+	// has been read. It lives in the same candidate map only because every other
+	// parsed value does.
+	oembedDiscoveryKey = "<link rel=alternate type=application/json+oembed>"
+
 	metaDescription          = "description"
 	metaAuthor               = "author"
 	metaApplicationName      = "application-name"
@@ -147,9 +153,18 @@ const (
 	jsonLDWebSiteName      = "jsonld:website.name"
 )
 
-// linkRelCanonical is the link relation that declares a canonical URL. It is
-// matched as one token of a space separated list, because rel may carry several.
-const linkRelCanonical = "canonical"
+// Link relations and media types read from <link> elements.
+//
+// rel carries a space separated list, so each relation is matched as one token
+// rather than compared against the whole attribute.
+const (
+	linkRelCanonical = "canonical"
+	linkRelAlternate = "alternate"
+
+	// oembedJSONMediaType is the type a page declares on its oEmbed discovery
+	// link. Only the JSON form is followed; the XML form is not parsed.
+	oembedJSONMediaType = "application/json+oembed"
+)
 
 // scriptTypeJSONLD is the script type carrying a JSON-LD block.
 const scriptTypeJSONLD = "application/ld+json"

@@ -47,28 +47,47 @@ type requestProfile struct {
 	// its configured default, which is the honest crawler agent.
 	userAgent string
 
+	// acceptLanguage, when non-empty, is sent as the Accept-Language header. It
+	// is set on every profile because without it an origin is free to answer in
+	// whatever language the request's source address implies, which makes the
+	// stored metadata depend on where the worker happens to run.
+	acceptLanguage string
+
 	// transport is the guarded client the profile's hosts use. It is read from the
 	// host's own entry, so the headers and the transport cannot disagree.
 	transport transportKind
 }
+
+// enrichAcceptLanguage asks for English.
+//
+// The language an origin answers in is otherwise chosen from the source address,
+// so a worker on a VPS in one region and a worker in another would store different
+// text for the same page. Facebook is the measured case: the same group permalink
+// is titled "Facebook Groups" from one address and "Facebook 小组" from another.
+// Setting the header makes the result a property of the request rather than of the
+// datacenter. English is the default because the stored metadata is read by
+// whoever saved the item, and the product has no per-user locale for it.
+const enrichAcceptLanguage = "en-US,en;q=0.9"
 
 var (
 	// genericRequestProfile is the fallback for every host without a verified,
 	// host-specific profile. It asks for HTML and leaves the User-Agent to the
 	// guarded client's default.
 	genericRequestProfile = requestProfile{
-		accept:    enrichAcceptHeader,
-		userAgent: "",
-		transport: genericTransport,
+		accept:         enrichAcceptHeader,
+		userAgent:      "",
+		acceptLanguage: enrichAcceptLanguage,
+		transport:      genericTransport,
 	}
 
 	// tokopediaRequestProfile is the profile verified against a real product page
 	// and a local worker run. It is applied only to the exact hostnames in
 	// marketplaceRequestProfiles, never globally.
 	tokopediaRequestProfile = requestProfile{
-		accept:    "*/*",
-		userAgent: "Mozilla/5.0",
-		transport: tokopediaTransport,
+		accept:         "*/*",
+		userAgent:      "Mozilla/5.0",
+		acceptLanguage: enrichAcceptLanguage,
+		transport:      tokopediaTransport,
 	}
 )
 

@@ -1,11 +1,6 @@
 package enrichment
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 )
@@ -32,11 +27,6 @@ const (
 	// link, a /live/ URL and a /watch URL with tracking parameters all resolve to
 	// the same request.
 	youtubeCanonicalWatchURL = "https://www.youtube.com/watch?v="
-
-	// youtubeMaxOEmbedBytes bounds the oEmbed body. A real response is about two
-	// kilobytes; this leaves room without letting a misdirected endpoint stream
-	// something large.
-	youtubeMaxOEmbedBytes int64 = 64 << 10
 )
 
 // youtubeHosts are the hostnames whose video pages oEmbed can answer for.
@@ -141,122 +131,4 @@ func isYouTubeVideoID(id string) bool {
 	}
 
 	return true
-}
-
-// youtubeOEmbedResponse is the part of the oEmbed document this package reads.
-//
-// Only the fields that map onto Metadata are decoded. The response also carries
-// an iframe snippet and the provider's own URLs, none of which is metadata about
-// the saved item.
-type youtubeOEmbedResponse struct {
-	Title        string `json:"title"`
-	AuthorName   string `json:"author_name"`
-	ThumbnailURL string `json:"thumbnail_url"`
-	ProviderName string `json:"provider_name"`
-}
-
-// enrichYouTube reads a video's metadata from oEmbed.
-//
-// client must be the guarded client, so the request goes through the same dialer,
-// redirect limit and size limits as every other outbound fetch. The endpoint is
-// fixed rather than taken from the submission, so this path cannot be pointed at
-// an arbitrary address.
-//
-// An empty title is reported as an empty result with no error, which is how this
-// package treats every page that was reached but declared nothing usable. A
-// video that is private, deleted or age-restricted answers 404 and is classified
-// as a content failure, because another attempt cannot change it.
-func (e *enricher) enrichYouTube(
-	ctx context.Context,
-	client *http.Client,
-	videoID string,
-) (Metadata, error) {
-	endpoint := e.youtubeOEmbedURL +
-		"?url=" + url.QueryEscape(youtubeCanonicalWatchURL+videoID) +
-		"&format=json"
-
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		endpoint,
-		nil,
-	)
-	if err != nil {
-		return Metadata{}, newFailure(
-			FailureContent,
-			fmt.Errorf("%w: %w", ErrInvalidURL, err),
-		)
-	}
-
-	request.Header.Set("Accept", "application/json")
-
-	response, err := client.Do(request)
-	if err != nil {
-		return Metadata{}, newFailure(
-			requestFailureKind(err),
-			fmt.Errorf("%w: %w", ErrFetchFailed, err),
-		)
-	}
-
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		failure := newFailure(
-			statusFailureKind(response.StatusCode),
-			fmt.Errorf(
-				"%w: status %d",
-				ErrUnexpectedStatus,
-				response.StatusCode,
-			),
-		)
-		failure.StatusCode = response.StatusCode
-
-		return Metadata{}, failure
-	}
-
-	body, err := io.ReadAll(io.LimitReader(
-		response.Body,
-		youtubeMaxOEmbedBytes,
-	))
-	if err != nil {
-		return Metadata{}, newFailure(
-			FailureFetch,
-			fmt.Errorf("%w: %w", ErrFetchFailed, err),
-		)
-	}
-
-	var oembed youtubeOEmbedResponse
-	if err := json.Unmarshal(body, &oembed); err != nil {
-		return Metadata{}, newFailure(
-			FailureContent,
-			fmt.Errorf(
-				"%w: oembed response: %w",
-				ErrUnsupportedContentType,
-				err,
-			),
-		)
-	}
-
-	return Metadata{
-		Title:    optionalText(oembed.Title),
-		Platform: optionalText(youtubePlatform(oembed.ProviderName)),
-		ImageURL: optionalURL(oembed.ThumbnailURL, nil),
-		Author:   optionalText(oembed.AuthorName),
-	}, nil
-}
-
-// youtubePlatform returns the platform name to record.
-//
-// provider_name is used when the response carries it, and "YouTube" when it does
-// not. This is not a platform derived from a hostname: the provider states its own
-// name in the response, which is exactly the kind of self-description the rest of
-// this package reads out of a page. The fallback exists only because the field is
-// documented as optional and a missing value should not lose a classification that
-// the request has already established.
-func youtubePlatform(providerName string) string {
-	if normalized := normalizeText(providerName); normalized != "" {
-		return normalized
-	}
-
-	return "YouTube"
 }

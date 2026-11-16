@@ -19,7 +19,7 @@ func selectMetadata(
 ) Metadata {
 	return Metadata{
 		Title:        optionalText(firstCandidate(doc, titlePrecedence)),
-		Platform:     optionalText(firstCandidate(doc, platformPrecedence)),
+		Platform:     optionalPlatformName(firstCandidate(doc, platformPrecedence)),
 		Description:  optionalText(firstCandidate(doc, descriptionPrecedence)),
 		ImageURL:     optionalURL(firstCandidate(doc, imagePrecedence), baseURL),
 		CanonicalURL: optionalURL(firstCandidate(doc, canonicalPrecedence), baseURL),

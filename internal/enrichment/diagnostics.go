@@ -1,7 +1,6 @@
 package enrichment
 
 import (
-	"errors"
 	"net/url"
 	"strings"
 )
@@ -50,17 +49,43 @@ func SafeErrorMessage(err error) string {
 		return ""
 	}
 
-	var urlErr *url.Error
-	if !errors.As(err, &urlErr) {
-		return err.Error()
-	}
+	message := err.Error()
 
 	// Every wrapper in this package embeds the cause's rendering verbatim, so
 	// replacing the whole url.Error rendering with its cause removes the URL
 	// without disturbing the surrounding context.
-	return strings.ReplaceAll(
-		err.Error(),
-		urlErr.Error(),
-		urlErr.Err.Error(),
-	)
+	//
+	// The walk visits every error in the chain rather than only the first one it
+	// can find, because a combined failure can carry two transport errors with two
+	// different URLs. Leaving the second one in the message would defeat the
+	// reason this function exists.
+	var stripURLs func(error)
+
+	stripURLs = func(current error) {
+		if current == nil {
+			return
+		}
+
+		if urlErr, ok := current.(*url.Error); ok {
+			message = strings.ReplaceAll(
+				message,
+				urlErr.Error(),
+				urlErr.Err.Error(),
+			)
+		}
+
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range wrapped.Unwrap() {
+				stripURLs(child)
+			}
+
+		case interface{ Unwrap() error }:
+			stripURLs(wrapped.Unwrap())
+		}
+	}
+
+	stripURLs(err)
+
+	return message
 }

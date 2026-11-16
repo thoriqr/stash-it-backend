@@ -96,6 +96,40 @@ func TestEnrich_SendsAnHTMLAcceptHeader(t *testing.T) {
 	require.Contains(t, gotAccept, "application/xhtml+xml")
 }
 
+// The language header is what keeps stored text from depending on where the
+// worker runs. It is asserted on the generic path, which is what every host
+// without a verified profile uses, and separately for Tokopedia's profile so a
+// host-specific header set cannot quietly drop it.
+func TestEnrich_SendsAnAcceptLanguageHeader(t *testing.T) {
+	t.Run("generic host", func(t *testing.T) {
+		var got string
+
+		server := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("Accept-Language")
+
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = io.WriteString(w, testPage)
+			}),
+		)
+		defer server.Close()
+
+		_, err := newTestEnricher(t, server.URL).
+			Enrich(context.Background(), server.URL)
+
+		require.NoError(t, err)
+		require.Equal(t, enrichAcceptLanguage, got)
+	})
+
+	t.Run("Tokopedia profile", func(t *testing.T) {
+		require.Equal(
+			t,
+			enrichAcceptLanguage,
+			tokopediaRequestProfile.acceptLanguage,
+		)
+	})
+}
+
 func TestEnrich_UsesTheInjectedClient(t *testing.T) {
 	// Proves enrichment does not construct its own transport. The injected
 	// client's transport is the only one that can be reached, so a request

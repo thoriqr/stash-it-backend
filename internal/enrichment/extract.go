@@ -19,6 +19,13 @@ import (
 // meta tag value compete on the same footing.
 type document struct {
 	candidates map[string]string
+
+	// scriptPayloads holds the text of a small allowlist of script elements,
+	// keyed by id. It exists for state blobs a page renders itself from, such as
+	// TikTok's universal data, which is not HTML metadata but is the only place
+	// some fields appear. Capturing only the allowlisted ids keeps an ordinary
+	// page from doubling its memory use in scripts nobody reads.
+	scriptPayloads map[string]string
 }
 
 // set records a candidate value.
@@ -55,16 +62,20 @@ func extract(
 	baseURL *url.URL,
 ) (*document, error) {
 	doc := &document{
-		candidates: make(map[string]string),
+		candidates:     make(map[string]string),
+		scriptPayloads: make(map[string]string),
 	}
 
 	tokenizer := html.NewTokenizer(reader)
 
 	var (
-		inTitle      bool
-		titleBuilder strings.Builder
-		inJSONLD     bool
-		jsonBuilder  strings.Builder
+		inTitle         bool
+		titleBuilder    strings.Builder
+		inJSONLD        bool
+		jsonBuilder     strings.Builder
+		inScriptPayload bool
+		scriptPayloadID string
+		payloadBuilder  strings.Builder
 	)
 
 	for {
@@ -102,6 +113,12 @@ func extract(
 					jsonBuilder.Reset()
 				}
 
+				if id := scriptElementID(token.Attr); id == tiktokUniversalDataScriptID {
+					inScriptPayload = true
+					scriptPayloadID = id
+					payloadBuilder.Reset()
+				}
+
 			case "meta":
 				collectMeta(doc, token.Attr)
 
@@ -126,6 +143,13 @@ func extract(
 					collectJSONLD(doc, jsonBuilder.String())
 					jsonBuilder.Reset()
 				}
+
+				if inScriptPayload {
+					inScriptPayload = false
+					doc.scriptPayloads[scriptPayloadID] = payloadBuilder.String()
+					payloadBuilder.Reset()
+					scriptPayloadID = ""
+				}
 			}
 
 		case html.TextToken:
@@ -138,6 +162,9 @@ func extract(
 
 			case inJSONLD:
 				_, _ = jsonBuilder.Write(tokenizer.Text())
+
+			case inScriptPayload:
+				_, _ = payloadBuilder.Write(tokenizer.Text())
 			}
 		}
 	}
@@ -164,6 +191,17 @@ func isJSONLDScript(attrs []html.Attribute) bool {
 	}
 
 	return false
+}
+
+// scriptElementID returns the id of a script element, if it has one.
+func scriptElementID(attrs []html.Attribute) string {
+	for _, attr := range attrs {
+		if attr.Key == "id" {
+			return strings.TrimSpace(attr.Val)
+		}
+	}
+
+	return ""
 }
 
 // collectMeta records a meta tag.
@@ -200,42 +238,86 @@ func collectMeta(
 	}
 }
 
-// collectLink records a canonical link.
+// collectLink records the links this package reads: a canonical URL and an
+// oEmbed discovery endpoint.
 //
-// rel carries a space separated list of tokens, so it is searched for the
-// canonical token rather than compared against. Only href is of interest, and
-// only for a canonical relation.
+// rel carries a space separated list of tokens, so each relation is searched for
+// rather than compared against the whole attribute. The two links are independent:
+// a page may declare one, the other, or both.
 func collectLink(
 	doc *document,
 	attrs []html.Attribute,
 ) {
-	isCanonical := false
+	var (
+		relTokens []string
+		href      string
+		mediaType string
+	)
 
 	for _, attr := range attrs {
-		if attr.Key != "rel" {
-			continue
-		}
+		switch attr.Key {
+		case "rel":
+			relTokens = strings.Fields(strings.ToLower(attr.Val))
 
-		for token := range strings.FieldsSeq(strings.ToLower(attr.Val)) {
-			if token == linkRelCanonical {
-				isCanonical = true
+		case "href":
+			href = attr.Val
 
-				break
+		case "type":
+			mediaType = strings.ToLower(strings.TrimSpace(attr.Val))
+
+			// A type may carry a charset parameter. Only the media type is
+			// compared, so the parameter is removed first.
+			if index := strings.Index(mediaType, ";"); index >= 0 {
+				mediaType = strings.TrimSpace(mediaType[:index])
 			}
 		}
 	}
 
-	if !isCanonical {
+	if strings.TrimSpace(href) == "" {
 		return
 	}
 
-	for _, attr := range attrs {
-		if attr.Key == "href" {
-			doc.set(metaLinkCanonical, attr.Val)
+	for _, token := range relTokens {
+		if token == linkRelCanonical {
+			doc.set(metaLinkCanonical, href)
+
+			break
+		}
+	}
+
+	if mediaType != oembedJSONMediaType {
+		return
+	}
+
+	for _, token := range relTokens {
+		if token == linkRelAlternate {
+			doc.set(oembedDiscoveryKey, href)
 
 			return
 		}
 	}
+}
+
+// resolveOEmbedDiscovery returns the absolute discovery endpoint a page declared,
+// or an empty string when it declared none.
+//
+// Resolution is local and uses the same rules as every other metadata URL: only
+// http and https survive. The result is not fetched here; the caller decides
+// whether following it is worth another request.
+func resolveOEmbedDiscovery(
+	doc *document,
+	baseURL *url.URL,
+) string {
+	if doc == nil {
+		return ""
+	}
+
+	raw, ok := doc.candidates[oembedDiscoveryKey]
+	if !ok {
+		return ""
+	}
+
+	return normalizeURL(raw, baseURL)
 }
 
 // collectJSONLD folds one JSON-LD block into the candidate map.

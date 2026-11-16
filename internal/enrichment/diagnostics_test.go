@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -129,6 +130,32 @@ func TestSafeErrorMessage_InvalidURLCarriesNoURL(t *testing.T) {
 	require.Contains(t, message, "invalid URL escape")
 	require.NotContains(t, message, "example.com")
 	require.NotContains(t, message, "token=secret-token")
+}
+
+// A combined failure can carry two transport errors. Both URLs have to go, not
+// only the first one an errors.As walk would find.
+func TestSafeErrorMessage_JoinedErrorsLoseEveryURL(t *testing.T) {
+	first := &url.Error{
+		Op:  "Get",
+		URL: "https://one.example/one?token=first#fragment",
+		Err: errors.New("timeout"),
+	}
+
+	second := &url.Error{
+		Op:  "Get",
+		URL: "https://two.example/two?token=second#fragment",
+		Err: errors.New("connection refused"),
+	}
+
+	message := SafeErrorMessage(errors.Join(first, second))
+
+	require.NotContains(t, message, "one.example")
+	require.NotContains(t, message, "two.example")
+	require.NotContains(t, message, "token=first")
+	require.NotContains(t, message, "token=second")
+	require.NotContains(t, message, "#fragment")
+	require.Contains(t, message, "timeout")
+	require.Contains(t, message, "connection refused")
 }
 
 // Every other failure is built from a sentinel, a status and a content type, so

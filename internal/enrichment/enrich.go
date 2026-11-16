@@ -49,6 +49,11 @@ type enricher struct {
 	// field so a test can point it at a local server; production always leaves it
 	// at youtubeOEmbedEndpoint.
 	youtubeOEmbedURL string
+
+	// providerResolver maps a URL to a provider's oEmbed endpoint. It may be nil,
+	// which is the no-registry configuration: known hosts such as YouTube still
+	// use oEmbed, and everything else goes straight to HTML.
+	providerResolver ProviderResolver
 }
 
 // enrichAcceptHeader asks for HTML and accepts a little more, so that an XHTML
@@ -96,11 +101,36 @@ func NewEnricherWithTransports(
 	tokopediaClient *http.Client,
 	policy security.OutboundFetchPolicy,
 ) *enricher {
+	return NewEnricherWithResolver(
+		genericClient,
+		tokopediaClient,
+		policy,
+		nil,
+	)
+}
+
+// NewEnricherWithResolver builds an Enricher that also consults a provider
+// registry before falling back to HTML.
+//
+// resolver may be nil. A nil resolver is not a degraded mode for the hosts this
+// package already knows: YouTube is still read through oEmbed, because that is a
+// property of the host and not of the registry. Everything else goes straight to
+// the HTML path, which is exactly the behaviour before a registry existed.
+//
+// A non-nil resolver is consulted for every other host. It must be safe for
+// concurrent use, because one Enricher is shared by every request in a process.
+func NewEnricherWithResolver(
+	genericClient *http.Client,
+	tokopediaClient *http.Client,
+	policy security.OutboundFetchPolicy,
+	resolver ProviderResolver,
+) *enricher {
 	return &enricher{
 		genericClient:    genericClient,
 		tokopediaClient:  tokopediaClient,
 		policy:           policy,
 		youtubeOEmbedURL: youtubeOEmbedEndpoint,
+		providerResolver: resolver,
 	}
 }
 
@@ -156,12 +186,50 @@ func (e *enricher) Enrich(
 	// fetch to a different client.
 	client := e.clientFor(transportFor(hostname))
 
-	// YouTube is read through oEmbed rather than as HTML, and the reasoning is in
-	// youtube.go. The guarded client is still the one that carries the request, so
-	// this path is subject to the same dialer, redirect limit and size limits as
-	// every other fetch.
-	if videoID, ok := youtubeVideoID(parsed); ok {
-		return e.enrichYouTube(ctx, client, videoID)
+	// oEmbed is asked first when a provider is known. It is a few kilobytes
+	// instead of a whole page, and for some hosts it is the only answer that is
+	// not a bot challenge. A result with no usable field is not treated as a
+	// success, so the HTML path still gets its turn.
+	endpoint, hasOEmbed := e.resolveOEmbedEndpoint(ctx, parsed)
+
+	var (
+		oembedFailure  error
+		oembedMetadata Metadata
+	)
+
+	if hasOEmbed {
+		metadata, failure := e.enrichWithOEmbed(
+			ctx,
+			client,
+			parsed,
+			rawURL,
+			endpoint,
+			true,
+		)
+
+		metadata = dropGenericTitle(parsed, metadata)
+
+		switch {
+		case failure != nil:
+			if endpoint.SkipHTMLFallback {
+				return Metadata{}, failure
+			}
+
+			oembedFailure = failure
+
+		case endpoint.SkipHTMLFallback:
+			// The page would tell us nothing the endpoint did not already say,
+			// so whatever the endpoint returned is the result.
+			return metadata, nil
+
+		case metadata.Title != nil && metadata.Platform != nil:
+			return metadata, nil
+
+		default:
+			// The endpoint answered, but not with enough to store on its own.
+			// Keep what it did say so the HTML result can be completed with it.
+			oembedMetadata = metadata
+		}
 	}
 
 	profiles := requestProfilesFor(hostname)
@@ -169,9 +237,24 @@ func (e *enricher) Enrich(
 	var lastFailure error
 
 	for index, profile := range profiles {
-		metadata, failure := e.enrichWithProfile(ctx, client, rawURL, profile)
+		metadata, discoveryURL, failure := e.enrichWithProfile(
+			ctx,
+			client,
+			rawURL,
+			profile,
+		)
 		if failure == nil {
-			return metadata, nil
+			metadata = e.enrichWithDiscovery(
+				ctx,
+				client,
+				parsed,
+				rawURL,
+				metadata,
+				discoveryURL,
+			)
+			metadata = mergeMetadata(metadata, oembedMetadata)
+
+			return dropGenericTitle(parsed, metadata), nil
 		}
 
 		lastFailure = failure
@@ -183,13 +266,168 @@ func (e *enricher) Enrich(
 		}
 	}
 
-	return Metadata{}, lastFailure
+	return Metadata{}, combineFailures(lastFailure, oembedFailure)
+}
+
+// resolveOEmbedEndpoint returns the endpoint to ask about a URL.
+//
+// YouTube is kept as a built-in provider because its URL normalization is a
+// property of the host rather than of the registry: a short link and a watch URL
+// are the same video, and the endpoint should be asked about the canonical form.
+// The endpoint itself is the same one the registry lists.
+//
+// Everything else goes through the injected resolver. A resolver that is absent or
+// that knows nothing about the URL is not an error; it means the HTML path is the
+// next thing to try.
+func (e *enricher) resolveOEmbedEndpoint(
+	ctx context.Context,
+	parsed *url.URL,
+) (OEmbedEndpoint, bool) {
+	if _, ok := youtubeVideoID(parsed); ok {
+		return OEmbedEndpoint{
+			ProviderName:     "YouTube",
+			EndpointURL:      e.youtubeOEmbedURL,
+			SkipHTMLFallback: true,
+		}, true
+	}
+
+	if e.providerResolver == nil {
+		return OEmbedEndpoint{}, false
+	}
+
+	endpoint, ok := e.providerResolver.Resolve(ctx, parsed)
+	if !ok || strings.TrimSpace(endpoint.EndpointURL) == "" {
+		return OEmbedEndpoint{}, false
+	}
+
+	return endpoint, true
+}
+
+// enrichWithDiscovery follows a page's oEmbed discovery link when the HTML result
+// is still missing something worth having.
+//
+// Discovery is a fallback, not a first choice: the page has already been fetched
+// and its Open Graph and JSON-LD values are the primary result. Following the link
+// costs one more request, so it is done only when the page left the title or the
+// platform empty. A failure is ignored because the HTML result is still a valid
+// successful enrichment.
+func (e *enricher) enrichWithDiscovery(
+	ctx context.Context,
+	client *http.Client,
+	parsed *url.URL,
+	rawURL string,
+	metadata Metadata,
+	discoveryURL string,
+) Metadata {
+	if discoveryURL == "" {
+		return metadata
+	}
+
+	if metadata.Title != nil && metadata.Platform != nil {
+		return metadata
+	}
+
+	discovered, failure := e.enrichWithOEmbed(
+		ctx,
+		client,
+		parsed,
+		rawURL,
+		OEmbedEndpoint{EndpointURL: discoveryURL},
+
+		// The discovery link already names the page it belongs to, so its url
+		// parameter is kept when it has one.
+		false,
+	)
+	if failure != nil {
+		return metadata
+	}
+
+	return mergeMetadata(metadata, discovered)
+}
+
+// mergeMetadata fills the empty fields of primary from fallback.
+//
+// The primary source is the one with the more authoritative answer for the field
+// it supplied; a fallback never overwrites it. This is what makes one enrichment
+// the union of both sources rather than a choice between them.
+func mergeMetadata(primary, fallback Metadata) Metadata {
+	if primary.Title == nil {
+		primary.Title = fallback.Title
+	}
+
+	if primary.Platform == nil {
+		primary.Platform = fallback.Platform
+	}
+
+	if primary.Description == nil {
+		primary.Description = fallback.Description
+	}
+
+	if primary.ImageURL == nil {
+		primary.ImageURL = fallback.ImageURL
+	}
+
+	if primary.CanonicalURL == nil {
+		primary.CanonicalURL = fallback.CanonicalURL
+	}
+
+	if primary.SiteName == nil {
+		primary.SiteName = fallback.SiteName
+	}
+
+	if primary.Author == nil {
+		primary.Author = fallback.Author
+	}
+
+	if primary.Price == nil {
+		primary.Price = fallback.Price
+	}
+
+	return primary
+}
+
+// combineFailures reports the failure of a whole attempt after both sources were
+// tried.
+//
+// A retryable failure from either source wins, because the question the retry
+// asks is whether a later attempt could succeed, and one retryable cause is
+// enough to make the answer yes. The status is kept when either source saw one,
+// so a log line still says what the origin answered.
+func combineFailures(primary, secondary error) error {
+	if primary == nil {
+		return secondary
+	}
+
+	if secondary == nil {
+		return primary
+	}
+
+	kind := Kind(primary)
+	if Kind(secondary) == FailureFetch {
+		kind = FailureFetch
+	}
+
+	status := Status(primary)
+	if status == 0 {
+		status = Status(secondary)
+	}
+
+	return &Failure{
+		Kind:       kind,
+		StatusCode: status,
+		Err:        errors.Join(primary, secondary),
+	}
 }
 
 // enrichWithProfile performs one fetch-and-extract attempt with the given profile.
 //
 // client is the one chosen for the original host, so the header fallback stays on
 // the same transport.
+//
+// It returns the selected metadata plus the absolute oEmbed discovery endpoint the
+// page declared, or an empty string when it declared none. The discovery link is
+// not followed here: whether a second request is worth making belongs to the
+// caller, which knows what the page already supplied.
 //
 // The response body is closed here, after it has been read, because reader hands
 // back a stream that is still bound to it. Pairing the close with the whole read
@@ -199,17 +437,24 @@ func (e *enricher) enrichWithProfile(
 	client *http.Client,
 	rawURL string,
 	profile requestProfile,
-) (Metadata, error) {
+) (Metadata, string, error) {
 	response, err := e.do(ctx, client, rawURL, profile)
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{}, "", err
 	}
 
 	defer response.Body.Close()
 
 	body, finalURL, err := e.reader(response)
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{}, "", err
+	}
+
+	// TikTok answers its not-found route with a success status, so the status
+	// classification above cannot see it. The page would otherwise be stored as a
+	// generic "TikTok" title with no platform.
+	if isTikTokNotFoundURL(finalURL) {
+		return Metadata{}, "", newFailure(FailureContent, ErrNotFoundPage)
 	}
 
 	doc, err := extract(body, finalURL)
@@ -218,13 +463,19 @@ func (e *enricher) enrichWithProfile(
 		// returns is one from the reader underneath it. A body that stopped
 		// arriving is a network event, so it stays retryable rather than being
 		// recorded as a permanent statement about the page.
-		return Metadata{}, newFailure(
+		return Metadata{}, "", newFailure(
 			FailureFetch,
 			fmt.Errorf("%w: %w", ErrParseFailed, err),
 		)
 	}
 
-	return selectMetadata(doc, finalURL), nil
+	metadata := selectMetadata(doc, finalURL)
+	metadata = applyTikTokUniversalData(doc, finalURL, metadata)
+	metadata = dropGenericTitle(finalURL, metadata)
+
+	return metadata,
+		resolveOEmbedDiscovery(doc, finalURL),
+		nil
 }
 
 // do performs the request and returns the response with its body unread.
@@ -259,6 +510,12 @@ func (e *enricher) do(
 	// crawler agent. Enrichment does not invent one here.
 	if profile.userAgent != "" {
 		request.Header.Set("User-Agent", profile.userAgent)
+	}
+
+	// The language header is what keeps the stored text from depending on where
+	// the worker runs; see enrichAcceptLanguage.
+	if profile.acceptLanguage != "" {
+		request.Header.Set("Accept-Language", profile.acceptLanguage)
 	}
 
 	// No Accept-Encoding is set on purpose. The guarded client's transport adds
