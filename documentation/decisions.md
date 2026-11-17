@@ -656,6 +656,16 @@ searchable as part of this feature.
     from some networks (403 or an auth redirect); its JSON-LD price is captured
     when the page is readable, but no cookie jar or browser workaround is added.
 
+49m. **An oEmbed host skip is configuration, not a code change.** The community
+    registry remains the default for the long tail, but an operator can name exact
+    hostnames in `OEMBED_SKIP_HOSTS` whose oEmbed endpoint is never called. The
+    HTML path still runs; matching is exact, with no wildcard, port or scheme. The
+    skip applies to registry, built-in and discovery endpoints, and is read at
+    startup, so adding a host needs a restart rather than a rebuild. This keeps a
+    measured bad provider from forcing a release while leaving unknown providers
+    covered. Instagram is the first case: its Graph endpoint does not supply the
+    fields the product stores, and its page login-walls some datacenter addresses.
+
 ## Collections, ownership and listings
 
 50. **Ownership is established by `id AND user_id`, never by a foreign key

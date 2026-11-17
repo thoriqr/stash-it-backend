@@ -98,6 +98,7 @@ PIN_EMAIL_BUDGET_GLOBAL_MAX=250
 PIN_EMAIL_BUDGET_WINDOW_SECONDS=86400
 
 WORKER_CONCURRENCY=5
+OEMBED_SKIP_HOSTS=instagram.com,www.instagram.com
 ```
 
 Generate secrets with:
@@ -134,6 +135,10 @@ Configuration constraints:
   derivation uses about 64 MiB.
 - `WORKER_CONCURRENCY=5` is a starting point; lower it under memory or CPU
   pressure.
+- `OEMBED_SKIP_HOSTS` is an optional comma-separated list of exact hostnames
+  whose oEmbed endpoint is never called; the HTML path still runs. The skip
+  applies to registry, built-in and discovery endpoints. Wildcards, ports and
+  schemes are rejected. Changing it needs a service restart, not a rebuild.
 - `SENTRY_DSN` may be empty. Reporting is disabled and the logger remains the
   only error sink.
 - `SENTRY_RELEASE` identifies the deployed build. Use

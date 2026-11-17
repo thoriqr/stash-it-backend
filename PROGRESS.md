@@ -73,6 +73,7 @@ the feature exists; individual releases are not recorded here.
 | Nintendo storefront                             | excluded | `robots.txt` prohibits scraping (`decisions.md` 49l) |
 | oEmbed provider registry, oEmbed-first path     | done  | `internal/oembedregistry`, `internal/enrichment/oembed.go` |
 | oEmbed discovery link as a fallback             | done  | `internal/enrichment/extract.go`                    |
+| oEmbed host skip list (`OEMBED_SKIP_HOSTS`)     | done  | `internal/config`, `internal/enrichment/enrich.go`  |
 | YouTube, TikTok, and short-link hosts through oEmbed | done | `internal/enrichment/{youtube,tiktok}.go`, `internal/oembedregistry` |
 | TikTok caption and cover from the page state blob | done | `internal/enrichment/tiktok.go`                   |
 | Canonical platform names, locale-stable requests | done | `internal/enrichment/platform.go`, `request.go`    |
@@ -140,10 +141,11 @@ The state of `000027` to `000029` is not recorded here.
 Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
 oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
 requests, title filtering, Amazon preview images, Instagram titles, structured
-storefront prices, and the Steam/GOG platform rules). It is verified on the
-development machine only, with `go build ./...`, `go vet ./...` and the full
-`go test ./...`. Live checks succeeded for Steam, GOG and PSN; Epic answered 403
-from this network. Run `git status` first; this list may be stale.
+storefront prices, the Steam/GOG platform rules, and the `OEMBED_SKIP_HOSTS`
+list). It is verified on the development machine only, with `go build ./...`,
+`go vet ./...` and the full `go test ./...`. Live checks succeeded for Steam, GOG
+and PSN; Epic answered 403 from this network. Run `git status` first; this list
+may be stale.
 
 Since the provider list is cached and the platform is now canonical, two things
 change for existing data once it is deployed: a `Grup Facebook` collection created
