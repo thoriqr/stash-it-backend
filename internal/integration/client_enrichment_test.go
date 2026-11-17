@@ -84,7 +84,8 @@ func TestClientEnrichment_SaveStoresMetadataAndIsNotQueued(t *testing.T) {
 		http.MethodPost,
 		"/saved-items",
 		strings.NewReader(`{"url":"`+instagramReelURL+`","note":"keep this",`+
-			`"metadata":{"title":"A reel","description":"A description",`+
+			`"metadata":{"title":"Shark Detail on Instagram: \"a caption\"",`+
+			`"description":"315K likes - sharkdetail_ on November 16, 2026: \"a caption\"",`+
 			`"image_url":"https://cdn.example/preview.jpg","platform":"Instagram"}}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -108,8 +109,8 @@ func TestClientEnrichment_SaveStoresMetadataAndIsNotQueued(t *testing.T) {
 
 	state := getEnrichmentState(t, itemID)
 	require.Equal(t, "completed", state.EnrichmentStatus)
-	require.Equal(t, "A reel", state.Title.String)
-	require.Equal(t, "A description", state.Description.String)
+	require.Equal(t, "Shark Detail on Instagram", state.Title.String)
+	require.Equal(t, "315K likes - sharkdetail_ on November 16, 2026: \"a caption\"", state.Description.String)
 	require.Equal(t, "https://cdn.example/preview.jpg", state.ImageUrl.String)
 	require.Equal(t, "Instagram", state.Platform.String)
 	require.True(t, state.LastEnrichedAt.Valid)

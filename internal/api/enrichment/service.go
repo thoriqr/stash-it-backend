@@ -118,7 +118,7 @@ func (s *service) Enrich(
 	// outbound request, so a host that rejects the server cannot be retried into
 	// rejecting it further.
 	if s.usesClientEnrichment(rawURL) {
-		return s.enrichFromClient(ctx, userID, savedItemID, clientMetadata)
+		return s.enrichFromClient(ctx, userID, savedItemID, rawURL, clientMetadata)
 	}
 
 	started := time.Now()
@@ -229,9 +229,10 @@ func (s *service) enrichFromClient(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
+	rawURL string,
 	clientMetadata *clientmetadata.Metadata,
 ) (EnrichResult, error) {
-	metadata, err := clientmetadata.Normalize(clientMetadata)
+	metadata, err := clientmetadata.Normalize(shortenInstagramTitle(rawURL, clientMetadata))
 	if err != nil {
 		return EnrichResult{}, err
 	}
@@ -280,6 +281,30 @@ func (s *service) enrichFromClient(
 	)
 
 	return EnrichResult{SavedItem: savedItem}, nil
+}
+
+// shortenInstagramTitle applies the extractor's Instagram title rule to the
+// client's metadata before it is validated.
+//
+// Order matters: Instagram's Open Graph title is the author plus the whole
+// caption, and a caption can exceed the title bound, so validating first would
+// reject a request whose title the rule turns into a short label.
+func shortenInstagramTitle(
+	rawURL string,
+	metadata *clientmetadata.Metadata,
+) *clientmetadata.Metadata {
+	if metadata == nil || metadata.Title == nil {
+		return metadata
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return metadata
+	}
+
+	metadata.Title = enrichment.ShortenInstagramTitle(parsed, metadata.Title)
+
+	return metadata
 }
 
 // usesClientEnrichment reports whether the saved item's host is one the client

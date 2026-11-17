@@ -3,6 +3,7 @@ package saved_item_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -99,7 +100,7 @@ func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
 			params saveditemdb.CreateClientEnrichedSavedItemParams,
 		) (saved_item.SavedItem, error) {
 			require.Equal(t, "completed", params.EnrichmentStatus)
-			require.Equal(t, "A reel", params.Title.String)
+			require.Equal(t, "Shark Detail on Instagram", params.Title.String)
 			require.Equal(t, "A description", params.Description.String)
 			require.Equal(t, "https://cdn.example/preview.jpg", params.ImageUrl.String)
 			require.Equal(t, "Instagram", params.Platform.String)
@@ -119,7 +120,7 @@ func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
 		"https://www.instagram.com/reel/abc/",
 		nil,
 		&clientmetadata.Metadata{
-			Title:       textPtr("A reel"),
+			Title:       textPtr("Shark Detail on Instagram: \"a caption\""),
 			Description: textPtr("A description"),
 			ImageURL:    textPtr("https://cdn.example/preview.jpg"),
 			Platform:    textPtr("Instagram"),
@@ -174,6 +175,60 @@ func TestService_Create_IgnoresMetadataForNonClientHost(t *testing.T) {
 		"https://example.com/article",
 		nil,
 		&clientmetadata.Metadata{Title: textPtr("From the client")},
+	)
+
+	require.NoError(t, err)
+}
+
+// Instagram's title is the author plus the whole caption, and a caption can exceed
+// the title bound. The shortening must run before validation, or the save is
+// rejected even though the stored title would be a short label.
+func TestService_Create_AcceptsALongInstagramCaptionTitle(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	repo := saveditemmocks.NewMockRepository(ctrl)
+	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
+
+	svc := saved_item.NewService(
+		repo,
+		enqueuer,
+		hostset.New([]string{"www.instagram.com"}),
+		zap.NewNop(),
+	)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repo.EXPECT().
+		GetUnsortedCollectionByUser(gomock.Any(), userID).
+		Return(uuid.New(), nil)
+
+	repo.EXPECT().
+		CreateClientEnrichedSavedItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			params saveditemdb.CreateClientEnrichedSavedItemParams,
+		) (saved_item.SavedItem, error) {
+			require.Equal(t, "completed", params.EnrichmentStatus)
+			require.Equal(t, "Shark Detail on Instagram", params.Title.String)
+
+			return saved_item.SavedItem{
+				ID:               savedItemID,
+				UserID:           userID,
+				EnrichmentStatus: "completed",
+			}, nil
+		})
+
+	// 2000 runes of caption: over the title bound, under Instagram's caption limit.
+	caption := strings.Repeat("a", 2000)
+	rawTitle := "Shark Detail on Instagram: \"" + caption + "\""
+
+	_, err := svc.CreateWithMetadata(
+		context.Background(),
+		userID,
+		"https://www.instagram.com/reel/abc/",
+		nil,
+		&clientmetadata.Metadata{Title: textPtr(rawTitle)},
 	)
 
 	require.NoError(t, err)

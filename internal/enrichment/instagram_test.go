@@ -67,6 +67,25 @@ func TestApplyInstagramTitle_NoTitleIsANoOp(t *testing.T) {
 	require.Nil(t, applyInstagramTitle(pageURL, Metadata{}).Title)
 }
 
+// The exported helper is what the client-assisted path uses, so it is tested
+// directly rather than only through the extractor.
+func TestShortenInstagramTitle(t *testing.T) {
+	pageURL := mustParseURL(t, "https://www.instagram.com/reel/1/")
+	full := "Shark Detail on Instagram: \"a long caption\""
+
+	shortened := ShortenInstagramTitle(pageURL, &full)
+
+	require.Equal(t, "Shark Detail on Instagram", *shortened)
+
+	already := "Shark Detail on Instagram"
+	require.Equal(t, already, *ShortenInstagramTitle(pageURL, &already))
+
+	otherHost := mustParseURL(t, "https://example.com/reel/1/")
+	require.Equal(t, full, *ShortenInstagramTitle(otherHost, &full))
+
+	require.Nil(t, ShortenInstagramTitle(pageURL, nil))
+}
+
 // The Instagram path end to end: a caption-bearing Open Graph title is shortened,
 // while the description keeps the caption.
 func TestEnrich_InstagramTitleIsShortened(t *testing.T) {

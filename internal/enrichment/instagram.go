@@ -34,33 +34,47 @@ func isInstagramHost(hostname string) bool {
 const instagramAuthorMarker = " on instagram:"
 
 // applyInstagramTitle replaces a caption-bearing title with its author prefix.
-//
-// The prefix is kept exactly as published, including its own spacing, and the
-// canonical suffix is appended so the value reads as a label rather than a
-// sentence fragment. The marker is searched case-insensitively because the page
-// capitalizes "Instagram" but the surrounding text is not reliable.
 func applyInstagramTitle(
 	pageURL *url.URL,
 	metadata Metadata,
 ) Metadata {
-	if metadata.Title == nil || pageURL == nil ||
+	metadata.Title = ShortenInstagramTitle(pageURL, metadata.Title)
+
+	return metadata
+}
+
+// ShortenInstagramTitle returns the author label for a title in the
+// "Author on Instagram: ..." format, or the title unchanged.
+//
+// It is exported because the client-assisted path accepts a title the server did
+// not extract, and the same rule must apply there. Without it a client that sends
+// the raw Open Graph title stores the whole caption as the title, which then reads
+// as the same paragraph as the description.
+//
+// The marker is searched case-insensitively because the page capitalizes
+// "Instagram" but the surrounding text is not reliable. A title that does not
+// contain the marker, or whose author part is empty, is left alone.
+func ShortenInstagramTitle(
+	pageURL *url.URL,
+	title *string,
+) *string {
+	if title == nil || pageURL == nil ||
 		!isInstagramHost(pageURL.Hostname()) {
-		return metadata
+		return title
 	}
 
-	title := *metadata.Title
-	index := strings.Index(strings.ToLower(title), instagramAuthorMarker)
+	value := *title
+	index := strings.Index(strings.ToLower(value), instagramAuthorMarker)
 	if index <= 0 {
-		return metadata
+		return title
 	}
 
-	author := strings.TrimSpace(title[:index])
+	author := strings.TrimSpace(value[:index])
 	if author == "" {
-		return metadata
+		return title
 	}
 
 	shortened := author + " on Instagram"
-	metadata.Title = optionalText(shortened)
 
-	return metadata
+	return &shortened
 }

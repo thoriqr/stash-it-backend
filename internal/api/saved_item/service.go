@@ -14,6 +14,7 @@ import (
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
 	"github.com/thoriqr/stash-it-backend/internal/clientmetadata"
+	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/pagination"
 )
@@ -181,7 +182,7 @@ func (s *service) CreateWithMetadata(
 	// Metadata is validated before any database work for a client-owned host, so a
 	// malformed body cannot cost a collection lookup or leave a row behind.
 	if s.usesClientEnrichment(rawURL) {
-		metadata, err := clientmetadata.Normalize(clientMetadata)
+		metadata, err := clientmetadata.Normalize(shortenInstagramTitle(rawURL, clientMetadata))
 		if err != nil {
 			return CreateResult{}, err
 		}
@@ -232,6 +233,32 @@ func (s *service) CreateWithMetadata(
 	return CreateResult{
 		SavedItem: savedItem,
 	}, nil
+}
+
+// shortenInstagramTitle applies the extractor's Instagram title rule to the
+// client's metadata before it is validated.
+//
+// Order matters here. Instagram's Open Graph title is the author plus the whole
+// caption, and a caption can exceed the title bound, so validating first would
+// reject a save whose title the rule turns into a short label. The shortening is
+// therefore applied to the raw value; a title that does not match the format
+// passes through unchanged and is validated as usual.
+func shortenInstagramTitle(
+	rawURL string,
+	metadata *clientmetadata.Metadata,
+) *clientmetadata.Metadata {
+	if metadata == nil || metadata.Title == nil {
+		return metadata
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return metadata
+	}
+
+	metadata.Title = enrichmentcore.ShortenInstagramTitle(parsed, metadata.Title)
+
+	return metadata
 }
 
 // createClientEnriched writes the row for a host the client owns, with the

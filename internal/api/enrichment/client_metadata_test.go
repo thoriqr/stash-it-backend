@@ -267,6 +267,52 @@ func TestService_Enrich_ClientHostRejectsOversizedTitle(t *testing.T) {
 	requireAppError(t, err, 400, "VALIDATION_ERROR")
 }
 
+// Instagram's Open Graph title is a caption with an author prefix. The client path
+// applies the same shortening the server extractor does.
+func TestService_Enrich_ClientHostShortensInstagramTitle(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repository := mocks.NewMockRepository(ctrl)
+	enricher := mocks.NewMockMetadataEnricher(ctrl)
+
+	repository.EXPECT().
+		GetSavedItemURLForEnrichment(gomock.Any(), userID, savedItemID).
+		Return("https://www.instagram.com/reel/abc/", nil)
+
+	enricher.EXPECT().Enrich(gomock.Any(), gomock.Any()).Times(0)
+
+	repository.EXPECT().
+		CompleteSavedItemEnrichment(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			params enrichment.CompleteSavedItemEnrichmentParams,
+		) (enrichment.SavedItem, error) {
+			require.Equal(t, "Shark Detail on Instagram", *params.Title)
+			require.Equal(t, "a caption", *params.Description)
+
+			return enrichment.SavedItem{
+				ID:               savedItemID,
+				EnrichmentStatus: "completed",
+			}, nil
+		})
+
+	_, err := newClientService(t, repository, enricher).Enrich(
+		context.Background(),
+		userID,
+		savedItemID,
+		&clientmetadata.Metadata{
+			Title:       clientText("Shark Detail on Instagram: \"a caption\""),
+			Description: clientText("a caption"),
+			Platform:    clientText("Instagram"),
+		},
+	)
+
+	require.NoError(t, err)
+}
+
 // The body is ignored for a host the server fetches itself, which is what keeps
 // an older or newer client from changing server-side enrichment by accident.
 func TestService_Enrich_NonClientHostIgnoresMetadata(t *testing.T) {
