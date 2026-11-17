@@ -675,11 +675,14 @@ searchable as part of this feature.
     overwrites an existing row the same way. The worker records any task for such a
     host as failed without fetching, and leaves an item the client already
     completed alone. A host not in the list ignores the body entirely, so an older
-    or newer client cannot change server enrichment. The values are untrusted,
-    which is why the client path does not schedule organization: a client-supplied
-    `platform` could create a collection name the server never validated. This is a
-    fallback for hosts such as Instagram that a datacenter address cannot read, not
-    a replacement for the server extractor.
+    or newer client cannot change server enrichment. Client-supplied Instagram
+    titles run through the same `Author on Instagram: "<caption>"` shortening the
+    extractor applies, so the client may send the raw Open Graph title without
+    duplicating that rule. The values are untrusted, which is why the client path
+    does not schedule organization: a client-supplied `platform` could create a
+    collection name the server never validated. This is a fallback for hosts such
+    as Instagram that a datacenter address cannot read, not a replacement for the
+    server extractor.
 
 ## Collections, ownership and listings
 

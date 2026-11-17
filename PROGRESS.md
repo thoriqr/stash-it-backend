@@ -111,7 +111,9 @@ Both `POST /saved-items` and `POST /saved-items/:id/enrich` accept the same
 optional `metadata` object: at least one non-blank field completes the item, none
 marks it failed. A save of one of these hosts stores the row with that result and
 queues nothing; the worker records any queued task as failed without fetching.
-Metadata is ignored for every other host. The client-side parser does not exist
+Metadata is ignored for every other host. Instagram titles the client sends are
+shortened to `Author on Instagram` by the same rule the extractor uses, so the
+client may send the raw Open Graph title. The client-side parser does not exist
 yet, so the list must stay empty until it does.
 
 ### Abuse protection
