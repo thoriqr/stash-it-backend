@@ -74,6 +74,7 @@ the feature exists; individual releases are not recorded here.
 | oEmbed provider registry, oEmbed-first path     | done  | `internal/oembedregistry`, `internal/enrichment/oembed.go` |
 | oEmbed discovery link as a fallback             | done  | `internal/enrichment/extract.go`                    |
 | oEmbed host skip list (`OEMBED_SKIP_HOSTS`)     | done  | `internal/config`, `internal/enrichment/enrich.go`  |
+| Client-assisted enrichment (`CLIENT_ENRICHMENT_HOSTS`) | done, client-side parser pending | `internal/hostset`, `internal/api/{saved_item,enrichment}`, `internal/worker/enrichment` |
 | YouTube, TikTok, and short-link hosts through oEmbed | done | `internal/enrichment/{youtube,tiktok}.go`, `internal/oembedregistry` |
 | TikTok caption and cover from the page state blob | done | `internal/enrichment/tiktok.go`                   |
 | Canonical platform names, locale-stable requests | done | `internal/enrichment/platform.go`, `request.go`    |
@@ -104,6 +105,14 @@ its `og:site_name`, because its JSON-LD publisher is the game's publisher. Ninte
 is not scraped: its `robots.txt` explicitly prohibits it. Epic is best-effort; its
 product HTML is bot-protected from some networks (403 or an auth redirect), while
 Steam, GOG and PSN were fetched successfully.
+
+A host the server cannot read may be listed in `CLIENT_ENRICHMENT_HOSTS` instead.
+Both `POST /saved-items` and `POST /saved-items/:id/enrich` accept the same
+optional `metadata` object: at least one non-blank field completes the item, none
+marks it failed. A save of one of these hosts stores the row with that result and
+queues nothing; the worker records any queued task as failed without fetching.
+Metadata is ignored for every other host. The client-side parser does not exist
+yet, so the list must stay empty until it does.
 
 ### Abuse protection
 
@@ -141,11 +150,13 @@ The state of `000027` to `000029` is not recorded here.
 Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
 oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
 requests, title filtering, Amazon preview images, Instagram titles, structured
-storefront prices, the Steam/GOG platform rules, and the `OEMBED_SKIP_HOSTS`
-list). It is verified on the development machine only, with `go build ./...`,
-`go vet ./...` and the full `go test ./...`. Live checks succeeded for Steam, GOG
-and PSN; Epic answered 403 from this network. Run `git status` first; this list
-may be stale.
+storefront prices, the Steam/GOG platform rules, the `OEMBED_SKIP_HOSTS` list, and
+client-assisted enrichment). It is verified on the development machine only, with
+`go build ./...`, `go vet ./...` and the full `go test ./...`. Live checks
+succeeded for Steam, GOG and PSN; Epic answered 403 from this network. The client
+half of client-assisted enrichment is not written yet, so leave
+`CLIENT_ENRICHMENT_HOSTS` empty until the app can extract a listed host. Run
+`git status` first; this list may be stale.
 
 Since the provider list is cached and the platform is now canonical, two things
 change for existing data once it is deployed: a `Grup Facebook` collection created
@@ -235,6 +246,14 @@ The two breaking changes must ship with, or before, the backend.
 - [ ] Client update check: consume `GET /client-releases/latest`, verify the
       downloaded `sha256`, and add the update dialog. See
       `client-releases.md` for the contract and the publish flow.
+- [ ] Client-assisted enrichment, app side: for a host in
+      `CLIENT_ENRICHMENT_HOSTS`, fetch the page on the device, then send the
+      metadata on the save itself
+      (`POST /saved-items` with `{"url","note","metadata":{"title","description","image_url","platform"}}`).
+      Sending an empty `metadata` object stores the item as failed. For a retry on
+      an existing item, call `POST /saved-items/:id/enrich` with the same metadata
+      object. The server stores and validates; it never fetches these hosts. Keep
+      the host list in step with the parsers the app ships.
 
 ### Backend backlog
 
@@ -268,6 +287,12 @@ The two breaking changes must ship with, or before, the backend.
 - [ ] Decide whether a failed `providers.json` refresh should be surfaced
       anywhere beyond a log line. Today it degrades to the last good copy, or to
       the HTML path, and nothing reports that the registry has been stale for days.
+- [ ] Keep `CLIENT_ENRICHMENT_HOSTS` and the client's host list in step. The
+      allowlist exists in both places by design, and the asymmetry matters: a host
+      added only on the server leaves items stuck at `pending` with nobody filling
+      them, while a host removed only on the server is harmless (metadata is
+      ignored and the worker fetches it). Any host change needs a client release,
+      or a small endpoint that publishes the list.
 - [ ] Decide whether preview images from Instagram, TikTok and Facebook need
       proxying. Their URLs are signed and expire within days, so a stored
       `image_url` goes dead even though the item is fine.

@@ -666,6 +666,21 @@ searchable as part of this feature.
     covered. Instagram is the first case: its Graph endpoint does not supply the
     fields the product stores, and its page login-walls some datacenter addresses.
 
+49n. **A host the server cannot read may be fetched by the client instead.**
+    `CLIENT_ENRICHMENT_HOSTS` names exact hosts whose metadata comes from the app.
+    Both the save and the re-enrich carry the same optional `metadata` object, with
+    the same validation and the same status rule: at least one non-blank field
+    means `completed`, none means `failed`. `POST /saved-items` stores the row with
+    that result and does not queue the worker; `POST /saved-items/:id/enrich`
+    overwrites an existing row the same way. The worker records any task for such a
+    host as failed without fetching, and leaves an item the client already
+    completed alone. A host not in the list ignores the body entirely, so an older
+    or newer client cannot change server enrichment. The values are untrusted,
+    which is why the client path does not schedule organization: a client-supplied
+    `platform` could create a collection name the server never validated. This is a
+    fallback for hosts such as Instagram that a datacenter address cannot read, not
+    a replacement for the server extractor.
+
 ## Collections, ownership and listings
 
 50. **Ownership is established by `id AND user_id`, never by a foreign key
