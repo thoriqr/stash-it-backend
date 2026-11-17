@@ -7,6 +7,7 @@ import (
 
 	enrichmentdb "github.com/thoriqr/stash-it-backend/internal/api/enrichment/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
@@ -35,6 +36,7 @@ func RegisterModule(
 	enrichmentService := NewService(
 		enrichmentRepository,
 		enricher,
+		hostset.New(cfg.ClientEnrichmentHosts),
 		log,
 	)
 

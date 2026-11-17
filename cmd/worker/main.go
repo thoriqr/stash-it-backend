@@ -14,6 +14,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/config"
 	"github.com/thoriqr/stash-it-backend/internal/database"
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/oembedregistry"
 	"github.com/thoriqr/stash-it-backend/internal/security"
@@ -151,6 +152,7 @@ func main() {
 		enrichmentRepository,
 		metadataEnricher,
 		workProducer,
+		hostset.New(cfg.ClientEnrichmentHosts),
 		log,
 	)
 
@@ -227,6 +229,9 @@ func main() {
 		// The hosts whose oEmbed endpoints are disabled. Recorded because the
 		// setting is operational and restart is the only way to change it.
 		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
+		// The hosts whose metadata the client supplies. Recorded because the
+		// setting changes whether the worker fetches at all.
+		zap.Strings("client_enrichment_hosts", cfg.ClientEnrichmentHosts),
 		zap.Int("concurrency", cfg.WorkerConcurrency),
 		zap.Strings(
 			"queues",

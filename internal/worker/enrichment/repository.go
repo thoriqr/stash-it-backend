@@ -126,9 +126,10 @@ func (r *repository) GetSavedItemForBackgroundEnrichment(
 	}
 
 	return SavedItem{
-		ID:     row.ID,
-		UserID: row.UserID,
-		Url:    row.Url,
+		ID:               row.ID,
+		UserID:           row.UserID,
+		Url:              row.Url,
+		EnrichmentStatus: row.EnrichmentStatus,
 	}, nil
 }
 

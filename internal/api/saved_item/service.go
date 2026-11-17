@@ -13,6 +13,8 @@ import (
 
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/clientmetadata"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/pagination"
 )
 
@@ -22,6 +24,17 @@ type SavedItemService interface {
 		userID uuid.UUID,
 		rawURL string,
 		note *string,
+	) (CreateResult, error)
+
+	// CreateWithMetadata is the same save with the client's own extraction for a
+	// host in CLIENT_ENRICHMENT_HOSTS. It is the client-assisted counterpart of
+	// Create: the row is final at insert time and no enrichment task is queued.
+	CreateWithMetadata(
+		ctx context.Context,
+		userID uuid.UUID,
+		rawURL string,
+		note *string,
+		metadata *clientmetadata.Metadata,
 	) (CreateResult, error)
 
 	Get(
@@ -65,7 +78,11 @@ type SavedItemService interface {
 type service struct {
 	repository Repository
 	enqueuer   SavedItemEnqueuer
-	log        *zap.Logger
+	// clientHosts are the hosts the client fetches and parses itself. A save of
+	// one of them is stored and not queued, because the server must not fetch it
+	// and the client supplies the metadata through the enrich endpoint.
+	clientHosts hostset.Set
+	log         *zap.Logger
 }
 
 // NewService builds the saved item service.
@@ -76,15 +93,20 @@ type service struct {
 // code path. log is required because the one failure that cannot be returned to
 // the caller — an unreachable queue after an already committed save — has to be
 // recorded somewhere, and the saved item itself must not carry that detail.
+//
+// clientHosts may be empty, which is the normal server-enrichment configuration:
+// every save is queued.
 func NewService(
 	repository Repository,
 	enqueuer SavedItemEnqueuer,
+	clientHosts hostset.Set,
 	log *zap.Logger,
 ) *service {
 	return &service{
-		repository: repository,
-		enqueuer:   enqueuer,
-		log:        log,
+		repository:  repository,
+		enqueuer:    enqueuer,
+		clientHosts: clientHosts,
+		log:         log,
 	}
 }
 
@@ -126,38 +148,60 @@ func (s *service) Create(
 	rawURL string,
 	note *string,
 ) (CreateResult, error) {
+	return s.CreateWithMetadata(ctx, userID, rawURL, note, nil)
+}
+
+// CreateWithMetadata saves a URL, and for a client-enrichment host also stores
+// what the app extracted.
+//
+// The row is final at insert time. A host the client owns never queues the worker:
+// the metadata the client sent is the enrichment attempt, so the item is completed
+// when at least one field survived normalization and failed when none did.
+//
+// A host that is not in the allowlist ignores metadata entirely. That is what
+// keeps an older or newer client from changing server enrichment by accident: the
+// server fetches those hosts itself, exactly as before.
+func (s *service) CreateWithMetadata(
+	ctx context.Context,
+	userID uuid.UUID,
+	rawURL string,
+	note *string,
+	clientMetadata *clientmetadata.Metadata,
+) (CreateResult, error) {
 	domain, err := deriveDomain(rawURL)
 	if err != nil {
 		return CreateResult{}, err
 	}
 
-	// The note is validated before any row is touched. It is optional, so an absent
-	// value and a whitespace-only one both become SQL NULL, which is the same state
-	// a save had before notes existed.
 	noteValue, err := normalizeOptionalNote(note)
 	if err != nil {
 		return CreateResult{}, err
 	}
 
-	// platform here is the semantic identity of the content, such as the video
-	// platform an item was saved from. It is NOT the client platform that
-	// sessions.platform records from X-Platform, so no client header is read.
-	//
-	// Unlike domain, which is technical URL data known locally from the
-	// submitted URL alone, platform is metadata about what the page actually is.
-	// It is therefore not determined here and stays NULL until the background
-	// enrichment process reads it off the remote page. Deriving a guess from the
-	// hostname here would be neither reliable nor the product's definition of the
-	// field, so no attempt is made to fill it in.
-	//
-	// title is left NULL for the same reason: it is not client supplied and does
-	// not exist locally.
-	//
-	// Every saved item belongs to exactly one collection, and a newly saved item
-	// belongs to the authenticated user's Unsorted collection. It is resolved from
-	// the same user_id that comes from the access token, so an item can never be
-	// filed under another user's collection. Migration 000022 seeded Unsorted for
-	// every existing user; nothing is created here.
+	// Metadata is validated before any database work for a client-owned host, so a
+	// malformed body cannot cost a collection lookup or leave a row behind.
+	if s.usesClientEnrichment(rawURL) {
+		metadata, err := clientmetadata.Normalize(clientMetadata)
+		if err != nil {
+			return CreateResult{}, err
+		}
+
+		collectionID, err := s.repository.GetUnsortedCollectionByUser(ctx, userID)
+		if err != nil {
+			return CreateResult{}, err
+		}
+
+		return s.createClientEnriched(
+			ctx,
+			userID,
+			rawURL,
+			noteValue,
+			domain,
+			collectionID,
+			metadata,
+		)
+	}
+
 	collectionID, err := s.repository.GetUnsortedCollectionByUser(ctx, userID)
 	if err != nil {
 		return CreateResult{}, err
@@ -181,11 +225,94 @@ func (s *service) Create(
 		return CreateResult{}, err
 	}
 
+	// The row is committed, so this only schedules work for a host the server is
+	// allowed to fetch. The client-enrichment branch returned above.
 	s.enqueueEnrichment(ctx, savedItem.ID)
 
 	return CreateResult{
 		SavedItem: savedItem,
 	}, nil
+}
+
+// createClientEnriched writes the row for a host the client owns, with the
+// client's extraction as the whole enrichment result.
+func (s *service) createClientEnriched(
+	ctx context.Context,
+	userID uuid.UUID,
+	rawURL string,
+	note pgtype.Text,
+	domain string,
+	collectionID uuid.UUID,
+	metadata clientmetadata.Normalized,
+) (CreateResult, error) {
+	status := "failed"
+	if metadata.HasValue() {
+		status = "completed"
+	}
+
+	savedItem, err := s.repository.CreateClientEnrichedSavedItem(
+		ctx,
+		saveditemdb.CreateClientEnrichedSavedItemParams{
+			UserID:           userID,
+			Url:              rawURL,
+			Note:             note,
+			Domain:           optionalText(domain),
+			Platform:         optionalTextPtr(metadata.Platform),
+			Title:            optionalTextPtr(metadata.Title),
+			Description:      optionalTextPtr(metadata.Description),
+			ImageUrl:         optionalTextPtr(metadata.ImageURL),
+			EnrichmentStatus: status,
+			CollectionID:     collectionID,
+		},
+	)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
+	// No enqueue: the client is the source of the metadata, and the server must
+	// never fetch this host.
+	s.log.Info(
+		"saved item stored from client extraction",
+		zap.String("saved_item_id", savedItem.ID.String()),
+		zap.String("enrichment_status", status),
+	)
+
+	return CreateResult{
+		SavedItem: savedItem,
+	}, nil
+}
+
+// usesClientEnrichment reports whether the submitted URL's host is one the
+// client fetches and parses itself.
+//
+// The URL has already been validated by deriveDomain at this point, so a parse
+// failure here cannot happen for a reason the caller needs to hear about; an
+// unparseable URL simply is not in the set.
+func (s *service) usesClientEnrichment(rawURL string) bool {
+	if len(s.clientHosts) == 0 {
+		return false
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	return s.clientHosts.Contains(parsed.Hostname())
+}
+
+// optionalTextPtr converts an optional client value into its stored form. A nil
+// pointer is SQL NULL, which is the only honest representation of "the client did
+// not find this field".
+func optionalTextPtr(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+
+	return pgtype.Text{
+		String: *value,
+		Valid:  true,
+	}
 }
 
 // enqueueEnrichment queues background enrichment for a saved item that is

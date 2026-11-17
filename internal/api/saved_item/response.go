@@ -36,9 +36,11 @@ type CreatedSavedItemResponse struct {
 
 	CollectionID uuid.UUID `json:"collection_id" example:"01a0f359-093b-737a-963a-80f7ca6768ed"`
 
-	// EnrichmentStatus is the value the row was stored with, which on a fresh save is
-	// always pending. Background enrichment has been queued by the time this returns
-	// but has not run, so this response never reports completed.
+	// EnrichmentStatus is the value the row was stored with. For an ordinary host
+	// a fresh save is always pending: enrichment has been queued by the time this
+	// returns but has not run. For a client-enrichment host the save itself is the
+	// attempt, so the value is completed when the client sent metadata and failed
+	// when it did not.
 	EnrichmentStatus string `json:"enrichment_status" example:"pending"`
 }
 

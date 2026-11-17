@@ -55,8 +55,9 @@ func TestService_Enrich_LogsNoRawURL(t *testing.T) {
 	result, err := enrichment.NewService(
 		repository,
 		enricher,
+		nil,
 		zap.New(core),
-	).Enrich(context.Background(), userID, savedItemID)
+	).Enrich(context.Background(), userID, savedItemID, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.SavedItem.EnrichmentStatus)

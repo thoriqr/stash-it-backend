@@ -30,7 +30,7 @@ func newTestService(
 	//
 	// The organizer is nil in most cases so that a scheduling failure cannot
 	// change the outcome these tests are about. The handoff has its own tests.
-	return workerenrichment.NewService(repository, enricher, nil, zap.NewNop())
+	return workerenrichment.NewService(repository, enricher, nil, nil, zap.NewNop())
 }
 
 // newTestServiceWithOrganizer builds the service with a real organizer, for the
@@ -44,6 +44,7 @@ func newTestServiceWithOrganizer(
 		repository,
 		enricher,
 		organizer,
+		nil,
 		zap.NewNop(),
 	)
 }

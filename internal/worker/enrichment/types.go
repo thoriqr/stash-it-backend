@@ -25,6 +25,11 @@ type SavedItem struct {
 	ID     uuid.UUID
 	UserID uuid.UUID
 	Url    string
+
+	// EnrichmentStatus is read so a task can tell "nothing has produced metadata
+	// yet" from "the client already did". Without it, a stale task could overwrite
+	// a client-supplied result with a failure.
+	EnrichmentStatus string
 }
 
 // SavedItemOrganizer schedules the automatic organization that follows a

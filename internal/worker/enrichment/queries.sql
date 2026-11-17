@@ -14,7 +14,8 @@
 SELECT
     id,
     user_id,
-    url
+    url,
+    enrichment_status
 FROM saved_items
 WHERE id = sqlc.arg(id);
 

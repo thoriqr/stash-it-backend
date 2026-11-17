@@ -52,7 +52,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		note := "Read the section about database indexing later."
 
@@ -75,7 +75,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 
 		expectCreatedSavedItem(t, repo, userID, func(params saveditemdb.CreateSavedItemParams) {
@@ -96,7 +96,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		note := ""
 
@@ -118,7 +118,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		note := " \n\t  "
 
@@ -144,7 +144,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		note := "First line\nSecond line\n\nFourth line"
 
@@ -167,7 +167,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		note := strings.Repeat("a", saved_item.NoteMaxLength+1)
 
@@ -189,7 +189,7 @@ func TestService_Create_Note(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 
 		// 5000 runes but 10000 bytes in UTF-8. A byte-counting limit would reject
@@ -219,7 +219,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		savedItemID := uuid.New()
 		note := "My updated context for saving this URL."
@@ -248,7 +248,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		savedItemID := uuid.New()
 		otherUserID := uuid.New()
@@ -284,7 +284,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repo.EXPECT().
 			UpdateSavedItemNote(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -305,7 +305,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repo.EXPECT().
 			UpdateSavedItemNote(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -326,7 +326,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repo.EXPECT().
 			UpdateSavedItemNote(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -347,7 +347,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		note := strings.Repeat("a", saved_item.NoteMaxLength)
 
 		repo.EXPECT().
@@ -369,7 +369,7 @@ func TestService_SetNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		repoErr := apperror.NotFound(errors.New("no rows"))
 
 		repo.EXPECT().
@@ -392,7 +392,7 @@ func TestService_DeleteNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		userID := uuid.New()
 		savedItemID := uuid.New()
 
@@ -410,7 +410,7 @@ func TestService_DeleteNote(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 		repoErr := apperror.NotFound(errors.New("no rows"))
 
 		repo.EXPECT().

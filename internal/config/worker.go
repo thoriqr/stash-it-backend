@@ -40,6 +40,11 @@ type WorkerConfig struct {
 	// OEmbedSkipHosts are exact hostnames for which the worker's enricher does
 	// not call any oEmbed endpoint. The HTML path still runs.
 	OEmbedSkipHosts []string
+
+	// ClientEnrichmentHosts are exact hostnames the client fetches itself. The
+	// worker records them as failed without fetching, so a task queued before the
+	// list existed does not hammer a host the server cannot read.
+	ClientEnrichmentHosts []string
 }
 
 // Worker concurrency bounds.
@@ -96,6 +101,11 @@ func LoadWorker() (WorkerConfig, error) {
 		return WorkerConfig{}, err
 	}
 
+	clientEnrichmentHosts, err := loadClientEnrichmentHosts()
+	if err != nil {
+		return WorkerConfig{}, err
+	}
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return WorkerConfig{}, fmt.Errorf("DATABASE_URL is required")
@@ -112,6 +122,8 @@ func LoadWorker() (WorkerConfig, error) {
 		RedisURL:          redisURL,
 		WorkerConcurrency: workerConcurrency,
 		OEmbedSkipHosts:   oembedSkipHosts,
+
+		ClientEnrichmentHosts: clientEnrichmentHosts,
 	}, nil
 }
 

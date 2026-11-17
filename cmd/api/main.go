@@ -435,6 +435,9 @@ func main() {
 		// setting is operational and an empty list is indistinguishable from a
 		// list that failed to load without it.
 		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
+		// The hosts whose metadata the client supplies. Recorded because it
+		// changes whether a save is queued for background enrichment at all.
+		zap.Strings("client_enrichment_hosts", cfg.ClientEnrichmentHosts),
 		// Whether the maintenance route can be called at all, never the secret
 		// itself. An absent secret is an ordinary deployment: the route stays
 		// registered and refuses every request, so the useful thing to record is

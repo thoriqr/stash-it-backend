@@ -26,9 +26,11 @@ func NewHandler(service Service) *Handler {
 // @Description Enrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.
 // @Description The enrichment result is reported through enrichment_status in the response.
 // @Description Enrichment does not change the saved item's collection.
+// @Description For a host in CLIENT_ENRICHMENT_HOSTS the server does not fetch the page: an optional metadata object carries what the client extracted. At least one field completes the item; none marks it failed. The body is ignored for every other host.
 // @Description Possible error codes:
 // @Description - SAVED_ITEM_NOT_FOUND
 // @Description - BAD_REQUEST
+// @Description - VALIDATION_ERROR
 // @Description - INVALID_AUTHORIZATION_HEADER
 // @Description - INVALID_ACCESS_TOKEN
 // @Description - ACCESS_TOKEN_EXPIRED
@@ -36,11 +38,13 @@ func NewHandler(service Service) *Handler {
 // @Description - USER_RATE_LIMIT_UNAVAILABLE
 // @Description - INTERNAL_SERVER_ERROR
 // @Tags SavedItem
+// @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Saved item ID" example(01a0f359-093b-737a-963a-80f7ca6768ed)
+// @Param body body EnrichSavedItemRequest false "Client-extracted metadata, only read for a client-enrichment host"
 // @Success 200 {object} EnrichSavedItemAPIResponse
-// @Failure 400 {object} swagger.APIErrorResponse "Invalid saved item ID"
+// @Failure 400 {object} swagger.APIErrorResponse "Invalid saved item ID or client metadata"
 // @Failure 401 {object} swagger.APIErrorResponse "Invalid or expired access token"
 // @Failure 404 {object} swagger.APIErrorResponse "Saved item not found"
 // @Failure 429 {object} swagger.APIErrorResponse "Rate limit exceeded for this user"
@@ -64,10 +68,21 @@ func (h *Handler) Enrich(c fiber.Ctx) error {
 		)
 	}
 
+	// The body is optional. An older client, or any caller enriching a host the
+	// server fetches itself, sends nothing and the request behaves exactly as it
+	// always has.
+	var request EnrichSavedItemRequest
+	if len(c.Body()) > 0 {
+		if err := httpx.BindBody(c, &request); err != nil {
+			return err
+		}
+	}
+
 	result, err := h.service.Enrich(
 		c.Context(),
 		userID,
 		savedItemID,
+		request.Metadata,
 	)
 	if err != nil {
 		return err

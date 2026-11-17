@@ -28,7 +28,7 @@ func newTestService(
 	// zap.NewNop keeps the failure log out of test output. The service logs the
 	// enrichment error precisely because it is not returned, so it has to be
 	// given a usable logger.
-	return enrichment.NewService(repository, enricher, zap.NewNop())
+	return enrichment.NewService(repository, enricher, nil, zap.NewNop())
 }
 
 func text(value string) pgtype.Text {
@@ -108,7 +108,7 @@ func TestService_Enrich_Success(t *testing.T) {
 		)
 
 	result, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, savedItemID, result.SavedItem.ID)
@@ -159,7 +159,7 @@ func TestService_Enrich_PersistsOnlyWhatTheEnricherFound(t *testing.T) {
 		)
 
 	result, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.SavedItem.EnrichmentStatus)
@@ -252,7 +252,7 @@ func TestService_Enrich_AppliesTitleDependentPricePersistence(t *testing.T) {
 				)
 
 			_, err := newTestService(t, repository, enricher).
-				Enrich(context.Background(), userID, savedItemID)
+				Enrich(context.Background(), userID, savedItemID, nil)
 
 			require.NoError(t, err)
 		})
@@ -291,7 +291,7 @@ func TestService_Enrich_EmptyMetadataIsStillCompleted(t *testing.T) {
 		Times(0)
 
 	result, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.SavedItem.EnrichmentStatus)
@@ -334,7 +334,7 @@ func TestService_Enrich_FailureIsRecordedNotReturned(t *testing.T) {
 		}, nil)
 
 	result, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, "failed", result.SavedItem.EnrichmentStatus)
@@ -372,7 +372,7 @@ func TestService_Enrich_DoesNotEnrichWhenTheItemIsNotFound(t *testing.T) {
 		Times(0)
 
 	_, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	requireAppError(t, err, 404, enrichment.CodeSavedItemNotFound)
 }
@@ -408,7 +408,7 @@ func TestService_Enrich_ReturnsTheStatusWriteFailure(t *testing.T) {
 		)
 
 	_, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	requireAppError(t, err, 500, apperror.CodeInternal)
 }
@@ -440,7 +440,7 @@ func TestService_Enrich_ReturnsTheCompletionWriteFailure(t *testing.T) {
 		)
 
 	_, err := newTestService(t, repository, enricher).
-		Enrich(context.Background(), userID, savedItemID)
+		Enrich(context.Background(), userID, savedItemID, nil)
 
 	requireAppError(t, err, 500, apperror.CodeInternal)
 }
@@ -488,7 +488,7 @@ func TestService_Enrich_PassesTheCallersContext(t *testing.T) {
 		}, nil)
 
 	_, err := newTestService(t, repository, enricher).
-		Enrich(ctx, userID, savedItemID)
+		Enrich(ctx, userID, savedItemID, nil)
 
 	require.NoError(t, err)
 }

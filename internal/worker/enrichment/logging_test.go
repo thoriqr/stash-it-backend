@@ -87,7 +87,7 @@ func TestService_EnrichSavedItem_LogsNoRawURL(t *testing.T) {
 
 	log, observed := newObservedLogger()
 
-	service := workerenrichment.NewService(repository, enricher, nil, log)
+	service := workerenrichment.NewService(repository, enricher, nil, nil, log)
 
 	err := service.EnrichSavedItem(context.Background(), item.ID)
 	require.Error(t, err)

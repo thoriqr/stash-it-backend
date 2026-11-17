@@ -12,9 +12,215 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/api/saved_item"
+	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	saveditemmocks "github.com/thoriqr/stash-it-backend/internal/api/saved_item/mocks"
 	"github.com/thoriqr/stash-it-backend/internal/apperror"
+	"github.com/thoriqr/stash-it-backend/internal/clientmetadata"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 )
+
+// A host the client fetches itself is stored but never queued: the worker must
+// not fetch it, and the metadata arrives through the enrich endpoint instead.
+func TestService_Create_DoesNotEnqueueAClientEnrichmentHost(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	repo := saveditemmocks.NewMockRepository(ctrl)
+	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
+
+	svc := saved_item.NewService(
+		repo,
+		enqueuer,
+		hostset.New([]string{"www.instagram.com"}),
+		zap.NewNop(),
+	)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repo.EXPECT().
+		GetUnsortedCollectionByUser(gomock.Any(), userID).
+		Return(uuid.New(), nil)
+
+	repo.EXPECT().
+		CreateClientEnrichedSavedItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			params saveditemdb.CreateClientEnrichedSavedItemParams,
+		) (saved_item.SavedItem, error) {
+			require.Equal(t, "failed", params.EnrichmentStatus)
+			require.False(t, params.Title.Valid)
+			require.False(t, params.Description.Valid)
+			require.False(t, params.ImageUrl.Valid)
+			require.False(t, params.Platform.Valid)
+
+			return saved_item.SavedItem{ID: savedItemID, UserID: userID}, nil
+		})
+
+	// No EnqueueSavedItemEnrichment call is expected: gomock fails the test if one
+	// happens, which is exactly the assertion this test needs.
+
+	result, err := svc.Create(
+		context.Background(),
+		userID,
+		"https://www.instagram.com/reel/abc/",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, savedItemID, result.SavedItem.ID)
+}
+
+// Client metadata on an allowlisted host is stored with the row, completed, and
+// still not queued.
+func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	repo := saveditemmocks.NewMockRepository(ctrl)
+	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
+
+	svc := saved_item.NewService(
+		repo,
+		enqueuer,
+		hostset.New([]string{"www.instagram.com"}),
+		zap.NewNop(),
+	)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repo.EXPECT().
+		GetUnsortedCollectionByUser(gomock.Any(), userID).
+		Return(uuid.New(), nil)
+
+	repo.EXPECT().
+		CreateClientEnrichedSavedItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			params saveditemdb.CreateClientEnrichedSavedItemParams,
+		) (saved_item.SavedItem, error) {
+			require.Equal(t, "completed", params.EnrichmentStatus)
+			require.Equal(t, "A reel", params.Title.String)
+			require.Equal(t, "A description", params.Description.String)
+			require.Equal(t, "https://cdn.example/preview.jpg", params.ImageUrl.String)
+			require.Equal(t, "Instagram", params.Platform.String)
+
+			return saved_item.SavedItem{
+				ID:               savedItemID,
+				UserID:           userID,
+				EnrichmentStatus: "completed",
+			}, nil
+		})
+
+	// No EnqueueSavedItemEnrichment call is expected.
+
+	result, err := svc.CreateWithMetadata(
+		context.Background(),
+		userID,
+		"https://www.instagram.com/reel/abc/",
+		nil,
+		&clientmetadata.Metadata{
+			Title:       textPtr("A reel"),
+			Description: textPtr("A description"),
+			ImageURL:    textPtr("https://cdn.example/preview.jpg"),
+			Platform:    textPtr("Instagram"),
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.SavedItem.EnrichmentStatus)
+}
+
+// A non-allowlisted host ignores the body entirely and keeps the server path.
+func TestService_Create_IgnoresMetadataForNonClientHost(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	repo := saveditemmocks.NewMockRepository(ctrl)
+	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
+
+	svc := saved_item.NewService(
+		repo,
+		enqueuer,
+		hostset.New([]string{"instagram.com"}),
+		zap.NewNop(),
+	)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repo.EXPECT().
+		GetUnsortedCollectionByUser(gomock.Any(), userID).
+		Return(uuid.New(), nil)
+
+	repo.EXPECT().
+		CreateSavedItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(
+			_ context.Context,
+			params saveditemdb.CreateSavedItemParams,
+		) (saved_item.SavedItem, error) {
+			// The normal path still leaves these to enrichment.
+			require.False(t, params.Title.Valid)
+			require.False(t, params.Platform.Valid)
+
+			return saved_item.SavedItem{ID: savedItemID, UserID: userID}, nil
+		})
+
+	enqueuer.EXPECT().
+		EnqueueSavedItemEnrichment(gomock.Any(), savedItemID).
+		Return(nil)
+
+	_, err := svc.CreateWithMetadata(
+		context.Background(),
+		userID,
+		"https://example.com/article",
+		nil,
+		&clientmetadata.Metadata{Title: textPtr("From the client")},
+	)
+
+	require.NoError(t, err)
+}
+
+func textPtr(value string) *string {
+	return &value
+}
+
+// A lookalike host is not the allowlisted host, so it is still queued.
+func TestService_Create_EnqueuesALookalikeHost(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	repo := saveditemmocks.NewMockRepository(ctrl)
+	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
+
+	svc := saved_item.NewService(
+		repo,
+		enqueuer,
+		hostset.New([]string{"instagram.com"}),
+		zap.NewNop(),
+	)
+
+	userID := uuid.New()
+	savedItemID := uuid.New()
+
+	repo.EXPECT().
+		GetUnsortedCollectionByUser(gomock.Any(), userID).
+		Return(uuid.New(), nil)
+
+	repo.EXPECT().
+		CreateSavedItem(gomock.Any(), gomock.Any()).
+		Return(saved_item.SavedItem{ID: savedItemID, UserID: userID}, nil)
+
+	enqueuer.EXPECT().
+		EnqueueSavedItemEnrichment(gomock.Any(), savedItemID).
+		Return(nil)
+
+	_, err := svc.Create(
+		context.Background(),
+		userID,
+		"https://notinstagram.com/reel/abc/",
+		nil,
+	)
+
+	require.NoError(t, err)
+}
 
 func TestService_Create_EnqueuesAfterCommit(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -22,7 +228,7 @@ func TestService_Create_EnqueuesAfterCommit(t *testing.T) {
 	repo := saveditemmocks.NewMockRepository(ctrl)
 	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
 
-	svc := saved_item.NewService(repo, enqueuer, zap.NewNop())
+	svc := saved_item.NewService(repo, enqueuer, nil, zap.NewNop())
 
 	userID := uuid.New()
 	savedItemID := uuid.New()
@@ -60,7 +266,7 @@ func TestService_Create_DoesNotEnqueueWhenTheWriteFails(t *testing.T) {
 	repo := saveditemmocks.NewMockRepository(ctrl)
 	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
 
-	svc := saved_item.NewService(repo, enqueuer, zap.NewNop())
+	svc := saved_item.NewService(repo, enqueuer, nil, zap.NewNop())
 
 	userID := uuid.New()
 
@@ -96,7 +302,7 @@ func TestService_Create_DoesNotEnqueueWhenTheURLIsRejected(t *testing.T) {
 	repo := saveditemmocks.NewMockRepository(ctrl)
 	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
 
-	svc := saved_item.NewService(repo, enqueuer, zap.NewNop())
+	svc := saved_item.NewService(repo, enqueuer, nil, zap.NewNop())
 
 	repo.EXPECT().
 		CreateSavedItem(gomock.Any(), gomock.Any()).
@@ -120,7 +326,7 @@ func TestService_Create_SurvivesAnUnreachableQueue(t *testing.T) {
 	repo := saveditemmocks.NewMockRepository(ctrl)
 	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
 
-	svc := saved_item.NewService(repo, enqueuer, zap.NewNop())
+	svc := saved_item.NewService(repo, enqueuer, nil, zap.NewNop())
 
 	userID := uuid.New()
 	savedItemID := uuid.New()
@@ -155,7 +361,7 @@ func TestService_Create_WorksWithoutAnEnqueuer(t *testing.T) {
 
 	repo := saveditemmocks.NewMockRepository(ctrl)
 
-	svc := saved_item.NewService(repo, nil, zap.NewNop())
+	svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 	userID := uuid.New()
 	savedItemID := uuid.New()
@@ -191,7 +397,7 @@ func TestService_DoesNotEnqueueOnReadsOrDeletes(t *testing.T) {
 	repo := saveditemmocks.NewMockRepository(ctrl)
 	enqueuer := saveditemmocks.NewMockSavedItemEnqueuer(ctrl)
 
-	svc := saved_item.NewService(repo, enqueuer, zap.NewNop())
+	svc := saved_item.NewService(repo, enqueuer, nil, zap.NewNop())
 
 	userID := uuid.New()
 	savedItemID := uuid.New()

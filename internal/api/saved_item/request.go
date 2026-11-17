@@ -1,5 +1,7 @@
 package saved_item
 
+import "github.com/thoriqr/stash-it-backend/internal/clientmetadata"
+
 type CreateSavedItemRequest struct {
 	URL string `json:"url" validate:"required,url,max=2048" example:"https://example.com/articles/1"`
 
@@ -12,6 +14,13 @@ type CreateSavedItemRequest struct {
 	// rejected for being long in bytes. The service applies the same bound again for
 	// callers that reach it without this type.
 	Note *string `json:"note" validate:"omitempty,max=5000" example:"Read the section about database indexing later."`
+
+	// Metadata is what the app extracted for a host in CLIENT_ENRICHMENT_HOSTS.
+	// It is ignored for every other host: the server fetches those itself, exactly
+	// as before. Sending it for an allowlisted host makes the save itself the
+	// enrichment attempt, so the item is stored completed or failed rather than
+	// pending, and no worker task is created.
+	Metadata *clientmetadata.Metadata `json:"metadata,omitempty"`
 }
 
 // UpdateSavedItemNoteRequest is the body of PUT /saved-items/:id/note.

@@ -166,6 +166,7 @@ func newRealWorkerServiceWithOrganizer(
 		workerenrichment.NewRepository(enrichmentdb.New(testPool)),
 		enricher,
 		organizer,
+		nil,
 		log,
 	)
 }

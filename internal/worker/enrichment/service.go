@@ -2,13 +2,21 @@ package enrichment
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/thoriqr/stash-it-backend/internal/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 )
+
+// clientEnrichmentCompletedStatus is the status a client-assisted enrichment
+// writes. It is restated here rather than imported from another feature, following
+// the rule that each package owns the values it reads.
+const clientEnrichmentCompletedStatus = "completed"
 
 // Service runs the enrichment of one saved item on behalf of a queue task.
 type Service interface {
@@ -26,7 +34,11 @@ type service struct {
 	repository Repository
 	enricher   MetadataEnricher
 	organizer  SavedItemOrganizer
-	log        *zap.Logger
+	// clientHosts are the hosts the client fetches itself. A task for one of them
+	// is recorded as failed without fetching, so a host the server cannot read is
+	// never hammered by retries.
+	clientHosts hostset.Set
+	log         *zap.Logger
 }
 
 // NewService builds the background enrichment service.
@@ -34,6 +46,8 @@ type service struct {
 // organizer schedules the automatic organization that follows a successful
 // enrichment. It may be nil, which is how a process that enriches without
 // arranging for anything else is expressed, and an enrichment still completes.
+//
+// clientHosts may be empty, which means the server fetches every host.
 //
 // log is required for the same reason it is required by the API feature: the
 // reason a page could not be enriched is deliberately not stored anywhere, since
@@ -43,13 +57,15 @@ func NewService(
 	repository Repository,
 	enricher MetadataEnricher,
 	organizer SavedItemOrganizer,
+	clientHosts hostset.Set,
 	log *zap.Logger,
 ) *service {
 	return &service{
-		repository: repository,
-		enricher:   enricher,
-		organizer:  organizer,
-		log:        log,
+		repository:  repository,
+		enricher:    enricher,
+		organizer:   organizer,
+		clientHosts: clientHosts,
+		log:         log,
 	}
 }
 
@@ -87,6 +103,38 @@ func (s *service) EnrichSavedItem(
 	)
 	if err != nil {
 		return err
+	}
+
+	// A host the client fetches itself is never fetched by the worker. This is the
+	// gate that guarantees it: a task queued before the allowlist existed, or by a
+	// client that still used the plain save endpoint, ends here instead of hitting
+	// a host that rejects the server.
+	//
+	// An item the client has already completed is left alone. Marking it failed
+	// would discard metadata the client actually extracted, and the task is stale
+	// by definition once that happened.
+	if s.usesClientEnrichment(savedItem.Url) {
+		if savedItem.EnrichmentStatus == clientEnrichmentCompletedStatus {
+			s.log.Info(
+				"client enrichment already completed; server fetch skipped",
+				zap.String("saved_item_id", savedItemID.String()),
+				zap.String("user_id", savedItem.UserID.String()),
+			)
+
+			return nil
+		}
+
+		if err := s.repository.FailSavedItemEnrichment(ctx, savedItemID); err != nil {
+			return err
+		}
+
+		s.log.Info(
+			"client enrichment required; server fetch skipped",
+			zap.String("saved_item_id", savedItemID.String()),
+			zap.String("user_id", savedItem.UserID.String()),
+		)
+
+		return nil
 	}
 
 	started := time.Now()
@@ -205,6 +253,24 @@ func (s *service) EnrichSavedItem(
 	s.scheduleOrganization(ctx, completed)
 
 	return nil
+}
+
+// usesClientEnrichment reports whether the saved item's host is one the client
+// fetches itself.
+//
+// The URL comes from the stored row and was validated at save time, so a parse
+// failure simply means "not in the set".
+func (s *service) usesClientEnrichment(rawURL string) bool {
+	if len(s.clientHosts) == 0 {
+		return false
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	return s.clientHosts.Contains(parsed.Hostname())
 }
 
 // scheduleOrganization queues automatic organization for a completed item that

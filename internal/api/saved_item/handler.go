@@ -23,7 +23,9 @@ func NewHandler(service SavedItemService) *Handler {
 // Create godoc
 // @Summary Save a URL
 // @Description Save a URL to the authenticated user's inbox.
-// @Description The saved item is returned with an initial enrichment_status of "pending". Metadata enrichment is handled asynchronously.
+// @Description For an ordinary host the saved item is returned with an initial enrichment_status of "pending", and metadata enrichment is handled asynchronously.
+// @Description For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". Nothing is queued for that host.
+// @Description Metadata is ignored for every other host, so a client that always sends it does not change server enrichment.
 // @Description An optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR
@@ -61,11 +63,12 @@ func (h *Handler) Create(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := h.service.Create(
+	result, err := h.service.CreateWithMetadata(
 		c.Context(),
 		userID,
 		req.URL,
 		req.Note,
+		req.Metadata,
 	)
 	if err != nil {
 		return err

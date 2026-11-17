@@ -18,6 +18,14 @@ type Repository interface {
 		params saveditemdb.CreateSavedItemParams,
 	) (SavedItem, error)
 
+	// CreateClientEnrichedSavedItem writes a saved item whose metadata came from
+	// the client, together with the status and last_enriched_at that attempt
+	// produced. No enrichment task is queued for it.
+	CreateClientEnrichedSavedItem(
+		ctx context.Context,
+		params saveditemdb.CreateClientEnrichedSavedItemParams,
+	) (SavedItem, error)
+
 	// UpdateSavedItemNote sets the note on one saved item of the authenticated user
 	// and returns the stored value.
 	//
@@ -99,6 +107,38 @@ func (r *repository) CreateSavedItem(
 	// instead of reusing the SavedItem model. The row is mapped straight back so
 	// the repository interface, the service and the API stay on one type.
 	row, err := r.queries.CreateSavedItem(ctx, params)
+	if err != nil {
+		return SavedItem{}, internalError(err)
+	}
+
+	return newSavedItem(
+		row.ID,
+		row.UserID,
+		row.Url,
+		row.Note,
+		row.Domain,
+		row.Platform,
+		row.Title,
+		row.Description,
+		row.ImageUrl,
+		row.PriceAmount,
+		row.PriceCurrency,
+		row.CollectionID,
+		row.EnrichmentStatus,
+		row.LastEnrichedAt,
+		row.CreatedAt,
+		row.UpdatedAt,
+	), nil
+}
+
+// CreateClientEnrichedSavedItem writes one saved item whose metadata the client
+// supplied. It is the same projection and the same mapping as CreateSavedItem;
+// only the columns written differ.
+func (r *repository) CreateClientEnrichedSavedItem(
+	ctx context.Context,
+	params saveditemdb.CreateClientEnrichedSavedItemParams,
+) (SavedItem, error) {
+	row, err := r.queries.CreateClientEnrichedSavedItem(ctx, params)
 	if err != nil {
 		return SavedItem{}, internalError(err)
 	}

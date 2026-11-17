@@ -86,6 +86,12 @@ type Config struct {
 	// nothing.
 	OEmbedSkipHosts []string
 
+	// ClientEnrichmentHosts are exact hostnames the client fetches and parses
+	// itself. A save of one of these hosts is not queued for the worker, and the
+	// enrich endpoint accepts the metadata the client extracted instead of
+	// fetching the page. Empty disables the feature.
+	ClientEnrichmentHosts []string
+
 	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
 	// external scheduler calls and which no user credential reaches.
 	//
@@ -202,6 +208,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	clientEnrichmentHosts, err := loadClientEnrichmentHosts()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -224,6 +235,8 @@ func Load() (Config, error) {
 		Sentry: sentry,
 
 		OEmbedSkipHosts: oembedSkipHosts,
+
+		ClientEnrichmentHosts: clientEnrichmentHosts,
 
 		SessionCleanupSecret: sessionCleanupSecret,
 		ClientReleaseSecret:  clientReleaseSecret,

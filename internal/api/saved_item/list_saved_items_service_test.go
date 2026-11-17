@@ -28,7 +28,7 @@ func newRecentItemsService(
 
 	repo := saveditemmocks.NewMockRepository(gomock.NewController(t))
 
-	return saved_item.NewService(repo, nil, zap.NewNop()), repo
+	return saved_item.NewService(repo, nil, nil, zap.NewNop()), repo
 }
 
 // recentSavedItemRow builds one row of the recent listing.

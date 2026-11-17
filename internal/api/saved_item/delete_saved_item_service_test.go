@@ -23,7 +23,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -72,7 +72,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -126,7 +126,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -200,7 +200,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -238,7 +238,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -280,7 +280,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -322,7 +322,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		userID := uuid.New()
 		savedItemID := uuid.New()
@@ -358,7 +358,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repo.EXPECT().
 			DeleteSavedItemByIDForUser(
@@ -393,7 +393,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repo.EXPECT().
 			DeleteSavedItemByIDForUser(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -416,7 +416,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		repoErr := apperror.Internal(errors.New("delete failed"))
 
@@ -441,7 +441,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		collectionID := uuid.New()
 		repoErr := apperror.Internal(errors.New("count failed"))
@@ -474,7 +474,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		collectionID := uuid.New()
 		repoErr := apperror.Internal(errors.New("system key failed"))
@@ -514,7 +514,7 @@ func TestService_Delete(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		repo := saveditemmocks.NewMockRepository(ctrl)
 
-		svc := saved_item.NewService(repo, nil, zap.NewNop())
+		svc := saved_item.NewService(repo, nil, nil, zap.NewNop())
 
 		collectionID := uuid.New()
 

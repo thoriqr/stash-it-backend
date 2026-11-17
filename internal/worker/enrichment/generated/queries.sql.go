@@ -106,15 +106,17 @@ const getSavedItemForBackgroundEnrichment = `-- name: GetSavedItemForBackgroundE
 SELECT
     id,
     user_id,
-    url
+    url,
+    enrichment_status
 FROM saved_items
 WHERE id = $1
 `
 
 type GetSavedItemForBackgroundEnrichmentRow struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-	Url    string
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	EnrichmentStatus string
 }
 
 // Loads the one saved item a background enrichment task is about.
@@ -132,6 +134,11 @@ type GetSavedItemForBackgroundEnrichmentRow struct {
 func (q *Queries) GetSavedItemForBackgroundEnrichment(ctx context.Context, id uuid.UUID) (GetSavedItemForBackgroundEnrichmentRow, error) {
 	row := q.db.QueryRow(ctx, getSavedItemForBackgroundEnrichment, id)
 	var i GetSavedItemForBackgroundEnrichmentRow
-	err := row.Scan(&i.ID, &i.UserID, &i.Url)
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Url,
+		&i.EnrichmentStatus,
+	)
 	return i, err
 }

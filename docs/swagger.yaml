@@ -190,6 +190,21 @@ definitions:
         example: 1.5.0
         type: string
     type: object
+  clientmetadata.Metadata:
+    properties:
+      description:
+        example: A short summary of the post
+        type: string
+      image_url:
+        example: https://example.com/preview.jpg
+        type: string
+      platform:
+        example: Instagram
+        type: string
+      title:
+        example: An interesting reel
+        type: string
+    type: object
   collection.CollectionIntent:
     enum:
     - existing
@@ -543,6 +558,11 @@ definitions:
       message:
         example: saved item enriched successfully
         type: string
+    type: object
+  enrichment.EnrichSavedItemRequest:
+    properties:
+      metadata:
+        $ref: '#/definitions/clientmetadata.Metadata'
     type: object
   enrichment.EnrichSavedItemResponse:
     properties:
@@ -1041,6 +1061,15 @@ definitions:
     type: object
   saved_item.CreateSavedItemRequest:
     properties:
+      metadata:
+        allOf:
+        - $ref: '#/definitions/clientmetadata.Metadata'
+        description: |-
+          Metadata is what the app extracted for a host in CLIENT_ENRICHMENT_HOSTS.
+          It is ignored for every other host: the server fetches those itself, exactly
+          as before. Sending it for an allowlisted host makes the save itself the
+          enrichment attempt, so the item is stored completed or failed rather than
+          pending, and no worker task is created.
       note:
         description: |-
           Note is optional plain text the user wants to remember about this URL. It is
@@ -1073,9 +1102,11 @@ definitions:
         type: string
       enrichment_status:
         description: |-
-          EnrichmentStatus is the value the row was stored with, which on a fresh save is
-          always pending. Background enrichment has been queued by the time this returns
-          but has not run, so this response never reports completed.
+          EnrichmentStatus is the value the row was stored with. For an ordinary host
+          a fresh save is always pending: enrichment has been queued by the time this
+          returns but has not run. For a client-enrichment host the save itself is the
+          attempt, so the value is completed when the client sent metadata and failed
+          when it did not.
         example: pending
         type: string
       id:
@@ -3543,7 +3574,9 @@ paths:
       - application/json
       description: |-
         Save a URL to the authenticated user's inbox.
-        The saved item is returned with an initial enrichment_status of "pending". Metadata enrichment is handled asynchronously.
+        For an ordinary host the saved item is returned with an initial enrichment_status of "pending", and metadata enrichment is handled asynchronously.
+        For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". Nothing is queued for that host.
+        Metadata is ignored for every other host, so a client that always sends it does not change server enrichment.
         An optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.
         Possible error codes:
         - VALIDATION_ERROR
@@ -3755,14 +3788,18 @@ paths:
       - Collection
   /saved-items/{id}/enrich:
     post:
+      consumes:
+      - application/json
       description: |-
         Fetch metadata from the saved item's URL.
         Enrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.
         The enrichment result is reported through enrichment_status in the response.
         Enrichment does not change the saved item's collection.
+        For a host in CLIENT_ENRICHMENT_HOSTS the server does not fetch the page: an optional metadata object carries what the client extracted. At least one field completes the item; none marks it failed. The body is ignored for every other host.
         Possible error codes:
         - SAVED_ITEM_NOT_FOUND
         - BAD_REQUEST
+        - VALIDATION_ERROR
         - INVALID_AUTHORIZATION_HEADER
         - INVALID_ACCESS_TOKEN
         - ACCESS_TOKEN_EXPIRED
@@ -3776,6 +3813,12 @@ paths:
         name: id
         required: true
         type: string
+      - description: Client-extracted metadata, only read for a client-enrichment
+          host
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/enrichment.EnrichSavedItemRequest'
       produces:
       - application/json
       responses:
@@ -3784,7 +3827,7 @@ paths:
           schema:
             $ref: '#/definitions/enrichment.EnrichSavedItemAPIResponse'
         "400":
-          description: Invalid saved item ID
+          description: Invalid saved item ID or client metadata
           schema:
             $ref: '#/definitions/swagger.APIErrorResponse'
         "401":

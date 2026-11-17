@@ -75,6 +75,130 @@ func (q *Queries) CountSavedItemsInCollection(ctx context.Context, arg CountSave
 	return count, err
 }
 
+const createClientEnrichedSavedItem = `-- name: CreateClientEnrichedSavedItem :one
+INSERT INTO saved_items (
+    user_id,
+    url,
+    note,
+    domain,
+    platform,
+    title,
+    description,
+    image_url,
+    enrichment_status,
+    last_enriched_at,
+    collection_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    CASE
+        WHEN $9 = 'completed' THEN NOW()
+        ELSE NULL
+    END,
+    $10
+)
+RETURNING
+    id,
+    user_id,
+    url,
+    note,
+    domain,
+    platform,
+    title,
+    description,
+    image_url,
+    price_amount,
+    price_currency,
+    collection_id,
+    enrichment_status,
+    last_enriched_at,
+    created_at,
+    updated_at
+`
+
+type CreateClientEnrichedSavedItemParams struct {
+	UserID           uuid.UUID
+	Url              string
+	Note             pgtype.Text
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	EnrichmentStatus string
+	CollectionID     uuid.UUID
+}
+
+type CreateClientEnrichedSavedItemRow struct {
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	Url              string
+	Note             pgtype.Text
+	Domain           pgtype.Text
+	Platform         pgtype.Text
+	Title            pgtype.Text
+	Description      pgtype.Text
+	ImageUrl         pgtype.Text
+	PriceAmount      pgtype.Numeric
+	PriceCurrency    pgtype.Text
+	CollectionID     uuid.UUID
+	EnrichmentStatus string
+	LastEnrichedAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// Writes one saved item whose metadata the client extracted.
+//
+// This is the client-assisted counterpart of CreateSavedItem. The four metadata
+// columns, the status and last_enriched_at are written from the client's attempt,
+// so the row is final at insert time: completed when the client found something,
+// failed when it found nothing. No background task is queued for it.
+//
+// domain and collection_id come from the same local derivation as a normal save.
+// price is deliberately absent: the client path does not accept a price.
+func (q *Queries) CreateClientEnrichedSavedItem(ctx context.Context, arg CreateClientEnrichedSavedItemParams) (CreateClientEnrichedSavedItemRow, error) {
+	row := q.db.QueryRow(ctx, createClientEnrichedSavedItem,
+		arg.UserID,
+		arg.Url,
+		arg.Note,
+		arg.Domain,
+		arg.Platform,
+		arg.Title,
+		arg.Description,
+		arg.ImageUrl,
+		arg.EnrichmentStatus,
+		arg.CollectionID,
+	)
+	var i CreateClientEnrichedSavedItemRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Url,
+		&i.Note,
+		&i.Domain,
+		&i.Platform,
+		&i.Title,
+		&i.Description,
+		&i.ImageUrl,
+		&i.PriceAmount,
+		&i.PriceCurrency,
+		&i.CollectionID,
+		&i.EnrichmentStatus,
+		&i.LastEnrichedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createSavedItem = `-- name: CreateSavedItem :one
 INSERT INTO saved_items (
     user_id,

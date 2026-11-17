@@ -52,6 +52,62 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: CreateClientEnrichedSavedItem :one
+-- Writes one saved item whose metadata the client extracted.
+--
+-- This is the client-assisted counterpart of CreateSavedItem. The four metadata
+-- columns, the status and last_enriched_at are written from the client's attempt,
+-- so the row is final at insert time: completed when the client found something,
+-- failed when it found nothing. No background task is queued for it.
+--
+-- domain and collection_id come from the same local derivation as a normal save.
+-- price is deliberately absent: the client path does not accept a price.
+INSERT INTO saved_items (
+    user_id,
+    url,
+    note,
+    domain,
+    platform,
+    title,
+    description,
+    image_url,
+    enrichment_status,
+    last_enriched_at,
+    collection_id
+) VALUES (
+    sqlc.arg(user_id),
+    sqlc.arg(url),
+    sqlc.arg(note),
+    sqlc.arg(domain),
+    sqlc.arg(platform),
+    sqlc.arg(title),
+    sqlc.arg(description),
+    sqlc.arg(image_url),
+    sqlc.arg(enrichment_status),
+    CASE
+        WHEN sqlc.arg(enrichment_status) = 'completed' THEN NOW()
+        ELSE NULL
+    END,
+    sqlc.arg(collection_id)
+)
+RETURNING
+    id,
+    user_id,
+    url,
+    note,
+    domain,
+    platform,
+    title,
+    description,
+    image_url,
+    price_amount,
+    price_currency,
+    collection_id,
+    enrichment_status,
+    last_enriched_at,
+    created_at,
+    updated_at;
+
 -- name: GetUnsortedCollectionByUser :one
 -- Resolves the authenticated user's Unsorted collection. system_key is the
 -- stable identity of a system collection, so the display name is never used to

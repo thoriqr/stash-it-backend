@@ -2,12 +2,16 @@ package enrichment
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/thoriqr/stash-it-backend/internal/clientmetadata"
 	"github.com/thoriqr/stash-it-backend/internal/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 )
 
 // Service enriches one of the user's saved items.
@@ -24,17 +28,25 @@ type Service interface {
 	// the item and reported through that state, because the item itself is still
 	// valid product data. The error return covers the saved item being missing,
 	// not the page being unreadable.
+	//
+	// metadata is the client's extraction for a host in CLIENT_ENRICHMENT_HOSTS.
+	// It is ignored for every other host, where the server fetches the page itself.
 	Enrich(
 		ctx context.Context,
 		userID uuid.UUID,
 		savedItemID uuid.UUID,
+		metadata *clientmetadata.Metadata,
 	) (EnrichResult, error)
 }
 
 type service struct {
 	repository Repository
 	enricher   MetadataEnricher
-	log        *zap.Logger
+	// clientHosts are the hosts the client fetches itself. For these the server
+	// never fetches; it stores the client's metadata or records that the client
+	// found nothing.
+	clientHosts hostset.Set
+	log         *zap.Logger
 }
 
 // NewService builds the enrichment service.
@@ -43,15 +55,19 @@ type service struct {
 // the caller, so without it a failed page would leave no record anywhere of why.
 // Nothing is persisted about the failure, because the schema has no column for a
 // reason; the log is the only place that detail exists.
+//
+// clientHosts may be empty, which means every host is enriched by the server.
 func NewService(
 	repository Repository,
 	enricher MetadataEnricher,
+	clientHosts hostset.Set,
 	log *zap.Logger,
 ) *service {
 	return &service{
-		repository: repository,
-		enricher:   enricher,
-		log:        log,
+		repository:  repository,
+		enricher:    enricher,
+		clientHosts: clientHosts,
+		log:         log,
 	}
 }
 
@@ -85,6 +101,7 @@ func (s *service) Enrich(
 	ctx context.Context,
 	userID uuid.UUID,
 	savedItemID uuid.UUID,
+	clientMetadata *clientmetadata.Metadata,
 ) (EnrichResult, error) {
 	rawURL, err := s.repository.GetSavedItemURLForEnrichment(
 		ctx,
@@ -93,6 +110,15 @@ func (s *service) Enrich(
 	)
 	if err != nil {
 		return EnrichResult{}, err
+	}
+
+	// A host the client fetches itself is never fetched here. The client's
+	// extraction is the whole answer: something extracted means completed, and
+	// nothing extracted means the attempt failed. Either way the server makes no
+	// outbound request, so a host that rejects the server cannot be retried into
+	// rejecting it further.
+	if s.usesClientEnrichment(rawURL) {
+		return s.enrichFromClient(ctx, userID, savedItemID, clientMetadata)
 	}
 
 	started := time.Now()
@@ -181,6 +207,97 @@ func (s *service) Enrich(
 	)
 
 	return EnrichResult{SavedItem: savedItem}, nil
+}
+
+// enrichFromClient records an enrichment the client performed.
+//
+// This is the whole of the client-assisted path, and it makes no outbound
+// request. The client fetched the page with its own address, parsed it, and sent
+// what it found. The server's job is to decide whether that is a completed
+// enrichment and to store it, not to ask the page again.
+//
+// The rule is single and deliberate: at least one non-blank field means the client
+// extracted something, so the item is completed; nothing at all means the client
+// could not extract, so the item is failed. There is no partial success, because
+// completion is the item's enrichment state, not a per-field flag, and the schema
+// has no place for one.
+//
+// The values overwrite what is stored, including clearing fields the client did
+// not send. That is the contract: the client sends its full extraction result, and
+// a stale value from an earlier attempt must not survive it.
+func (s *service) enrichFromClient(
+	ctx context.Context,
+	userID uuid.UUID,
+	savedItemID uuid.UUID,
+	clientMetadata *clientmetadata.Metadata,
+) (EnrichResult, error) {
+	metadata, err := clientmetadata.Normalize(clientMetadata)
+	if err != nil {
+		return EnrichResult{}, err
+	}
+
+	if !metadata.HasValue() {
+		savedItem, failErr := s.repository.FailSavedItemEnrichment(
+			ctx,
+			userID,
+			savedItemID,
+		)
+		if failErr != nil {
+			return EnrichResult{}, failErr
+		}
+
+		s.log.Info(
+			"client enrichment recorded no metadata",
+			zap.String("saved_item_id", savedItemID.String()),
+		)
+
+		return EnrichResult{SavedItem: savedItem}, nil
+	}
+
+	savedItem, err := s.repository.CompleteSavedItemEnrichment(
+		ctx,
+		CompleteSavedItemEnrichmentParams{
+			UserID:      userID,
+			SavedItemID: savedItemID,
+			Title:       metadata.Title,
+			Platform:    metadata.Platform,
+			Description: metadata.Description,
+			ImageURL:    metadata.ImageURL,
+		},
+	)
+	if err != nil {
+		return EnrichResult{}, err
+	}
+
+	// Presence, never values: the log must not record what the user saved.
+	s.log.Info(
+		"client enrichment stored metadata",
+		zap.String("saved_item_id", savedItemID.String()),
+		zap.Bool("has_title", metadata.Title != nil),
+		zap.Bool("has_platform", metadata.Platform != nil),
+		zap.Bool("has_description", metadata.Description != nil),
+		zap.Bool("has_image", metadata.ImageURL != nil),
+	)
+
+	return EnrichResult{SavedItem: savedItem}, nil
+}
+
+// usesClientEnrichment reports whether the saved item's host is one the client
+// fetches itself.
+//
+// The URL comes from the stored row and has already been validated at save time,
+// so a parse failure here simply means "not in the set".
+func (s *service) usesClientEnrichment(rawURL string) bool {
+	if len(s.clientHosts) == 0 {
+		return false
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	return s.clientHosts.Contains(parsed.Hostname())
 }
 
 // priceForPersistence applies the Title-dependent persistence rule for price.

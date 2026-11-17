@@ -121,6 +121,45 @@ func (c *MockRepositoryCountSavedItemsInCollectionCall) DoAndReturn(f func(conte
 	return c
 }
 
+// CreateClientEnrichedSavedItem mocks base method.
+func (m *MockRepository) CreateClientEnrichedSavedItem(ctx context.Context, params saveditemdb.CreateClientEnrichedSavedItemParams) (saved_item.SavedItem, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateClientEnrichedSavedItem", ctx, params)
+	ret0, _ := ret[0].(saved_item.SavedItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateClientEnrichedSavedItem indicates an expected call of CreateClientEnrichedSavedItem.
+func (mr *MockRepositoryMockRecorder) CreateClientEnrichedSavedItem(ctx, params any) *MockRepositoryCreateClientEnrichedSavedItemCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateClientEnrichedSavedItem", reflect.TypeOf((*MockRepository)(nil).CreateClientEnrichedSavedItem), ctx, params)
+	return &MockRepositoryCreateClientEnrichedSavedItemCall{Call: call}
+}
+
+// MockRepositoryCreateClientEnrichedSavedItemCall wrap *gomock.Call
+type MockRepositoryCreateClientEnrichedSavedItemCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockRepositoryCreateClientEnrichedSavedItemCall) Return(arg0 saved_item.SavedItem, arg1 error) *MockRepositoryCreateClientEnrichedSavedItemCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockRepositoryCreateClientEnrichedSavedItemCall) Do(f func(context.Context, saveditemdb.CreateClientEnrichedSavedItemParams) (saved_item.SavedItem, error)) *MockRepositoryCreateClientEnrichedSavedItemCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockRepositoryCreateClientEnrichedSavedItemCall) DoAndReturn(f func(context.Context, saveditemdb.CreateClientEnrichedSavedItemParams) (saved_item.SavedItem, error)) *MockRepositoryCreateClientEnrichedSavedItemCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // CreateSavedItem mocks base method.
 func (m *MockRepository) CreateSavedItem(ctx context.Context, params saveditemdb.CreateSavedItemParams) (saved_item.SavedItem, error) {
 	m.ctrl.T.Helper()

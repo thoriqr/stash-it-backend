@@ -160,6 +160,7 @@ func startTestWorkerWithRetryDelayAndOrganizer(
 		workerenrichment.NewRepository(enrichmentdb.New(testPool)),
 		enricher,
 		organizer,
+		nil,
 		log,
 	)
 

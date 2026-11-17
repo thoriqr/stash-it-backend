@@ -2240,7 +2240,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Save a URL to the authenticated user's inbox.\nThe saved item is returned with an initial enrichment_status of \"pending\". Metadata enrichment is handled asynchronously.\nAn optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_NOTE\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Save a URL to the authenticated user's inbox.\nFor an ordinary host the saved item is returned with an initial enrichment_status of \"pending\", and metadata enrichment is handled asynchronously.\nFor a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as \"completed\"; none stores it as \"failed\". Nothing is queued for that host.\nMetadata is ignored for every other host, so a client that always sends it does not change server enrichment.\nAn optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_URL\n- INVALID_NOTE\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
                 "consumes": [
                     "application/json"
                 ],
@@ -2503,7 +2503,10 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fetch metadata from the saved item's URL.\nEnrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.\nThe enrichment result is reported through enrichment_status in the response.\nEnrichment does not change the saved item's collection.\nPossible error codes:\n- SAVED_ITEM_NOT_FOUND\n- BAD_REQUEST\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "description": "Fetch metadata from the saved item's URL.\nEnrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.\nThe enrichment result is reported through enrichment_status in the response.\nEnrichment does not change the saved item's collection.\nFor a host in CLIENT_ENRICHMENT_HOSTS the server does not fetch the page: an optional metadata object carries what the client extracted. At least one field completes the item; none marks it failed. The body is ignored for every other host.\nPossible error codes:\n- SAVED_ITEM_NOT_FOUND\n- BAD_REQUEST\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -2519,6 +2522,14 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Client-extracted metadata, only read for a client-enrichment host",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/enrichment.EnrichSavedItemRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -2529,7 +2540,7 @@
                         }
                     },
                     "400": {
-                        "description": "Invalid saved item ID",
+                        "description": "Invalid saved item ID or client metadata",
                         "schema": {
                             "$ref": "#/definitions/swagger.APIErrorResponse"
                         }
@@ -3225,6 +3236,27 @@
                 }
             }
         },
+        "clientmetadata.Metadata": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "A short summary of the post"
+                },
+                "image_url": {
+                    "type": "string",
+                    "example": "https://example.com/preview.jpg"
+                },
+                "platform": {
+                    "type": "string",
+                    "example": "Instagram"
+                },
+                "title": {
+                    "type": "string",
+                    "example": "An interesting reel"
+                }
+            }
+        },
         "collection.CollectionIntent": {
             "type": "string",
             "enum": [
@@ -3615,6 +3647,14 @@
                 "message": {
                     "type": "string",
                     "example": "saved item enriched successfully"
+                }
+            }
+        },
+        "enrichment.EnrichSavedItemRequest": {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "$ref": "#/definitions/clientmetadata.Metadata"
                 }
             }
         },
@@ -4325,6 +4365,14 @@
                 "url"
             ],
             "properties": {
+                "metadata": {
+                    "description": "Metadata is what the app extracted for a host in CLIENT_ENRICHMENT_HOSTS.\nIt is ignored for every other host: the server fetches those itself, exactly\nas before. Sending it for an allowlisted host makes the save itself the\nenrichment attempt, so the item is stored completed or failed rather than\npending, and no worker task is created.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/clientmetadata.Metadata"
+                        }
+                    ]
+                },
                 "note": {
                     "description": "Note is optional plain text the user wants to remember about this URL. It is\nnullable and may span multiple lines, and leaving it out (or sending null)\npreserves the existing save behavior exactly. A value containing only\nwhitespace is stored as NULL.\n\nmax=5000 is measured in runes by the validator, so a multilingual note is not\nrejected for being long in bytes. The service applies the same bound again for\ncallers that reach it without this type.",
                     "type": "string",
@@ -4354,7 +4402,7 @@
                     "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 },
                 "enrichment_status": {
-                    "description": "EnrichmentStatus is the value the row was stored with, which on a fresh save is\nalways pending. Background enrichment has been queued by the time this returns\nbut has not run, so this response never reports completed.",
+                    "description": "EnrichmentStatus is the value the row was stored with. For an ordinary host\na fresh save is always pending: enrichment has been queued by the time this\nreturns but has not run. For a client-enrichment host the save itself is the\nattempt, so the value is completed when the client sent metadata and failed\nwhen it did not.",
                     "type": "string",
                     "example": "pending"
                 },

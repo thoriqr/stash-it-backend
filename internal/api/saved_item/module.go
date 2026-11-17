@@ -7,6 +7,7 @@ import (
 
 	saveditemdb "github.com/thoriqr/stash-it-backend/internal/api/saved_item/generated"
 	"github.com/thoriqr/stash-it-backend/internal/config"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/middleware"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 )
@@ -36,6 +37,7 @@ func RegisterModule(
 	savedItemService := NewService(
 		savedItemRepository,
 		enqueuer,
+		hostset.New(cfg.ClientEnrichmentHosts),
 		log,
 	)
 
