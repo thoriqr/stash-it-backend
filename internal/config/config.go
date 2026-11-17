@@ -80,6 +80,12 @@ type Config struct {
 	// created a Sentry project yet.
 	Sentry SentryConfig
 
+	// OEmbedSkipHosts are exact hostnames for which the enricher does not call
+	// any oEmbed endpoint. The HTML path still runs. It is loaded here so a bad
+	// entry is a startup error rather than a setting that silently matches
+	// nothing.
+	OEmbedSkipHosts []string
+
 	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
 	// external scheduler calls and which no user credential reaches.
 	//
@@ -191,6 +197,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	oembedSkipHosts, err := loadOEmbedSkipHosts()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		AppEnv:                 appEnv,
 		DatabaseURL:            databaseURL,
@@ -211,6 +222,8 @@ func Load() (Config, error) {
 		EmailSender: emailSender,
 
 		Sentry: sentry,
+
+		OEmbedSkipHosts: oembedSkipHosts,
 
 		SessionCleanupSecret: sessionCleanupSecret,
 		ClientReleaseSecret:  clientReleaseSecret,

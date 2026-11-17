@@ -84,6 +84,7 @@ func setMinimalLoadEnv(t *testing.T) {
 		"SENTRY_TRACES_SAMPLE_RATE",
 		"SENTRY_DEBUG",
 		"WORKER_CONCURRENCY",
+		"OEMBED_SKIP_HOSTS",
 	} {
 		t.Setenv(key, "")
 	}

@@ -54,6 +54,11 @@ type enricher struct {
 	// which is the no-registry configuration: known hosts such as YouTube still
 	// use oEmbed, and everything else goes straight to HTML.
 	providerResolver ProviderResolver
+
+	// oembedSkipHosts are exact, normalized hostnames for which no oEmbed
+	// endpoint is called, including built-in and discovery endpoints. The HTML
+	// path still runs. An empty map means no skips.
+	oembedSkipHosts map[string]struct{}
 }
 
 // enrichAcceptHeader asks for HTML and accepts a little more, so that an XHTML
@@ -132,6 +137,42 @@ func NewEnricherWithResolver(
 		youtubeOEmbedURL: youtubeOEmbedEndpoint,
 		providerResolver: resolver,
 	}
+}
+
+// SetOEmbedSkipHosts configures exact hostnames for which no oEmbed endpoint is
+// called. The HTML path still runs, so a skipped host is read the same way as one
+// the registry does not know.
+//
+// Matching is by exact normalized hostname, with no suffix or substring match.
+// The set is written before the enricher is shared, so it is read-only afterward.
+// An empty list clears any previous configuration.
+func (e *enricher) SetOEmbedSkipHosts(hosts []string) {
+	if len(hosts) == 0 {
+		e.oembedSkipHosts = nil
+
+		return
+	}
+
+	skipped := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		normalized := normalizeHostname(host)
+		if normalized != "" {
+			skipped[normalized] = struct{}{}
+		}
+	}
+
+	e.oembedSkipHosts = skipped
+}
+
+// skipsOEmbed reports whether the host's oEmbed endpoints are disabled.
+func (e *enricher) skipsOEmbed(hostname string) bool {
+	if len(e.oembedSkipHosts) == 0 {
+		return false
+	}
+
+	_, skipped := e.oembedSkipHosts[normalizeHostname(hostname)]
+
+	return skipped
 }
 
 // clientFor returns the guarded client for a transport selection.
@@ -280,11 +321,16 @@ func (e *enricher) Enrich(
 //
 // Everything else goes through the injected resolver. A resolver that is absent or
 // that knows nothing about the URL is not an error; it means the HTML path is the
-// next thing to try.
+// next thing to try. A host in the configured skip set returns no endpoint either,
+// which is how an operator disables a provider that is not worth calling.
 func (e *enricher) resolveOEmbedEndpoint(
 	ctx context.Context,
 	parsed *url.URL,
 ) (OEmbedEndpoint, bool) {
+	if e.skipsOEmbed(parsed.Hostname()) {
+		return OEmbedEndpoint{}, false
+	}
+
 	if _, ok := youtubeVideoID(parsed); ok {
 		return OEmbedEndpoint{
 			ProviderName:     "YouTube",
@@ -322,6 +368,10 @@ func (e *enricher) enrichWithDiscovery(
 	discoveryURL string,
 ) Metadata {
 	if discoveryURL == "" {
+		return metadata
+	}
+
+	if e.skipsOEmbed(parsed.Hostname()) {
 		return metadata
 	}
 

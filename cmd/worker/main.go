@@ -126,6 +126,7 @@ func main() {
 		genericOutboundFetchPolicy,
 		providerRegistry,
 	)
+	metadataEnricher.SetOEmbedSkipHosts(cfg.OEmbedSkipHosts)
 
 	enrichmentQueries := workerenrichmentdb.New(pool)
 
@@ -223,6 +224,9 @@ func main() {
 		// unaffected.
 		zap.String("redis_addr", redisOptions.Addr),
 		zap.Int("redis_db", redisOptions.DB),
+		// The hosts whose oEmbed endpoints are disabled. Recorded because the
+		// setting is operational and restart is the only way to change it.
+		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
 		zap.Int("concurrency", cfg.WorkerConcurrency),
 		zap.Strings(
 			"queues",

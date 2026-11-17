@@ -400,6 +400,7 @@ func main() {
 		genericOutboundFetchPolicy,
 		providerRegistry,
 	)
+	metadataEnricher.SetOEmbedSkipHosts(cfg.OEmbedSkipHosts)
 
 	enrichment.RegisterModule(
 		app,
@@ -430,6 +431,10 @@ func main() {
 		// API key is deliberately absent; the identity is not a secret.
 		zap.String("email_provider", string(cfg.EmailSender.Provider)),
 		zap.String("email_from", cfg.EmailSender.FromAddress),
+		// The hosts whose oEmbed endpoints are disabled. Recorded because the
+		// setting is operational and an empty list is indistinguishable from a
+		// list that failed to load without it.
+		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
 		// Whether the maintenance route can be called at all, never the secret
 		// itself. An absent secret is an ordinary deployment: the route stays
 		// registered and refuses every request, so the useful thing to record is

@@ -42,6 +42,59 @@ func newResolverEnricher(resolver ProviderResolver) *enricher {
 	)
 }
 
+// A host in the configured skip list is never asked for an endpoint, even when
+// the resolver would match it.
+func TestResolveOEmbedEndpoint_SkipsConfiguredHosts(t *testing.T) {
+	resolver := &fakeProviderResolver{
+		ok:       true,
+		endpoint: OEmbedEndpoint{EndpointURL: "https://oembed.example/x"},
+	}
+
+	enricher := newResolverEnricher(resolver)
+	enricher.SetOEmbedSkipHosts([]string{"WWW.Instagram.com."})
+
+	parsed, err := url.Parse("https://www.instagram.com/reel/abc/")
+	require.NoError(t, err)
+
+	_, ok := enricher.resolveOEmbedEndpoint(context.Background(), parsed)
+
+	require.False(t, ok)
+	require.Zero(t, resolver.calls)
+}
+
+// A host that is not in the skip list keeps its normal registry endpoint.
+func TestResolveOEmbedEndpoint_OtherHostsStillResolve(t *testing.T) {
+	resolver := &fakeProviderResolver{
+		ok:       true,
+		endpoint: OEmbedEndpoint{EndpointURL: "https://oembed.example/x"},
+	}
+
+	enricher := newResolverEnricher(resolver)
+	enricher.SetOEmbedSkipHosts([]string{"instagram.com"})
+
+	parsed, err := url.Parse("https://example.com/post")
+	require.NoError(t, err)
+
+	endpoint, ok := enricher.resolveOEmbedEndpoint(context.Background(), parsed)
+
+	require.True(t, ok)
+	require.Equal(t, "https://oembed.example/x", endpoint.EndpointURL)
+	require.Equal(t, 1, resolver.calls)
+}
+
+// The skip is an operator override, so it also applies to a built-in endpoint.
+func TestResolveOEmbedEndpoint_SkipAppliesToBuiltInHosts(t *testing.T) {
+	enricher := newResolverEnricher(nil)
+	enricher.SetOEmbedSkipHosts([]string{"youtube.com", "www.youtube.com"})
+
+	parsed, err := url.Parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+	require.NoError(t, err)
+
+	_, ok := enricher.resolveOEmbedEndpoint(context.Background(), parsed)
+
+	require.False(t, ok)
+}
+
 // serveOEmbedPage serves an oEmbed endpoint and an HTML page from one server.
 //
 // Both handlers count their calls, which is what lets a test assert that the more

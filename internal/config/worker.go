@@ -36,6 +36,10 @@ type WorkerConfig struct {
 	// because silently replacing it would leave a deployment running at a
 	// concurrency nobody asked for and nothing in the logs to say so.
 	WorkerConcurrency int
+
+	// OEmbedSkipHosts are exact hostnames for which the worker's enricher does
+	// not call any oEmbed endpoint. The HTML path still runs.
+	OEmbedSkipHosts []string
 }
 
 // Worker concurrency bounds.
@@ -87,6 +91,11 @@ func LoadWorker() (WorkerConfig, error) {
 		return WorkerConfig{}, err
 	}
 
+	oembedSkipHosts, err := loadOEmbedSkipHosts()
+	if err != nil {
+		return WorkerConfig{}, err
+	}
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return WorkerConfig{}, fmt.Errorf("DATABASE_URL is required")
@@ -102,6 +111,7 @@ func LoadWorker() (WorkerConfig, error) {
 		DatabaseURL:       databaseURL,
 		RedisURL:          redisURL,
 		WorkerConcurrency: workerConcurrency,
+		OEmbedSkipHosts:   oembedSkipHosts,
 	}, nil
 }
 
