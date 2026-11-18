@@ -32,4 +32,17 @@ type SavedItemEnqueuer interface {
 		ctx context.Context,
 		savedItemID uuid.UUID,
 	) error
+
+	// EnqueueSavedItemOrganization queues automatic organization for one saved
+	// item.
+	//
+	// It is used for a client-enriched item: the row is already completed with a
+	// platform the server derived from the host, so only the create-or-get
+	// collection and the move remain. The organization worker does not fetch the
+	// page, which is why this is safe for a host the server must not read.
+	EnqueueSavedItemOrganization(
+		ctx context.Context,
+		savedItemID uuid.UUID,
+		userID uuid.UUID,
+	) error
 }

@@ -31,7 +31,7 @@ func TestService_Create_DoesNotEnqueueAClientEnrichmentHost(t *testing.T) {
 	svc := saved_item.NewService(
 		repo,
 		enqueuer,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -72,8 +72,9 @@ func TestService_Create_DoesNotEnqueueAClientEnrichmentHost(t *testing.T) {
 }
 
 // Client metadata on an allowlisted host is stored with the row, completed, and
-// still not queued.
-func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
+// schedules organization only. The enrichment task must not exist: the server
+// never fetches this host.
+func TestService_Create_StoresClientMetadataAndQueuesOrganization(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	repo := saveditemmocks.NewMockRepository(ctrl)
@@ -82,7 +83,7 @@ func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
 	svc := saved_item.NewService(
 		repo,
 		enqueuer,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -112,7 +113,11 @@ func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
 			}, nil
 		})
 
-	// No EnqueueSavedItemEnrichment call is expected.
+	// No EnqueueSavedItemEnrichment call is expected. The database-only
+	// organization task is the only thing queued.
+	enqueuer.EXPECT().
+		EnqueueSavedItemOrganization(gomock.Any(), savedItemID, userID).
+		Return(nil)
 
 	result, err := svc.CreateWithMetadata(
 		context.Background(),
@@ -123,7 +128,6 @@ func TestService_Create_StoresClientMetadataWithoutEnqueue(t *testing.T) {
 			Title:       textPtr("Shark Detail on Instagram: \"a caption\""),
 			Description: textPtr("A description"),
 			ImageURL:    textPtr("https://cdn.example/preview.jpg"),
-			Platform:    textPtr("Instagram"),
 		},
 	)
 
@@ -141,7 +145,7 @@ func TestService_Create_IgnoresMetadataForNonClientHost(t *testing.T) {
 	svc := saved_item.NewService(
 		repo,
 		enqueuer,
-		hostset.New([]string{"instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -192,7 +196,7 @@ func TestService_Create_AcceptsALongInstagramCaptionTitle(t *testing.T) {
 	svc := saved_item.NewService(
 		repo,
 		enqueuer,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -223,6 +227,10 @@ func TestService_Create_AcceptsALongInstagramCaptionTitle(t *testing.T) {
 	caption := strings.Repeat("a", 2000)
 	rawTitle := "Shark Detail on Instagram: \"" + caption + "\""
 
+	enqueuer.EXPECT().
+		EnqueueSavedItemOrganization(gomock.Any(), savedItemID, userID).
+		Return(nil)
+
 	_, err := svc.CreateWithMetadata(
 		context.Background(),
 		userID,
@@ -248,7 +256,7 @@ func TestService_Create_EnqueuesALookalikeHost(t *testing.T) {
 	svc := saved_item.NewService(
 		repo,
 		enqueuer,
-		hostset.New([]string{"instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 

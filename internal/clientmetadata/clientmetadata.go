@@ -27,7 +27,6 @@ import (
 const (
 	TitleMaxRunes       = 1000
 	DescriptionMaxRunes = 10000
-	PlatformMaxRunes    = 100
 	ImageURLMaxBytes    = 2048
 )
 
@@ -36,11 +35,15 @@ const (
 // Every field is a pointer because absence is meaningful: a field the client did
 // not find is stored as NULL, never as an empty string, and blank-after-trim
 // counts as absent.
+//
+// There is deliberately no platform here. It becomes a collection's name, and a
+// value the client chose would let a typo or a localized name create a second
+// collection for the same host. The server derives it from the URL's host instead,
+// so one host always maps to one collection.
 type Metadata struct {
 	Title       *string `json:"title" example:"An interesting reel"`
 	Description *string `json:"description" example:"A short summary of the post"`
 	ImageURL    *string `json:"image_url" example:"https://example.com/preview.jpg"`
-	Platform    *string `json:"platform" example:"Instagram"`
 }
 
 // Normalized is the client's metadata after trimming and validation.
@@ -50,7 +53,6 @@ type Normalized struct {
 	Title       *string
 	Description *string
 	ImageURL    *string
-	Platform    *string
 }
 
 // HasValue reports whether at least one field carries a value.
@@ -59,7 +61,7 @@ type Normalized struct {
 // client-assisted enrichment: a client that extracted something completed it, and
 // one that extracted nothing recorded the failure.
 func (n Normalized) HasValue() bool {
-	return n.Title != nil || n.Description != nil || n.ImageURL != nil || n.Platform != nil
+	return n.Title != nil || n.Description != nil || n.ImageURL != nil
 }
 
 // Normalize trims the client's values and enforces the bounds.
@@ -97,20 +99,10 @@ func Normalize(
 		return Normalized{}, err
 	}
 
-	platform, err := normalizeText(
-		metadata.Platform,
-		PlatformMaxRunes,
-		"platform",
-	)
-	if err != nil {
-		return Normalized{}, err
-	}
-
 	return Normalized{
 		Title:       title,
 		Description: description,
 		ImageURL:    imageURL,
-		Platform:    platform,
 	}, nil
 }
 

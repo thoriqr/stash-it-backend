@@ -36,7 +36,7 @@ func RegisterModule(
 	enrichmentService := NewService(
 		enrichmentRepository,
 		enricher,
-		hostset.New(cfg.ClientEnrichmentHosts),
+		hostset.NewPlatformMap(cfg.ClientEnrichmentHosts),
 		log,
 	)
 

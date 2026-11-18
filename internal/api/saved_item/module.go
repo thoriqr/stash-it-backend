@@ -37,7 +37,7 @@ func RegisterModule(
 	savedItemService := NewService(
 		savedItemRepository,
 		enqueuer,
-		hostset.New(cfg.ClientEnrichmentHosts),
+		hostset.NewPlatformMap(cfg.ClientEnrichmentHosts),
 		log,
 	)
 

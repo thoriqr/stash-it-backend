@@ -41,10 +41,11 @@ type WorkerConfig struct {
 	// not call any oEmbed endpoint. The HTML path still runs.
 	OEmbedSkipHosts []string
 
-	// ClientEnrichmentHosts are exact hostnames the client fetches itself. The
-	// worker records them as failed without fetching, so a task queued before the
-	// list existed does not hammer a host the server cannot read.
-	ClientEnrichmentHosts []string
+	// ClientEnrichmentHosts maps each exact hostname the client fetches itself to
+	// the platform its items belong to. The worker records these hosts as failed
+	// without fetching, so a task queued before the list existed does not hammer a
+	// host the server cannot read.
+	ClientEnrichmentHosts map[string]string
 }
 
 // Worker concurrency bounds.

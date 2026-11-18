@@ -99,7 +99,7 @@ PIN_EMAIL_BUDGET_WINDOW_SECONDS=86400
 
 WORKER_CONCURRENCY=5
 OEMBED_SKIP_HOSTS=instagram.com,www.instagram.com
-CLIENT_ENRICHMENT_HOSTS=instagram.com,www.instagram.com
+CLIENT_ENRICHMENT_HOSTS=instagram.com=Instagram,www.instagram.com=Instagram
 ```
 
 Generate secrets with:
@@ -140,14 +140,22 @@ Configuration constraints:
   whose oEmbed endpoint is never called; the HTML path still runs. The skip
   applies to registry, built-in and discovery endpoints. Wildcards, ports and
   schemes are rejected. Changing it needs a service restart, not a rebuild.
-- `CLIENT_ENRICHMENT_HOSTS` is an optional comma-separated list of exact
-  hostnames the client fetches and parses itself. `POST /saved-items` and
-  `POST /saved-items/:id/enrich` both accept an optional `metadata` object for
-  one of these hosts; the save stores completed or failed and queues nothing, and
-  the worker records any queued task as failed without fetching. Metadata is
-  ignored for every other host. Keep the list in step with the client's parser; a
-  host listed here without client support is never enriched. Same syntax and
-  restart requirement as `OEMBED_SKIP_HOSTS`, and it is read by both processes.
+- `CLIENT_ENRICHMENT_HOSTS` is an optional comma-separated list of
+  `host=Platform` entries for exact hostnames the client fetches and parses
+  itself. `POST /saved-items` and `POST /saved-items/:id/enrich` both accept an
+  optional `metadata` object for one of these hosts; the save stores completed or
+  failed and queues no enrichment, and the worker records any queued enrichment
+  task as failed without fetching. A completed save is then filed into a
+  collection named by the platform half, reusing one that already exists. That
+  platform is required: a host without one is a startup error rather than a
+  setting whose items silently stay in Unsorted. Metadata is ignored for every
+  other host. Keep the list in step with the client's parser; a host listed here
+  without client support is never enriched. Same host syntax and restart
+  requirement as `OEMBED_SKIP_HOSTS`, and it is read by both processes.
+
+  ```sh
+  CLIENT_ENRICHMENT_HOSTS=instagram.com=Instagram,www.instagram.com=Instagram
+  ```
 - `SENTRY_DSN` may be empty. Reporting is disabled and the logger remains the
   only error sink.
 - `SENTRY_RELEASE` identifies the deployed build. Use

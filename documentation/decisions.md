@@ -678,11 +678,36 @@ searchable as part of this feature.
     or newer client cannot change server enrichment. Client-supplied Instagram
     titles run through the same `Author on Instagram: "<caption>"` shortening the
     extractor applies, so the client may send the raw Open Graph title without
-    duplicating that rule. The values are untrusted, which is why the client path
-    does not schedule organization: a client-supplied `platform` could create a
-    collection name the server never validated. This is a fallback for hosts such
-    as Instagram that a datacenter address cannot read, not a replacement for the
-    server extractor.
+    duplicating that rule. This is a fallback for hosts such as Instagram that a
+    datacenter address cannot read, not a replacement for the server extractor.
+
+    The body carries only `title`, `description` and `image_url`. There is no
+    `platform`: a value chosen on the device could create a second collection for
+    the same host.
+
+    The platform is configuration, not code. `CLIENT_ENRICHMENT_HOSTS` holds
+    `host=Platform` entries, so adding a host is an environment change and the
+    name its items are filed under is written next to the host that produces them.
+    The two halves are one setting on purpose: a host present only in the allowlist
+    would complete items that organization could never file, which is the failure
+    this pairing exists to make impossible, so an entry without a platform is a
+    startup error rather than a setting that silently matches nothing. The host
+    half uses the same exact matching and normalization as every other host
+    setting; the platform half is kept as written because it becomes a collection's
+    display name.
+
+    Automatic organization still runs for these items, through the existing
+    organization task rather than the enrichment task. It is scheduled by the save
+    alone, once the metadata is committed, and only when the host has a platform
+    mapping and the result is `completed`. Re-enrichment never schedules it, and
+    that asymmetry is deliberate: `POST /saved-items/:id/enrich` has never changed
+    which collection an item is in, and a retry is not a request to re-file
+    something the user may have filed themselves. The task never fetches the page:
+    it reads the locked row, reuses or creates the platform collection, and moves
+    an item still in `Unsorted`. It is therefore safe for exactly the hosts the
+    server must not read, and it keeps the rule that organization is event-driven
+    and never scans. An item saved before this existed is not swept; re-saving or
+    moving it by hand is the only way it gets filed.
 
 ## Collections, ownership and listings
 

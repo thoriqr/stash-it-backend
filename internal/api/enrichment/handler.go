@@ -25,8 +25,9 @@ func NewHandler(service Service) *Handler {
 // @Description Fetch metadata from the saved item's URL.
 // @Description Enrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.
 // @Description The enrichment result is reported through enrichment_status in the response.
-// @Description Enrichment does not change the saved item's collection.
+// @Description Enrichment never changes the saved item's collection, whether the server fetched the page or the client supplied the metadata. Automatic organization belongs to the save path.
 // @Description For a host in CLIENT_ENRICHMENT_HOSTS the server does not fetch the page: an optional metadata object carries what the client extracted. At least one field completes the item; none marks it failed. The body is ignored for every other host.
+// @Description The metadata object carries title, description and image_url only. The platform is derived from the URL's host by the server, so a client must not send it.
 // @Description Possible error codes:
 // @Description - SAVED_ITEM_NOT_FOUND
 // @Description - BAD_REQUEST

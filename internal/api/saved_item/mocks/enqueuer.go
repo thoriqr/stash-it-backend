@@ -78,3 +78,41 @@ func (c *MockSavedItemEnqueuerEnqueueSavedItemEnrichmentCall) DoAndReturn(f func
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
+
+// EnqueueSavedItemOrganization mocks base method.
+func (m *MockSavedItemEnqueuer) EnqueueSavedItemOrganization(ctx context.Context, savedItemID, userID uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EnqueueSavedItemOrganization", ctx, savedItemID, userID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// EnqueueSavedItemOrganization indicates an expected call of EnqueueSavedItemOrganization.
+func (mr *MockSavedItemEnqueuerMockRecorder) EnqueueSavedItemOrganization(ctx, savedItemID, userID any) *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueSavedItemOrganization", reflect.TypeOf((*MockSavedItemEnqueuer)(nil).EnqueueSavedItemOrganization), ctx, savedItemID, userID)
+	return &MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall{Call: call}
+}
+
+// MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall wrap *gomock.Call
+type MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall) Return(arg0 error) *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall) Do(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall) DoAndReturn(f func(context.Context, uuid.UUID, uuid.UUID) error) *MockSavedItemEnqueuerEnqueueSavedItemOrganizationCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}

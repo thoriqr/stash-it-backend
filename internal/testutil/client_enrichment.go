@@ -20,7 +20,7 @@ func NewAppWithClientEnrichmentHosts(
 	pool *pgxpool.Pool,
 	enricher enrichment.MetadataEnricher,
 	enqueuer saveditem.SavedItemEnqueuer,
-	hosts []string,
+	hosts map[string]string,
 ) (*fiber.App, *FakeEmailSender) {
 	cfg := testConfig()
 	cfg.ClientEnrichmentHosts = hosts
@@ -38,7 +38,7 @@ func NewAppWithClientEnrichmentHosts(
 
 // TestConfigWithClientEnrichmentHosts exposes the same configuration for a caller
 // that assembles its own app.
-func TestConfigWithClientEnrichmentHosts(hosts []string) config.Config {
+func TestConfigWithClientEnrichmentHosts(hosts map[string]string) config.Config {
 	cfg := testConfig()
 	cfg.ClientEnrichmentHosts = hosts
 

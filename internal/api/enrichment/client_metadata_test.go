@@ -28,7 +28,7 @@ func newClientService(
 	return enrichment.NewService(
 		repository,
 		enricher,
-		hostset.New([]string{"www.instagram.com", "instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram", "instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 }
@@ -85,7 +85,6 @@ func TestService_Enrich_ClientHostStoresMetadataWithoutFetching(t *testing.T) {
 			Title:       clientText("A reel"),
 			Description: clientText("A description"),
 			ImageURL:    clientText("https://cdn.example/preview.jpg"),
-			Platform:    clientText("Instagram"),
 		},
 	)
 
@@ -118,7 +117,7 @@ func TestService_Enrich_ClientHostCompletesOnOneField(t *testing.T) {
 			require.Equal(t, "Only a title", *params.Title)
 			require.Nil(t, params.Description)
 			require.Nil(t, params.ImageURL)
-			require.Nil(t, params.Platform)
+			require.Equal(t, "Instagram", *params.Platform)
 
 			return enrichment.SavedItem{
 				ID:               savedItemID,
@@ -200,7 +199,6 @@ func TestService_Enrich_ClientHostBlankValuesFail(t *testing.T) {
 		&clientmetadata.Metadata{
 			Title:       clientText("   "),
 			Description: clientText("\n\t"),
-			Platform:    clientText(" "),
 		},
 	)
 
@@ -306,7 +304,6 @@ func TestService_Enrich_ClientHostShortensInstagramTitle(t *testing.T) {
 		&clientmetadata.Metadata{
 			Title:       clientText("Shark Detail on Instagram: \"a caption\""),
 			Description: clientText("a caption"),
-			Platform:    clientText("Instagram"),
 		},
 	)
 

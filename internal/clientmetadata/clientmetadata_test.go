@@ -15,14 +15,12 @@ func TestNormalize_TrimsAndDropsBlankFields(t *testing.T) {
 		Title:       text("  A title  "),
 		Description: text("   "),
 		ImageURL:    text(" https://cdn.example/a.jpg "),
-		Platform:    text(" Instagram "),
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "A title", *normalized.Title)
 	require.Nil(t, normalized.Description)
 	require.Equal(t, "https://cdn.example/a.jpg", *normalized.ImageURL)
-	require.Equal(t, "Instagram", *normalized.Platform)
 	require.True(t, normalized.HasValue())
 }
 

@@ -31,6 +31,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/email"
 	enrichmentcore "github.com/thoriqr/stash-it-backend/internal/enrichment"
 	"github.com/thoriqr/stash-it-backend/internal/health"
+	"github.com/thoriqr/stash-it-backend/internal/hostset"
 	"github.com/thoriqr/stash-it-backend/internal/httpx"
 	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/observability"
@@ -435,9 +436,14 @@ func main() {
 		// setting is operational and an empty list is indistinguishable from a
 		// list that failed to load without it.
 		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
-		// The hosts whose metadata the client supplies. Recorded because it
-		// changes whether a save is queued for background enrichment at all.
-		zap.Strings("client_enrichment_hosts", cfg.ClientEnrichmentHosts),
+		// The hosts whose metadata the client supplies, and the platform each one's
+		// items are filed under. Recorded because this setting changes whether a
+		// save is queued for background enrichment at all, and because the platform
+		// half decides which collection automatic organization creates.
+		zap.Strings(
+			"client_enrichment_hosts",
+			hostset.NewPlatformMap(cfg.ClientEnrichmentHosts).Entries(),
+		),
 		// Whether the maintenance route can be called at all, never the secret
 		// itself. An absent secret is an ordinary deployment: the route stays
 		// registered and refuses every request, so the useful thing to record is

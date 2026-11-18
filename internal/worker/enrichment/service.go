@@ -37,7 +37,7 @@ type service struct {
 	// clientHosts are the hosts the client fetches itself. A task for one of them
 	// is recorded as failed without fetching, so a host the server cannot read is
 	// never hammered by retries.
-	clientHosts hostset.Set
+	clientHosts hostset.PlatformMap
 	log         *zap.Logger
 }
 
@@ -57,7 +57,7 @@ func NewService(
 	repository Repository,
 	enricher MetadataEnricher,
 	organizer SavedItemOrganizer,
-	clientHosts hostset.Set,
+	clientHosts hostset.PlatformMap,
 	log *zap.Logger,
 ) *service {
 	return &service{

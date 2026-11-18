@@ -79,10 +79,11 @@ type SavedItemService interface {
 type service struct {
 	repository Repository
 	enqueuer   SavedItemEnqueuer
-	// clientHosts are the hosts the client fetches and parses itself. A save of
-	// one of them is stored and not queued, because the server must not fetch it
-	// and the client supplies the metadata through the enrich endpoint.
-	clientHosts hostset.Set
+	// clientHosts are the hosts the client fetches and parses itself, mapped to
+	// the platform their items are filed under. A save of one of them is stored
+	// and not queued for enrichment, because the server must not fetch it and the
+	// client supplies the metadata.
+	clientHosts hostset.PlatformMap
 	log         *zap.Logger
 }
 
@@ -100,7 +101,7 @@ type service struct {
 func NewService(
 	repository Repository,
 	enqueuer SavedItemEnqueuer,
-	clientHosts hostset.Set,
+	clientHosts hostset.PlatformMap,
 	log *zap.Logger,
 ) *service {
 	return &service{
@@ -181,7 +182,7 @@ func (s *service) CreateWithMetadata(
 
 	// Metadata is validated before any database work for a client-owned host, so a
 	// malformed body cannot cost a collection lookup or leave a row behind.
-	if s.usesClientEnrichment(rawURL) {
+	if platform, ok := s.clientPlatform(rawURL); ok {
 		metadata, err := clientmetadata.Normalize(shortenInstagramTitle(rawURL, clientMetadata))
 		if err != nil {
 			return CreateResult{}, err
@@ -200,6 +201,7 @@ func (s *service) CreateWithMetadata(
 			domain,
 			collectionID,
 			metadata,
+			platform,
 		)
 	}
 
@@ -271,10 +273,19 @@ func (s *service) createClientEnriched(
 	domain string,
 	collectionID uuid.UUID,
 	metadata clientmetadata.Normalized,
+	platform string,
 ) (CreateResult, error) {
 	status := "failed"
 	if metadata.HasValue() {
 		status = "completed"
+	}
+
+	// The platform comes from the configured host mapping, never from the client,
+	// so one host always maps to one collection. A failed item carries no platform:
+	// it is only meaningful once there is something to file under.
+	var storedPlatform pgtype.Text
+	if status == "completed" {
+		storedPlatform = optionalText(platform)
 	}
 
 	savedItem, err := s.repository.CreateClientEnrichedSavedItem(
@@ -284,7 +295,7 @@ func (s *service) createClientEnriched(
 			Url:              rawURL,
 			Note:             note,
 			Domain:           optionalText(domain),
-			Platform:         optionalTextPtr(metadata.Platform),
+			Platform:         storedPlatform,
 			Title:            optionalTextPtr(metadata.Title),
 			Description:      optionalTextPtr(metadata.Description),
 			ImageUrl:         optionalTextPtr(metadata.ImageURL),
@@ -296,8 +307,14 @@ func (s *service) createClientEnriched(
 		return CreateResult{}, err
 	}
 
-	// No enqueue: the client is the source of the metadata, and the server must
-	// never fetch this host.
+	// No enrichment task: the client is the source of the metadata, and the
+	// server must never fetch this host. Organization is a separate, database-only
+	// task that creates or reuses the platform collection and moves the item; it
+	// never reads the page.
+	if status == "completed" && storedPlatform.Valid {
+		s.enqueueOrganization(ctx, savedItem.ID, userID)
+	}
+
 	s.log.Info(
 		"saved item stored from client extraction",
 		zap.String("saved_item_id", savedItem.ID.String()),
@@ -309,23 +326,26 @@ func (s *service) createClientEnriched(
 	}, nil
 }
 
-// usesClientEnrichment reports whether the submitted URL's host is one the
-// client fetches and parses itself.
+// clientPlatform reports whether the submitted URL's host is one the client
+// fetches and parses itself, and which platform its items belong to.
+//
+// Both answers come from the same configured entry, so a host cannot be
+// client-owned without a platform to file its items under.
 //
 // The URL has already been validated by deriveDomain at this point, so a parse
 // failure here cannot happen for a reason the caller needs to hear about; an
-// unparseable URL simply is not in the set.
-func (s *service) usesClientEnrichment(rawURL string) bool {
+// unparseable URL simply is not a client-owned host.
+func (s *service) clientPlatform(rawURL string) (string, bool) {
 	if len(s.clientHosts) == 0 {
-		return false
+		return "", false
 	}
 
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return false
+		return "", false
 	}
 
-	return s.clientHosts.Contains(parsed.Hostname())
+	return s.clientHosts.PlatformFor(parsed.Hostname())
 }
 
 // optionalTextPtr converts an optional client value into its stored form. A nil
@@ -370,6 +390,39 @@ func (s *service) enqueueEnrichment(
 		s.log.Warn(
 			"saved item saved but background enrichment was not queued",
 			zap.String("saved_item_id", savedItemID.String()),
+			zap.Error(err),
+		)
+	}
+}
+
+// enqueueOrganization schedules automatic organization for a client-enriched item
+// that is already committed.
+//
+// It is a separate task from enrichment. The organization worker only reads the
+// row, creates or reuses the platform collection, and moves the item; it never
+// fetches the page, which is why it is safe for a host the server must not read.
+//
+// A failure is logged and not returned, for the same reason enqueueEnrichment
+// swallows one: the saved item is already durable, and the worst case is an item
+// that stays in Unsorted.
+func (s *service) enqueueOrganization(
+	ctx context.Context,
+	savedItemID uuid.UUID,
+	userID uuid.UUID,
+) {
+	if s.enqueuer == nil {
+		return
+	}
+
+	if err := s.enqueuer.EnqueueSavedItemOrganization(
+		ctx,
+		savedItemID,
+		userID,
+	); err != nil {
+		s.log.Warn(
+			"saved item saved but automatic organization was not queued",
+			zap.String("saved_item_id", savedItemID.String()),
+			zap.String("user_id", userID.String()),
 			zap.Error(err),
 		)
 	}

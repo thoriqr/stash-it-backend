@@ -24,8 +24,9 @@ func NewHandler(service SavedItemService) *Handler {
 // @Summary Save a URL
 // @Description Save a URL to the authenticated user's inbox.
 // @Description For an ordinary host the saved item is returned with an initial enrichment_status of "pending", and metadata enrichment is handled asynchronously.
-// @Description For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". Nothing is queued for that host.
+// @Description For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". No enrichment task is queued for that host; the item is filed into its platform collection automatically instead.
 // @Description Metadata is ignored for every other host, so a client that always sends it does not change server enrichment.
+// @Description The metadata object carries title, description and image_url only. The platform is derived from the URL's host by the server, so a client must not send it.
 // @Description An optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.
 // @Description Possible error codes:
 // @Description - VALIDATION_ERROR

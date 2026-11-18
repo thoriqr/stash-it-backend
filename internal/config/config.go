@@ -86,11 +86,16 @@ type Config struct {
 	// nothing.
 	OEmbedSkipHosts []string
 
-	// ClientEnrichmentHosts are exact hostnames the client fetches and parses
-	// itself. A save of one of these hosts is not queued for the worker, and the
-	// enrich endpoint accepts the metadata the client extracted instead of
-	// fetching the page. Empty disables the feature.
-	ClientEnrichmentHosts []string
+	// ClientEnrichmentHosts maps each exact hostname the client fetches and parses
+	// itself to the platform its items are filed under. A save of one of these
+	// hosts is not queued for the worker, and the enrich endpoint accepts the
+	// metadata the client extracted instead of fetching the page. Empty disables
+	// the feature.
+	//
+	// The platform half is part of the setting rather than a code constant, so
+	// adding a host is an environment change: automatic organization files its
+	// items under exactly this name.
+	ClientEnrichmentHosts map[string]string
 
 	// SessionCleanupSecret guards the internal session-cleanup endpoint, which an
 	// external scheduler calls and which no user credential reaches.

@@ -45,7 +45,7 @@ type service struct {
 	// clientHosts are the hosts the client fetches itself. For these the server
 	// never fetches; it stores the client's metadata or records that the client
 	// found nothing.
-	clientHosts hostset.Set
+	clientHosts hostset.PlatformMap
 	log         *zap.Logger
 }
 
@@ -60,7 +60,7 @@ type service struct {
 func NewService(
 	repository Repository,
 	enricher MetadataEnricher,
-	clientHosts hostset.Set,
+	clientHosts hostset.PlatformMap,
 	log *zap.Logger,
 ) *service {
 	return &service{
@@ -237,6 +237,14 @@ func (s *service) enrichFromClient(
 		return EnrichResult{}, err
 	}
 
+	// The client does not own the platform value. It comes from the configured
+	// host mapping, so a typo or a localized name on the device cannot create a
+	// second collection for the same host.
+	var serverPlatform *string
+	if platform, ok := s.clientPlatform(rawURL); ok {
+		serverPlatform = &platform
+	}
+
 	if !metadata.HasValue() {
 		savedItem, failErr := s.repository.FailSavedItemEnrichment(
 			ctx,
@@ -261,7 +269,7 @@ func (s *service) enrichFromClient(
 			UserID:      userID,
 			SavedItemID: savedItemID,
 			Title:       metadata.Title,
-			Platform:    metadata.Platform,
+			Platform:    serverPlatform,
 			Description: metadata.Description,
 			ImageURL:    metadata.ImageURL,
 		},
@@ -275,7 +283,7 @@ func (s *service) enrichFromClient(
 		"client enrichment stored metadata",
 		zap.String("saved_item_id", savedItemID.String()),
 		zap.Bool("has_title", metadata.Title != nil),
-		zap.Bool("has_platform", metadata.Platform != nil),
+		zap.Bool("has_platform", serverPlatform != nil),
 		zap.Bool("has_description", metadata.Description != nil),
 		zap.Bool("has_image", metadata.ImageURL != nil),
 	)
@@ -311,7 +319,7 @@ func shortenInstagramTitle(
 // fetches itself.
 //
 // The URL comes from the stored row and has already been validated at save time,
-// so a parse failure here simply means "not in the set".
+// so a parse failure here simply means "not in the map".
 func (s *service) usesClientEnrichment(rawURL string) bool {
 	if len(s.clientHosts) == 0 {
 		return false
@@ -323,6 +331,20 @@ func (s *service) usesClientEnrichment(rawURL string) bool {
 	}
 
 	return s.clientHosts.Contains(parsed.Hostname())
+}
+
+// clientPlatform reports the platform configured for the saved item's host.
+func (s *service) clientPlatform(rawURL string) (string, bool) {
+	if len(s.clientHosts) == 0 {
+		return "", false
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", false
+	}
+
+	return s.clientHosts.PlatformFor(parsed.Hostname())
 }
 
 // priceForPersistence applies the Title-dependent persistence rule for price.

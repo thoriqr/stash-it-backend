@@ -86,10 +86,11 @@ func (p *Producer) EnqueueSavedItemEnrichment(
 // with an owner that does not match is the one case the consumer treats as a
 // failure rather than a no-op.
 //
-// The caller is the enrichment worker, and it calls this only once the
-// enrichment write has committed. That ordering is the whole of this method's
-// contract on the caller's side: a task that exists implies a committed row it
-// can be resolved against.
+// The caller is the enrichment worker after a server-side enrichment, or the API
+// after a client-assisted save whose metadata is already committed. In both cases
+// it calls this only once the item is durable, which is the whole of this
+// method's contract on the caller's side: a task that exists implies a committed
+// row it can be resolved against.
 //
 // A returned error means the task was not queued. The saved item stays exactly
 // as enrichment left it, which is a valid saved item that simply remains in the

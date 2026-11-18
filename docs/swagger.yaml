@@ -198,9 +198,6 @@ definitions:
       image_url:
         example: https://example.com/preview.jpg
         type: string
-      platform:
-        example: Instagram
-        type: string
       title:
         example: An interesting reel
         type: string
@@ -1069,7 +1066,11 @@ definitions:
           It is ignored for every other host: the server fetches those itself, exactly
           as before. Sending it for an allowlisted host makes the save itself the
           enrichment attempt, so the item is stored completed or failed rather than
-          pending, and no worker task is created.
+          pending, and no enrichment task is created.
+
+          There is no platform field. The server derives it from the URL's host and
+          schedules the item's organization itself, so a value chosen on the device
+          cannot create a second collection for the same host.
       note:
         description: |-
           Note is optional plain text the user wants to remember about this URL. It is
@@ -3575,8 +3576,9 @@ paths:
       description: |-
         Save a URL to the authenticated user's inbox.
         For an ordinary host the saved item is returned with an initial enrichment_status of "pending", and metadata enrichment is handled asynchronously.
-        For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". Nothing is queued for that host.
+        For a host in CLIENT_ENRICHMENT_HOSTS the server never fetches the page: the optional metadata object carries what the client extracted. At least one non-blank field stores the item as "completed"; none stores it as "failed". No enrichment task is queued for that host; the item is filed into its platform collection automatically instead.
         Metadata is ignored for every other host, so a client that always sends it does not change server enrichment.
+        The metadata object carries title, description and image_url only. The platform is derived from the URL's host by the server, so a client must not send it.
         An optional plain-text note may be submitted with the URL. It is nullable, may span multiple lines, is limited to 5000 characters, and a whitespace-only value is stored as null.
         Possible error codes:
         - VALIDATION_ERROR
@@ -3794,8 +3796,9 @@ paths:
         Fetch metadata from the saved item's URL.
         Enrichment may return partial metadata when some fields are unavailable. A failed enrichment does not invalidate or remove the saved item.
         The enrichment result is reported through enrichment_status in the response.
-        Enrichment does not change the saved item's collection.
+        Enrichment never changes the saved item's collection, whether the server fetched the page or the client supplied the metadata. Automatic organization belongs to the save path.
         For a host in CLIENT_ENRICHMENT_HOSTS the server does not fetch the page: an optional metadata object carries what the client extracted. At least one field completes the item; none marks it failed. The body is ignored for every other host.
+        The metadata object carries title, description and image_url only. The platform is derived from the URL's host by the server, so a client must not send it.
         Possible error codes:
         - SAVED_ITEM_NOT_FOUND
         - BAD_REQUEST

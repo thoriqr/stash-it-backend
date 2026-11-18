@@ -15,12 +15,17 @@ import (
 // enqueue path that belongs to this API: which id is queued, and that it is queued
 // after the write succeeded.
 type FakeSavedItemEnqueuer struct {
-	// Err, when set, is returned instead of recording the call, standing in for a
-	// queue that cannot be reached. A save must still succeed in that case.
+	// Err, when set, is returned instead of recording an enrichment call, standing
+	// in for a queue that cannot be reached. A save must still succeed in that case.
 	Err error
 
-	mutex  sync.Mutex
-	queued []uuid.UUID
+	// OrganizationErr does the same for the organization task, which a client
+	// enrichment schedules separately.
+	OrganizationErr error
+
+	mutex     sync.Mutex
+	queued    []uuid.UUID
+	organized []uuid.UUID
 }
 
 func (f *FakeSavedItemEnqueuer) EnqueueSavedItemEnrichment(
@@ -39,10 +44,35 @@ func (f *FakeSavedItemEnqueuer) EnqueueSavedItemEnrichment(
 	return nil
 }
 
+func (f *FakeSavedItemEnqueuer) EnqueueSavedItemOrganization(
+	_ context.Context,
+	savedItemID uuid.UUID,
+	_ uuid.UUID,
+) error {
+	if f.OrganizationErr != nil {
+		return f.OrganizationErr
+	}
+
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	f.organized = append(f.organized, savedItemID)
+
+	return nil
+}
+
 // Queued returns every saved item id the fake was asked to enrich, in order.
 func (f *FakeSavedItemEnqueuer) Queued() []uuid.UUID {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
 	return append([]uuid.UUID(nil), f.queued...)
+}
+
+// Organized returns every saved item id the fake was asked to organize, in order.
+func (f *FakeSavedItemEnqueuer) Organized() []uuid.UUID {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	return append([]uuid.UUID(nil), f.organized...)
 }

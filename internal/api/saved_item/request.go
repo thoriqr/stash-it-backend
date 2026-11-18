@@ -19,7 +19,11 @@ type CreateSavedItemRequest struct {
 	// It is ignored for every other host: the server fetches those itself, exactly
 	// as before. Sending it for an allowlisted host makes the save itself the
 	// enrichment attempt, so the item is stored completed or failed rather than
-	// pending, and no worker task is created.
+	// pending, and no enrichment task is created.
+	//
+	// There is no platform field. The server derives it from the URL's host and
+	// schedules the item's organization itself, so a value chosen on the device
+	// cannot create a second collection for the same host.
 	Metadata *clientmetadata.Metadata `json:"metadata,omitempty"`
 }
 

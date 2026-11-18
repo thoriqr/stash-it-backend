@@ -44,7 +44,7 @@ func TestService_EnrichSavedItem_LeavesAClientCompletedItemAlone(t *testing.T) {
 		repository,
 		enricher,
 		nil,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -81,7 +81,7 @@ func TestService_EnrichSavedItem_SkipsClientEnrichmentHost(t *testing.T) {
 		repository,
 		enricher,
 		nil,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 
@@ -130,7 +130,7 @@ func TestService_EnrichSavedItem_NonClientHostStillFetches(t *testing.T) {
 		repository,
 		enricher,
 		nil,
-		hostset.New([]string{"www.instagram.com"}),
+		hostset.NewPlatformMap(map[string]string{"www.instagram.com": "Instagram"}),
 		zap.NewNop(),
 	)
 

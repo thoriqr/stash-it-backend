@@ -108,13 +108,16 @@ Steam, GOG and PSN were fetched successfully.
 
 A host the server cannot read may be listed in `CLIENT_ENRICHMENT_HOSTS` instead.
 Both `POST /saved-items` and `POST /saved-items/:id/enrich` accept the same
-optional `metadata` object: at least one non-blank field completes the item, none
-marks it failed. A save of one of these hosts stores the row with that result and
-queues nothing; the worker records any queued task as failed without fetching.
-Metadata is ignored for every other host. Instagram titles the client sends are
-shortened to `Author on Instagram` by the same rule the extractor uses, so the
-client may send the raw Open Graph title. The client-side parser does not exist
-yet, so the list must stay empty until it does.
+optional `metadata` object carrying `title`, `description` and `image_url`: at
+least one non-blank field completes the item, none marks it failed. There is no
+`platform` in it; the server derives that from the URL's host so one host maps to
+one collection name. A save of one of these hosts stores the row with that result
+and queues no enrichment; the worker records any queued enrichment task as failed
+without fetching. Instead, the API schedules the item's automatic organization,
+which never reads the page: it reuses or creates the platform collection and moves
+the item if it is still in `Unsorted`. Metadata is ignored for every other host.
+Instagram titles the client sends are shortened to `Author on Instagram` by the
+same rule the extractor uses, so the client may send the raw Open Graph title.
 
 ### Abuse protection
 
@@ -149,22 +152,35 @@ The state of `000027` to `000029` is not recorded here.
 
 ## In flight
 
-Uncommitted, and **not deployed**: the enrichment rework above (oEmbed registry,
-oEmbed-first, discovery fallback, TikTok, platform canonicalization, locale-stable
-requests, title filtering, Amazon preview images, Instagram titles, structured
-storefront prices, the Steam/GOG platform rules, the `OEMBED_SKIP_HOSTS` list, and
-client-assisted enrichment). It is verified on the development machine only, with
-`go build ./...`, `go vet ./...` and the full `go test ./...`. Live checks
-succeeded for Steam, GOG and PSN; Epic answered 403 from this network. The client
-half of client-assisted enrichment is not written yet, so leave
-`CLIENT_ENRICHMENT_HOSTS` empty until the app can extract a listed host. Run
-`git status` first; this list may be stale.
+Uncommitted, and **not deployed**: automatic organization for client-enrichment
+hosts, on the save path only. `POST /saved-items` with client metadata now
+schedules the existing organization task, so an Instagram item is filed into an
+`Instagram` collection instead of staying in Unsorted.
+`POST /saved-items/:id/enrich` still never changes an item's collection. The task
+never fetches the page. The platform now comes from `CLIENT_ENRICHMENT_HOSTS`
+itself, which holds `host=Platform` entries: adding a host is an environment
+change, and a host without a platform is a startup error. The client metadata
+object no longer has a `platform` field. It is verified on the development machine
+with `go build ./...`, `go vet ./...` and the full `go test ./...`, including
+integration tests that run the real organization worker for two configured hosts.
+Run `git status` first; this list may be stale.
+
+Deployed at `417167e`: the enrichment rework (oEmbed registry, oEmbed-first,
+discovery fallback, TikTok, platform canonicalization, locale-stable requests,
+title filtering, Amazon preview images, Instagram titles, structured storefront
+prices, the Steam/GOG platform rules, the `OEMBED_SKIP_HOSTS` list) and the first
+half of client-assisted enrichment, with `CLIENT_ENRICHMENT_HOSTS` live for
+`instagram.com` and `www.instagram.com`.
 
 Since the provider list is cached and the platform is now canonical, two things
 change for existing data once it is deployed: a `Grup Facebook` collection created
 by an earlier run stops being a target (new items file under `Facebook`), and items
-enriched before this change keep whatever metadata they already hold, because there
+enriched before that change keep whatever metadata they already hold, because there
 is no backfill.
+
+Items saved through client enrichment before organization was scheduled keep
+whatever collection they are in. There is no sweep, so nothing moves them after the
+fact; re-enriching one schedules its organization.
 
 Recently landed and deployed: registration recovery (`3fc5405`), the Google
 Desktop OAuth client (`013020c`), YouTube enrichment through oEmbed (`8789c62`),
@@ -251,11 +267,14 @@ The two breaking changes must ship with, or before, the backend.
 - [ ] Client-assisted enrichment, app side: for a host in
       `CLIENT_ENRICHMENT_HOSTS`, fetch the page on the device, then send the
       metadata on the save itself
-      (`POST /saved-items` with `{"url","note","metadata":{"title","description","image_url","platform"}}`).
-      Sending an empty `metadata` object stores the item as failed. For a retry on
-      an existing item, call `POST /saved-items/:id/enrich` with the same metadata
-      object. The server stores and validates; it never fetches these hosts. Keep
-      the host list in step with the parsers the app ships.
+      (`POST /saved-items` with `{"url","note","metadata":{"title","description","image_url"}}`).
+      Do not send a platform: the server takes it from the host's configured entry,
+      so one host maps to one collection. Sending an empty `metadata` object stores
+      the item as failed. For a retry on an existing item, call
+      `POST /saved-items/:id/enrich` with the same metadata object. The server
+      stores and validates; it never fetches these hosts. Only the save files the
+      item into its platform collection; a re-enrich never moves it. Keep the host
+      list in step with the parsers the app ships.
 
 ### Backend backlog
 
@@ -291,10 +310,10 @@ The two breaking changes must ship with, or before, the backend.
       the HTML path, and nothing reports that the registry has been stale for days.
 - [ ] Keep `CLIENT_ENRICHMENT_HOSTS` and the client's host list in step. The
       allowlist exists in both places by design, and the asymmetry matters: a host
-      added only on the server leaves items stuck at `pending` with nobody filling
-      them, while a host removed only on the server is harmless (metadata is
-      ignored and the worker fetches it). Any host change needs a client release,
-      or a small endpoint that publishes the list.
+      added only on the server makes the save store an empty result as `failed`
+      (the client never fetched it), while a host removed only on the server is
+      harmless (metadata is ignored and the worker fetches it). Any host change
+      needs a client release, or a small endpoint that publishes the list.
 - [ ] Decide whether preview images from Instagram, TikTok and Facebook need
       proxying. Their URLs are signed and expire within days, so a stored
       `image_url` goes dead even though the item is fine.

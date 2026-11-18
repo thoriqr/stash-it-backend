@@ -152,7 +152,7 @@ func main() {
 		enrichmentRepository,
 		metadataEnricher,
 		workProducer,
-		hostset.New(cfg.ClientEnrichmentHosts),
+		hostset.NewPlatformMap(cfg.ClientEnrichmentHosts),
 		log,
 	)
 
@@ -229,9 +229,13 @@ func main() {
 		// The hosts whose oEmbed endpoints are disabled. Recorded because the
 		// setting is operational and restart is the only way to change it.
 		zap.Strings("oembed_skip_hosts", cfg.OEmbedSkipHosts),
-		// The hosts whose metadata the client supplies. Recorded because the
-		// setting changes whether the worker fetches at all.
-		zap.Strings("client_enrichment_hosts", cfg.ClientEnrichmentHosts),
+		// The hosts whose metadata the client supplies, and the platform each one's
+		// items are filed under. Recorded because this setting changes whether the
+		// worker fetches at all.
+		zap.Strings(
+			"client_enrichment_hosts",
+			hostset.NewPlatformMap(cfg.ClientEnrichmentHosts).Entries(),
+		),
 		zap.Int("concurrency", cfg.WorkerConcurrency),
 		zap.Strings(
 			"queues",

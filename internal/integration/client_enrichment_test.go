@@ -26,7 +26,10 @@ import (
 
 const instagramReelURL = "https://www.instagram.com/reel/DfzezRYhSSn/"
 
-var clientEnrichmentHosts = []string{"www.instagram.com", "instagram.com"}
+var clientEnrichmentHosts = map[string]string{
+	"www.instagram.com": "Instagram",
+	"instagram.com":     "Instagram",
+}
 
 func newClientEnrichmentApp(
 	t *testing.T,
@@ -63,12 +66,15 @@ func TestClientEnrichment_SaveWithoutMetadataIsFailedAndNotQueued(t *testing.T) 
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	require.Equal(t, "failed", body.Data.SavedItem.EnrichmentStatus)
 
-	// The two assertions that make this the client-assisted path.
+	// The two assertions that make this the client-assisted path. A failed result
+	// has nothing to file under, so it is not organized either.
 	require.Empty(t, enqueuer.Queued(), "no enrichment task for a client-owned host")
+	require.Empty(t, enqueuer.Organized(), "a failed result has no platform to file under")
 	require.Empty(t, enricher.RequestedURLs(), "the save must not fetch")
 }
 
-// Metadata on the save is stored with the row, completed, and still not queued.
+// Metadata on the save is stored with the row, completed and not queued for
+// enrichment.
 func TestClientEnrichment_SaveStoresMetadataAndIsNotQueued(t *testing.T) {
 	truncateEnrichmentData(t)
 
@@ -86,7 +92,7 @@ func TestClientEnrichment_SaveStoresMetadataAndIsNotQueued(t *testing.T) {
 		strings.NewReader(`{"url":"`+instagramReelURL+`","note":"keep this",`+
 			`"metadata":{"title":"Shark Detail on Instagram: \"a caption\"",`+
 			`"description":"315K likes - sharkdetail_ on November 16, 2026: \"a caption\"",`+
-			`"image_url":"https://cdn.example/preview.jpg","platform":"Instagram"}}`),
+			`"image_url":"https://cdn.example/preview.jpg"}}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
@@ -114,6 +120,122 @@ func TestClientEnrichment_SaveStoresMetadataAndIsNotQueued(t *testing.T) {
 	require.Equal(t, "https://cdn.example/preview.jpg", state.ImageUrl.String)
 	require.Equal(t, "Instagram", state.Platform.String)
 	require.True(t, state.LastEnrichedAt.Valid)
+
+	// Organization is queued; enrichment is not.
+	require.Empty(t, enqueuer.Queued())
+	require.Equal(t, []uuid.UUID{itemID}, enqueuer.Organized())
+}
+
+// The queued organization really files the item: the Instagram collection is
+// created once, the item leaves Unsorted, and a second item joins the same
+// collection instead of creating a second one.
+func TestClientEnrichment_OrganizationFilesClientEnrichedItem(t *testing.T) {
+	truncateEnrichmentData(t)
+
+	userID := createEnrichmentUser(t, "client-organize@example.com")
+	unsortedID := createUnsortedForEnrichment(t, userID)
+
+	app := newClientEnrichmentApp(
+		t,
+		&testutil.FakeEnricher{},
+		&testutil.FakeSavedItemEnqueuer{},
+	)
+
+	saveWithMetadata := func(rawURL string) uuid.UUID {
+		t.Helper()
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/saved-items",
+			strings.NewReader(`{"url":"`+rawURL+`",`+
+				`"metadata":{"title":"A reel","description":"A caption"}}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+		var body createSavedItemResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+		itemID, parseErr := uuid.Parse(body.Data.SavedItem.ID)
+		require.NoError(t, parseErr)
+
+		return itemID
+	}
+
+	firstItemID := saveWithMetadata(instagramReelURL)
+	secondItemID := saveWithMetadata("https://instagram.com/p/second/")
+
+	require.NoError(t, organizeNow(t, firstItemID, userID))
+	require.NoError(t, organizeNow(t, secondItemID, userID))
+
+	firstState := organizationItemState(t, firstItemID)
+	secondState := organizationItemState(t, secondItemID)
+
+	require.NotEqual(t, unsortedID, firstState.CollectionID)
+	require.Equal(t, firstState.CollectionID, secondState.CollectionID)
+
+	collection := organizationCollection(t, firstState.CollectionID)
+	require.Equal(t, "Instagram", collection.Name)
+
+	// One collection for the platform, not one per item.
+	require.Len(t, organizationCollectionsForUser(t, userID), 2)
+}
+
+// A host added through configuration alone is filed under the platform the
+// configuration names. Nothing in the code knows about Facebook.
+func TestClientEnrichment_ConfiguredHostUsesItsConfiguredPlatform(t *testing.T) {
+	truncateEnrichmentData(t)
+
+	userID := createEnrichmentUser(t, "client-configured@example.com")
+	unsortedID := createUnsortedForEnrichment(t, userID)
+
+	app, _ := testutil.NewAppWithClientEnrichmentHosts(
+		testPool,
+		&testutil.FakeEnricher{},
+		&testutil.FakeSavedItemEnqueuer{},
+		map[string]string{
+			"www.facebook.com": "Facebook",
+			"instagram.com":    "Instagram",
+		},
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/saved-items",
+		strings.NewReader(
+			`{"url":"https://www.facebook.com/some/post/",`+
+				`"metadata":{"title":"A post","description":"A description"}}`,
+		),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
+
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body createSavedItemResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	itemID, parseErr := uuid.Parse(body.Data.SavedItem.ID)
+	require.NoError(t, parseErr)
+
+	// The title is stored as the client sent it: the Instagram shortening rule is
+	// bound to that host, not to the client-assisted path.
+	state := getEnrichmentState(t, itemID)
+	require.Equal(t, "completed", state.EnrichmentStatus)
+	require.Equal(t, "Facebook", state.Platform.String)
+	require.Equal(t, "A post", state.Title.String)
+
+	require.NoError(t, organizeNow(t, itemID, userID))
+
+	organized := organizationItemState(t, itemID)
+	require.NotEqual(t, unsortedID, organized.CollectionID)
+	require.Equal(t, "Facebook", organizationCollection(t, organized.CollectionID).Name)
 }
 
 // Client metadata is stored, the item is completed, and nothing is fetched.
@@ -133,7 +255,7 @@ func TestClientEnrichment_EnrichStoresClientMetadata(t *testing.T) {
 		http.MethodPost,
 		"/saved-items/"+savedItemID.String()+"/enrich",
 		strings.NewReader(`{"metadata":{"title":"A reel","description":"A description",`+
-			`"image_url":"https://cdn.example/preview.jpg","platform":"Instagram"}}`),
+			`"image_url":"https://cdn.example/preview.jpg"}}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+newTestAccessToken(t, userID))
@@ -149,9 +271,14 @@ func TestClientEnrichment_EnrichStoresClientMetadata(t *testing.T) {
 	require.NotNil(t, body.Data.SavedItem.LastEnrichedAt)
 
 	require.Empty(t, enricher.RequestedURLs(), "the enrich endpoint must not fetch this host")
+	require.Empty(t, enqueuer.Queued(), "the enrichment worker must not be queued")
+
+	// Enrichment never moves an item: organization belongs to the save path.
+	require.Empty(t, enqueuer.Organized(), "the enrich endpoint must not organize")
 
 	state := getEnrichmentState(t, savedItemID)
 	require.Equal(t, "completed", state.EnrichmentStatus)
+	require.Equal(t, collectionID, state.CollectionID)
 }
 
 // No metadata means the client could not extract, which is recorded as failed.
@@ -275,7 +402,7 @@ func TestClientEnrichment_WorkerSkipsAllowlistedHost(t *testing.T) {
 		workerenrichment.NewRepository(enrichmentdb.New(testPool)),
 		enricher,
 		nil,
-		hostset.New(clientEnrichmentHosts),
+		hostset.NewPlatformMap(clientEnrichmentHosts),
 		log,
 	)
 
