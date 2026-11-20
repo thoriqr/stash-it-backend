@@ -14,6 +14,7 @@ import (
 	clientrelease "github.com/thoriqr/stash-it-backend/internal/api/client_release"
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/api/feedback"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
 	"github.com/thoriqr/stash-it-backend/internal/api/user"
@@ -496,6 +497,17 @@ func newApp(
 		pool,
 		cfg,
 		enricher,
+		pinRateLimiter,
+		log,
+	)
+
+	// Feedback registers only its user-facing route. The operator page is a separate
+	// listener and is not part of this app, so an integration test here can file a
+	// report but cannot reach a way to read one back.
+	feedback.RegisterModule(
+		app,
+		pool,
+		cfg,
 		pinRateLimiter,
 		log,
 	)

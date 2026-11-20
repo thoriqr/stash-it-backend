@@ -124,6 +124,28 @@ type Config struct {
 	// request. It is never defaulted, because an invented secret would look
 	// configured and would not be.
 	ClientReleaseSecret string
+
+	// OperatorPageAddr is the address the operator page listens on, and an empty value
+	// disables it entirely.
+	//
+	// The page is not part of the API: it is a second Fiber app on its own listener,
+	// serving HTML to one person. Binding to loopback is what keeps it off the network
+	// — a reachable address is a mistake, not a deployment shape — but the address is
+	// configuration rather than a constant because development needs it on a local
+	// address while the VPS needs `127.0.0.1`.
+	//
+	// It is never defaulted. A default would start a surface nobody asked for, and the
+	// value has to differ between a laptop and a server anyway.
+	OperatorPageAddr string
+
+	// OperatorPageSecret guards the operator page when it is reachable by anything but
+	// its own machine.
+	//
+	// Optional, and empty in the ordinary case: on the VPS the page is reached over an
+	// SSH tunnel to loopback, and SSH is the authentication. The secret exists so that
+	// binding to a reachable address by mistake is not the same as publishing every
+	// user's email address and every report.
+	OperatorPageSecret string
 }
 
 func Load() (Config, error) {
@@ -182,6 +204,17 @@ func Load() (Config, error) {
 	// by construction rather than stopping the API, and it is never given a
 	// default that would look configured.
 	clientReleaseSecret := os.Getenv("CLIENT_RELEASE_SECRET")
+
+	// Optional, and empty disables the operator page entirely. The page serves HTML to
+	// one person; a deployment that has not asked for it should not have a listener for
+	// it, so this is the one surface in this file that is closed by being absent rather
+	// than by refusing.
+	operatorPageAddr := os.Getenv("OPERATOR_PAGE_ADDR")
+
+	// Optional, and empty skips the check. On the VPS the page is reached over an SSH
+	// tunnel to loopback, where SSH is the authentication; the secret covers the case
+	// where the page is bound somewhere reachable instead.
+	operatorPageSecret := os.Getenv("OPERATOR_PAGE_SECRET")
 
 	clientIPSource, trustedProxies, trustedProxyHeader, err := loadClientIP()
 	if err != nil {
@@ -245,5 +278,7 @@ func Load() (Config, error) {
 
 		SessionCleanupSecret: sessionCleanupSecret,
 		ClientReleaseSecret:  clientReleaseSecret,
+		OperatorPageAddr:     operatorPageAddr,
+		OperatorPageSecret:   operatorPageSecret,
 	}, nil
 }

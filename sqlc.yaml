@@ -121,12 +121,41 @@ sql:
 
   - engine: "postgresql"
     schema: "migrations"
+    queries: "internal/api/feedback/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "feedbackdb"
+        out: "internal/api/feedback/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  - engine: "postgresql"
+    schema: "migrations"
     queries: "internal/api/enrichment/queries.sql"
     gen:
       go:
         omit_unused_structs: true
         package: "enrichmentdb"
         out: "internal/api/enrichment/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Operator page queries. These read and write the same feedback table the API
+  # writes, through their own target: the page has no request types, no validator and
+  # no auth middleware, so it does not share the feature's repository.
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "internal/operator/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "operatordb"
+        out: "internal/operator/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"
@@ -309,6 +338,20 @@ sql:
         omit_unused_structs: true
         package: "userdbtest"
         out: "internal/testutil/db/user/generated"
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+
+  # Integration test queries for feedback
+  - engine: "postgresql"
+    schema: "internal/database/baseline/schema.sql"
+    queries: "internal/testutil/db/feedback/queries.sql"
+    gen:
+      go:
+        omit_unused_structs: true
+        package: "feedbackdbtest"
+        out: "internal/testutil/db/feedback/generated"
         sql_package: "pgx/v5"
         overrides:
           - db_type: "uuid"

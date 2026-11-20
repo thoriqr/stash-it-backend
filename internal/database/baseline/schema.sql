@@ -3,7 +3,7 @@
 -- used only by the test-only sqlc targets and by the throwaway Postgres
 -- containers that integration tests start. It is not used at runtime and can
 -- drift from the migrations; migrations/ remains the production source of truth.
--- This file represents the cumulative effect of migrations/000001..000032 (up
+-- This file represents the cumulative effect of migrations/000001..000033 (up
 -- only).
 
 -- ============================================================
@@ -490,6 +490,33 @@ CREATE TABLE client_release_channels (
 );
 
 
+CREATE TABLE feedback (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+
+    user_id UUID NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    type TEXT NOT NULL,
+
+    message TEXT NOT NULL,
+
+    status TEXT NOT NULL DEFAULT 'new',
+
+    platform    TEXT,
+    app_version TEXT,
+    app_build   INTEGER,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT feedback_type_check
+        CHECK (type IN ('bug', 'idea', 'other')),
+
+    CONSTRAINT feedback_status_check
+        CHECK (status IN ('new', 'planned', 'closed'))
+);
+
+
 -- ============================================================
 -- Indexes
 -- ============================================================
@@ -573,6 +600,14 @@ CREATE INDEX collections_search_idx
     ON collections USING gin (user_id, name gin_trgm_ops);
 
 
+CREATE INDEX feedback_created_at_idx
+    ON feedback (created_at DESC, id DESC);
+
+
+CREATE INDEX feedback_status_created_at_idx
+    ON feedback (status, created_at DESC, id DESC);
+
+
 -- ============================================================
 -- Triggers
 -- ============================================================
@@ -609,5 +644,11 @@ EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER client_release_channels_set_updated_at
 BEFORE UPDATE ON client_release_channels
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+CREATE TRIGGER feedback_set_updated_at
+BEFORE UPDATE ON feedback
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();

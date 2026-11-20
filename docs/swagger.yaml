@@ -624,6 +624,58 @@ definitions:
         example: https://example.com/articles/1
         type: string
     type: object
+  feedback.CreateFeedbackAPIResponse:
+    properties:
+      data:
+        $ref: '#/definitions/feedback.CreatedFeedbackResponse'
+      message:
+        example: feedback received successfully
+        type: string
+    type: object
+  feedback.CreateFeedbackRequest:
+    properties:
+      app_build:
+        example: 7
+        minimum: 1
+        type: integer
+      app_version:
+        description: |-
+          AppVersion and AppBuild come from the installed package, so they name the exact
+          build that produced the report. Both are optional for the same reason the platform
+          is: an older client that does not send them must still be able to report.
+        example: 1.3.1
+        maxLength: 32
+        type: string
+      message:
+        description: |-
+          Message is the report itself. max=5000 is measured in runes by the validator, so a
+          multilingual report is not rejected for being long in bytes. The service applies
+          the same bound again for callers that reach it without this type, and also rejects
+          a value that is only whitespace: required does not cover that, because a string of
+          spaces is not empty as far as the validator is concerned.
+        example: Saving an Instagram reel leaves the title empty.
+        maxLength: 5000
+        type: string
+      type:
+        enum:
+        - bug
+        - idea
+        - other
+        example: bug
+        type: string
+    required:
+    - message
+    - type
+    type: object
+  feedback.CreatedFeedbackResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T10:30:00Z"
+        type: string
+      id:
+        example: 01a0f359-093b-737a-963a-80f7ca6768ed
+        type: string
+    type: object
   login.ConfirmAccountLinkRequest:
     properties:
       id_token:
@@ -3273,6 +3325,69 @@ paths:
       summary: List a collection's saved items
       tags:
       - Collection
+  /feedback:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Record one report from the authenticated user. A report is a bug they hit, an idea they have, or anything else worth saying about the product.
+        The type must be one of bug, idea, or other, and the message is required, is trimmed, and may be at most 5000 characters. A message that is only whitespace is rejected.
+        The optional app_version and app_build name the installed build that filed the report. Both may be omitted, so a client that does not send them still reports.
+        The platform is taken from the X-Platform header, which the app already sends on every request, and is not accepted in the body.
+        The response carries the report's id and when it was recorded. The report's status is not reported: it belongs to the operator and no user action depends on it.
+        Possible error codes:
+        - VALIDATION_ERROR
+        - INVALID_AUTHORIZATION_HEADER
+        - INVALID_ACCESS_TOKEN
+        - ACCESS_TOKEN_EXPIRED
+        - USER_RATE_LIMIT_EXCEEDED
+        - USER_RATE_LIMIT_UNAVAILABLE
+        - INTERNAL_SERVER_ERROR
+      parameters:
+      - description: Client platform reported by the app, for example android or windows
+        example: android
+        in: header
+        maxLength: 32
+        name: X-Platform
+        type: string
+      - description: Feedback request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/feedback.CreateFeedbackRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The report's id and the moment it was recorded
+          schema:
+            $ref: '#/definitions/feedback.CreateFeedbackAPIResponse'
+        "400":
+          description: Validation error
+          schema:
+            $ref: '#/definitions/swagger.ValidationErrorResponse'
+        "401":
+          description: Invalid or expired access token
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "429":
+          description: Rate limit exceeded for this user
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+        "503":
+          description: Rate limiting is unavailable, so the report is refused
+          schema:
+            $ref: '#/definitions/swagger.APIErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: File feedback
+      tags:
+      - Feedback
   /internal/maintenance/client-releases:
     get:
       description: |-

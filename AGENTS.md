@@ -301,5 +301,6 @@ Read the relevant document before changing the area it covers.
 | Sessions, token rotation, reuse detection, expiry                                  | `documentation/auth-sessions.md`     |
 | Dead-session cleanup                                                               | `documentation/session-cleanup.md`   |
 | PIN email budgets, cooldown, sender contract                                       | `documentation/pin-email-budgets.md` |
+| The operator page: loopback listener, triage, its credential model                 | `documentation/operator-page.md`     |
 | Product scope, principles and roadmap                                              | `documentation/product.md`           |
 | How the product behaves, feature by feature                                        | `documentation/product-behavior.md`  |

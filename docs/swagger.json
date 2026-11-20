@@ -1867,6 +1867,83 @@
                 }
             }
         },
+        "/feedback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Record one report from the authenticated user. A report is a bug they hit, an idea they have, or anything else worth saying about the product.\nThe type must be one of bug, idea, or other, and the message is required, is trimmed, and may be at most 5000 characters. A message that is only whitespace is rejected.\nThe optional app_version and app_build name the installed build that filed the report. Both may be omitted, so a client that does not send them still reports.\nThe platform is taken from the X-Platform header, which the app already sends on every request, and is not accepted in the body.\nThe response carries the report's id and when it was recorded. The report's status is not reported: it belongs to the operator and no user action depends on it.\nPossible error codes:\n- VALIDATION_ERROR\n- INVALID_AUTHORIZATION_HEADER\n- INVALID_ACCESS_TOKEN\n- ACCESS_TOKEN_EXPIRED\n- USER_RATE_LIMIT_EXCEEDED\n- USER_RATE_LIMIT_UNAVAILABLE\n- INTERNAL_SERVER_ERROR",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Feedback"
+                ],
+                "summary": "File feedback",
+                "parameters": [
+                    {
+                        "maxLength": 32,
+                        "type": "string",
+                        "example": "android",
+                        "description": "Client platform reported by the app, for example android or windows",
+                        "name": "X-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Feedback request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/feedback.CreateFeedbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The report's id and the moment it was recorded",
+                        "schema": {
+                            "$ref": "#/definitions/feedback.CreateFeedbackAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.ValidationErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired access token",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Rate limit exceeded for this user",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Rate limiting is unavailable, so the report is refused",
+                        "schema": {
+                            "$ref": "#/definitions/swagger.APIErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/maintenance/client-releases": {
             "get": {
                 "description": "List a platform's releases newest first together with its current policy.\nReleases is always an array; latest and min_supported are null when the platform has no channel yet.\nPossible error codes:\n- INVALID_RELEASE_SECRET\n- INVALID_PLATFORM\n- INTERNAL_SERVER_ERROR",
@@ -3723,6 +3800,66 @@
                 "url": {
                     "type": "string",
                     "example": "https://example.com/articles/1"
+                }
+            }
+        },
+        "feedback.CreateFeedbackAPIResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/feedback.CreatedFeedbackResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "feedback received successfully"
+                }
+            }
+        },
+        "feedback.CreateFeedbackRequest": {
+            "type": "object",
+            "required": [
+                "message",
+                "type"
+            ],
+            "properties": {
+                "app_build": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 7
+                },
+                "app_version": {
+                    "description": "AppVersion and AppBuild come from the installed package, so they name the exact\nbuild that produced the report. Both are optional for the same reason the platform\nis: an older client that does not send them must still be able to report.",
+                    "type": "string",
+                    "maxLength": 32,
+                    "example": "1.3.1"
+                },
+                "message": {
+                    "description": "Message is the report itself. max=5000 is measured in runes by the validator, so a\nmultilingual report is not rejected for being long in bytes. The service applies\nthe same bound again for callers that reach it without this type, and also rejects\na value that is only whitespace: required does not cover that, because a string of\nspaces is not empty as far as the validator is concerned.",
+                    "type": "string",
+                    "maxLength": 5000,
+                    "example": "Saving an Instagram reel leaves the title empty."
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "bug",
+                        "idea",
+                        "other"
+                    ],
+                    "example": "bug"
+                }
+            }
+        },
+        "feedback.CreatedFeedbackResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T10:30:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "01a0f359-093b-737a-963a-80f7ca6768ed"
                 }
             }
         },

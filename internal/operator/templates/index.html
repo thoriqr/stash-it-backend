@@ -1,0 +1,318 @@
+{{define "index.html" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feedback · Stash-it</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --surface: #f6f7f8;
+    --border: #e3e5e8;
+    --text: #16181c;
+    --muted: #6b7280;
+    --accent: #2f6fed;
+    --new: #b45309;
+    --planned: #2f6fed;
+    --closed: #6b7280;
+    --danger: #b42318;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101215;
+      --surface: #17191d;
+      --border: #2a2e34;
+      --text: #e8eaed;
+      --muted: #9aa0a8;
+      --accent: #6b9bff;
+      --new: #fbbf24;
+      --planned: #6b9bff;
+      --closed: #9aa0a8;
+      --danger: #ff7b72;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  main { max-width: 60rem; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  header h1 { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; }
+  header .total { color: var(--muted); font-size: .875rem; }
+
+  .summary {
+    display: flex; flex-wrap: wrap; gap: .75rem;
+    margin-bottom: 1.25rem; align-items: stretch;
+  }
+  .summary-users {
+    flex: 0 0 9rem; padding: .7rem .9rem;
+    border: 1px solid var(--border); border-radius: .6rem;
+    background: var(--surface);
+    display: flex; flex-direction: column; gap: .2rem;
+  }
+  .summary-users-value {
+    font-size: 1.5rem; font-weight: 600;
+    font-variant-numeric: tabular-nums; line-height: 1.1;
+  }
+  .releases { display: flex; flex-wrap: wrap; gap: .75rem; flex: 1 1 24rem; }
+  .release {
+    flex: 1 1 16rem; padding: .7rem .9rem;
+    border: 1px solid var(--border); border-radius: .6rem;
+    background: var(--surface);
+    display: flex; flex-direction: column; gap: .3rem;
+  }
+  .release-platform {
+    font-size: .8125rem; margin: 0 0 .1rem;
+    text-transform: capitalize; letter-spacing: .01em;
+  }
+  .release-row { display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
+  .release-value { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .release-min {
+    margin-top: .15rem; padding-top: .45rem;
+    border-top: 1px solid var(--border);
+  }
+  .release-meta { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+  .release-meta .tag {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .6875rem; padding: .1rem .35rem;
+    border: 1px solid var(--border); border-radius: .25rem; color: var(--muted);
+  }
+  .release-url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .6875rem; color: var(--accent); text-decoration: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%; display: inline-block;
+  }
+  .release-url:hover { text-decoration: underline; }
+  .release-empty { justify-content: center; }
+  .summary-label {
+    font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600;
+  }
+  .summary-note { color: var(--muted); font-size: .75rem; }
+  .summary-forced { color: var(--new); font-size: .75rem; font-weight: 600; }
+  .summary-muted { color: var(--muted); font-style: italic; margin: 0; font-size: .8125rem; }
+
+  .filters { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .filter {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .35rem .7rem; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); text-decoration: none; font-size: .8125rem;
+  }
+  .filter:hover { border-color: var(--accent); }
+  .filter[aria-current="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .filter .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .filter[aria-current="true"] .count { color: inherit; opacity: .65; }
+
+  .notice {
+    padding: .6rem .85rem; border-radius: .5rem; margin-bottom: 1.25rem;
+    font-size: .875rem; border: 1px solid var(--border);
+  }
+  .notice.success { border-color: var(--planned); color: var(--planned); }
+  .notice.failure { border-color: var(--danger); color: var(--danger); }
+
+  .report {
+    border: 1px solid var(--border); border-radius: .6rem;
+    background: var(--surface); padding: .9rem 1rem; margin-bottom: .75rem;
+  }
+
+  .report-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .5rem; }
+
+  .type, .status {
+    font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em;
+    font-weight: 600; padding: .15rem .45rem; border-radius: .25rem;
+    border: 1px solid currentColor;
+  }
+  .type { color: var(--muted); }
+  .status.new { color: var(--new); }
+  .status.planned { color: var(--planned); }
+  .status.closed { color: var(--closed); }
+
+  .when { margin-left: auto; color: var(--muted); font-size: .8125rem; white-space: nowrap; }
+
+  .message { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 .75rem; }
+
+  .meta { display: flex; gap: .5rem .9rem; flex-wrap: wrap; font-size: .8125rem; color: var(--muted); }
+  .meta .who { color: var(--text); }
+  .meta .email { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .actions { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
+  .actions form { margin: 0; }
+  .actions button {
+    font: inherit; font-size: .8125rem; padding: .3rem .65rem;
+    border-radius: .35rem; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .actions button.primary { border-color: var(--accent); color: var(--accent); }
+  .actions button.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+  .empty {
+    padding: 3rem 1rem; text-align: center; color: var(--muted);
+    border: 1px dashed var(--border); border-radius: .6rem;
+  }
+
+  .pager { display: flex; align-items: center; gap: .75rem; justify-content: center; margin-top: 1.5rem; font-size: .875rem; }
+  .pager a { color: var(--accent); text-decoration: none; }
+  .pager a:hover { text-decoration: underline; }
+  .pager .disabled { color: var(--muted); }
+  .pager .position { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  footer { margin-top: 2rem; color: var(--muted); font-size: .75rem; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Feedback</h1>
+    <span class="total">{{ .Total }} total{{ if .Status }} · filtered by {{ .Status }}{{ end }}</span>
+  </header>
+
+  {{- /* Context about the deployment, not about this page: never paginated, never
+         filtered. One card per published platform, showing what is offered and what is
+         still accepted as two separate facts. */}}
+  <section class="summary" aria-label="Deployment summary">
+    <div class="summary-users">
+      <span class="summary-label">Registered users</span>
+      <span class="summary-users-value">{{ .Summary.Users }}</span>
+    </div>
+
+    <div class="releases">
+      {{- if .Summary.Releases }}
+        {{- range .Summary.Releases }}
+        <article class="release">
+          <h2 class="release-platform">{{ .Platform }}</h2>
+
+          <div class="release-row">
+            <span class="summary-label">Latest published</span>
+            <span class="release-value">{{ .Latest }}</span>
+            <span class="summary-note" title="{{ .PublishedAt.Format "2006-01-02 15:04:05" }}">{{ .PublishedAt.Format "2 Jan 2006" }}</span>
+          </div>
+
+          <div class="release-meta">
+            <span class="tag">{{ .GitTag }}</span>
+            <span class="summary-note">{{ .Size }}</span>
+            <a class="release-url" href="{{ .DownloadURL }}" title="{{ .DownloadURL }}">{{ .DownloadURL }}</a>
+          </div>
+
+          <div class="release-row release-min">
+            <span class="summary-label">Min supported</span>
+            <span class="release-value">{{ .MinSupported }}</span>
+            {{- if .MinIsLatest }}
+            <span class="summary-forced">every older build is refused</span>
+            {{- end }}
+          </div>
+        </article>
+        {{- end }}
+      {{- else }}
+        <article class="release release-empty">
+          <h2 class="release-platform">Client releases</h2>
+          <p class="summary-muted">Nothing published yet.</p>
+        </article>
+      {{- end }}
+    </div>
+  </section>
+
+  <nav class="filters" aria-label="Filter by status">
+    {{- range .Filters }}
+    <a class="filter" href="{{ .URL }}"
+       {{- if .Selected }} aria-current="true"{{ end }}>
+      {{ .Label }} <span class="count">{{ .Count }}</span>
+    </a>
+    {{- end }}
+  </nav>
+
+  {{- if .Notice }}
+  <div class="notice {{ .NoticeKind }}" role="status">{{ .Notice }}</div>
+  {{- end }}
+
+  {{- if .Reports }}
+    {{- range .Reports }}
+    <article class="report">
+      <div class="report-head">
+        <span class="type">{{ .Type }}</span>
+        <span class="status {{ .Status }}">{{ .Status }}</span>
+        <span class="when" title="{{ .CreatedAt.Format "2006-01-02 15:04:05" }}">{{ .CreatedAge }}</span>
+      </div>
+
+      <p class="message">{{ .Message }}</p>
+
+      <div class="meta">
+        <span class="who">{{ .DisplayName }}</span>
+        <span class="email">&lt;{{ .Email }}&gt;</span>
+        {{- if .Context }}
+        <span class="context">{{ .Context }}</span>
+        {{- end }}
+        {{- if ne .Status "new" }}
+        <span title="{{ .UpdatedAt.Format "2006-01-02 15:04:05" }}">updated {{ .UpdatedAt.Format "2 Jan 15:04" }}</span>
+        {{- end }}
+      </div>
+
+      <div class="actions">
+        {{- $report := . }}
+        {{- range .Actions }}
+        <form method="post" action="/feedback/{{ $report.ID }}/status">
+          {{- range $report.HiddenFields }}
+          <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
+          {{- end }}
+          <input type="hidden" name="status" value="{{ .Status }}">
+          <button type="submit"{{ if .Primary }} class="primary"{{ end }}>{{ .Label }}</button>
+        </form>
+        {{- end }}
+        <form method="post" action="/feedback/{{ .ID }}/delete"
+              onsubmit="return confirm('Delete this report permanently?');">
+          {{- range .HiddenFields }}
+          <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
+          {{- end }}
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+    </article>
+    {{- end }}
+  {{- else }}
+    <div class="empty">
+      {{- if .Status }}
+      No reports with status “{{ .Status }}”.
+      {{- else }}
+      Nothing here yet. Reports filed from the app appear in this list.
+      {{- end }}
+    </div>
+  {{- end }}
+
+  {{- if gt .TotalPages 1 }}
+  <nav class="pager" aria-label="Pages">
+    {{- if .HasPrev }}
+    <a href="{{ .PrevURL }}">← Previous</a>
+    {{- else }}
+    <span class="disabled">← Previous</span>
+    {{- end }}
+
+    <span class="position">Page {{ .Page }} of {{ .TotalPages }}</span>
+
+    {{- if .HasNext }}
+    <a href="{{ .NextURL }}">Next →</a>
+    {{- else }}
+    <span class="disabled">Next →</span>
+    {{- end }}
+  </nav>
+  {{- end }}
+
+  <footer>
+    Rendered {{ .Now.Format "2 Jan 2006 15:04:05" }} · loopback only · not part of the API
+  </footer>
+</main>
+</body>
+</html>
+{{- end }}

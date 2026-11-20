@@ -14,6 +14,8 @@ Caddy (TLS, reverse proxy)
 stash-it-api  --->  Neon PostgreSQL (TLS)
      |          \->  Redis 127.0.0.1:6379
      |
+     +-- loopback only: operator page 127.0.0.1:8081 (optional)
+     |
      +-- outbound: Brevo, Sentry, Google, fetched pages
 
 stash-it-worker ---> Neon PostgreSQL, Redis
@@ -22,6 +24,7 @@ stash-it-worker ---> Neon PostgreSQL, Redis
 | Component | Location | Notes |
 | --- | --- | --- |
 | `stash-it-api` | VPS | HTTP on `127.0.0.1:8080`. |
+| Operator page | VPS | `127.0.0.1:8081`, optional, served by `stash-it-api`. Not behind Caddy. See `operator-page.md`. |
 | `stash-it-worker` | VPS | No HTTP surface. |
 | Redis | VPS | `127.0.0.1:6379`, AOF enabled. Rate limits and queue. |
 | Caddy | VPS | Public 80/443, TLS, reverse proxy. |
@@ -29,9 +32,14 @@ stash-it-worker ---> Neon PostgreSQL, Redis
 
 VPS baseline: Ubuntu 24.04, 2 vCPU / 2 GB RAM, 40 GB disk, static IPv4, and a
 domain pointing at the VPS. Public ports are 22 (administration), 80 and 443.
-Ports 6379 and 8080 stay on loopback. There is no inbound PostgreSQL port.
+Ports 6379, 8080 and 8081 stay on loopback. There is no inbound PostgreSQL port.
 Outbound TCP 5432 must reach Neon; outbound 443 reaches Brevo, Sentry, Google and
 fetched pages.
+
+8081 exists only when `OPERATOR_PAGE_ADDR` is set, and it is reached over an SSH
+tunnel rather than through Caddy: `ssh -L 8081:127.0.0.1:8081 <user>@<vps>`. The
+firewall is never involved, because sshd connects to it from the machine itself.
+Never bind it to `0.0.0.0`.
 
 Runtime layout:
 
@@ -335,9 +343,11 @@ Startup fails if `.env.production` is missing from the working directory or Neon
 cannot be reached. The API startup line records the provider and client-address
 configuration.
 
-Public ports: 22, 80, 443. Internal: 6379, 8080. No inbound 5432. Outbound 5432
-to Neon and outbound 443 to providers. The API listens on `:8080`; the firewall
-keeps it private, and Caddy reaches it over loopback.
+Public ports: 22, 80, 443. Internal: 6379, 8080, and 8081 when the operator page
+is enabled. No inbound 5432. Outbound 5432 to Neon and outbound 443 to providers.
+The API listens on `:8080`; the firewall keeps it private, and Caddy reaches it
+over loopback. The operator page listens on `127.0.0.1:8081` and is reached over an
+SSH tunnel instead of through Caddy, so no firewall change is part of enabling it.
 
 ## Operations
 

@@ -14,6 +14,7 @@ left. It does not describe how anything works and it does not hold rules.
 | Dead-session cleanup                  | `documentation/session-cleanup.md`    |
 | Design decisions                      | `documentation/decisions.md`          |
 | Client releases and update flow       | `documentation/client-releases.md`    |
+| The operator page and feedback triage | `documentation/operator-page.md`      |
 | History                               | `git log`                             |
 
 _State as of the last recorded entry: 2026-11-16._

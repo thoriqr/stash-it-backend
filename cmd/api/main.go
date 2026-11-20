@@ -23,6 +23,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/api/collection"
 	"github.com/thoriqr/stash-it-backend/internal/api/debug"
 	"github.com/thoriqr/stash-it-backend/internal/api/enrichment"
+	"github.com/thoriqr/stash-it-backend/internal/api/feedback"
 	saveditem "github.com/thoriqr/stash-it-backend/internal/api/saved_item"
 	"github.com/thoriqr/stash-it-backend/internal/api/search"
 	"github.com/thoriqr/stash-it-backend/internal/api/user"
@@ -36,6 +37,7 @@ import (
 	"github.com/thoriqr/stash-it-backend/internal/logger"
 	"github.com/thoriqr/stash-it-backend/internal/observability"
 	"github.com/thoriqr/stash-it-backend/internal/oembedregistry"
+	"github.com/thoriqr/stash-it-backend/internal/operator"
 	"github.com/thoriqr/stash-it-backend/internal/ratelimit"
 	"github.com/thoriqr/stash-it-backend/internal/security"
 	"github.com/thoriqr/stash-it-backend/internal/validation"
@@ -371,6 +373,17 @@ func main() {
 		cfg.ClientReleaseSecret,
 	)
 
+	// Feedback registers one route: filing a report. Triage is deliberately absent from
+	// this API. It happens on a page bound to loopback, which SSH reaches, so there is no
+	// operator route to guard with a secret and none appears in the published contract.
+	feedback.RegisterModule(
+		app,
+		pool,
+		cfg,
+		pinRateLimiter,
+		log,
+	)
+
 	// Enrichment fetches a URL the user supplied, so it goes through the guarded
 	// outbound HTTP client. The generic policy stays the default; Tokopedia gets a
 	// copy with larger timeouts and HTTP/1.1 pinned because its HTTP/2 path is
@@ -411,6 +424,20 @@ func main() {
 		pinRateLimiter,
 		log,
 	)
+
+	// The operator page is a separate listener, not a route on this app. That is what
+	// keeps it off the internet: routes here travel through Caddy at the public
+	// hostname, while this one is bound to whatever OPERATOR_PAGE_ADDR names — loopback
+	// on the VPS, reachable from the LAN in development. It is stopped below with the
+	// same signal the API uses.
+	stopOperatorPage := operator.Start(
+		ctx,
+		pool,
+		cfg.OperatorPageAddr,
+		cfg.OperatorPageSecret,
+		log,
+	)
+	defer stopOperatorPage()
 
 	log.Info(
 		"api started",
